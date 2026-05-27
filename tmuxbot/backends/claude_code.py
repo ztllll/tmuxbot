@@ -538,10 +538,10 @@ class ClaudeCodeBackend(Backend):
             "/status":  CmdOpts(parser=parse_status),
             "/help":    CmdOpts(parser=parse_help, lines=200),
             "/compact": CmdOpts(
-                parser=parse_compact,
+                # ★ 不挂 parser: parse_compact 的 COMPACT_DONE_RE 会命中屏幕历史里
+                # 老的 "Compacted (ctrl+o..)" 字样 → 假阳。完成由 expect_new_session
+                # (jsonl 切换硬信号) 判定, capture_and_push 切换后会自动拼 token 对比。
                 init_delay=2.0, poll=1.0, max_iters=120, lines=120,
-                parser_can_retry=True,
-                done_pattern=COMPACT_DONE_RE,
                 expect_new_session=True,
                 notice="⏳ 压缩中…(可能 10-60s,完成后会发完成通知)",
                 fallback_summary="✅ <b>上下文已压缩</b>\n📜 完整摘要 TUI 内 <code>ctrl+o</code> 查看",
@@ -554,6 +554,39 @@ class ClaudeCodeBackend(Backend):
 
     def command_aliases(self) -> dict[str, str]:
         return {"/new": "/clear"}
+
+    def read_context_size(self, jsonl_path: Path | None) -> int | None:
+        """从 jsonl 末尾倒着扫, 找最后一条带 usage 的 message, 返回 context size
+        (= input_tokens + cache_read + cache_creation, 即真实占用的上下文窗口大小)。
+
+        用于 /compact 显示压缩前后对比。
+        """
+        if not jsonl_path or not jsonl_path.is_file():
+            return None
+        try:
+            lines = jsonl_path.read_text(errors="replace").splitlines()
+        except Exception as e:
+            log.debug(f"read_context_size: read err: {e}")
+            return None
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            msg = obj.get("message") or {}
+            u = msg.get("usage") or {}
+            if not u:
+                continue
+            total = (
+                (u.get("input_tokens") or 0)
+                + (u.get("cache_read_input_tokens") or 0)
+                + (u.get("cache_creation_input_tokens") or 0)
+            )
+            if total > 0:
+                return total
+        return None
 
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         try:

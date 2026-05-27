@@ -44,16 +44,54 @@ async def inject_slash_and_capture(
     return out
 
 
+def _fmt_k(n: int | None) -> str:
+    """1234567 → '1.2m', 12345 → '12.3k', 234 → '234'"""
+    if n is None:
+        return "?"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}m"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def _fmt_token_delta(before: int | None, after: int | None) -> str | None:
+    """压缩前后 token 对比 → '📉 880k → 22k (压缩 97%)'。任一为 None 返回 None。"""
+    if before is None or after is None or before <= 0:
+        return None
+    if after == before:
+        return f"· token 未变化 <code>{_fmt_k(before)}</code>"
+    if after < before:
+        pct = round((before - after) / before * 100)
+        return f"📉 token <code>{_fmt_k(before)}</code> → <code>{_fmt_k(after)}</code> (压缩 {pct}%)"
+    pct = round((after - before) / before * 100)
+    return f"📈 token <code>{_fmt_k(before)}</code> → <code>{_fmt_k(after)}</code> (增加 {pct}%)"
+
+
 async def capture_and_push(
     frontend: "Frontend", b: "Binding", backend: "Backend",
     chat_id: int, thread_id: int | None,
     *,
     command: str | None = None,
 ) -> None:
-    """slash 命令兜底: 等屏幕稳定 + 3 档兜底 (parser / fallback / raw)"""
+    """slash 命令兜底: 等屏幕稳定 + 3 档兜底 (parser / fallback / raw)。
+
+    ★ /compact /clear /new 等 expect_new_session 命令: jsonl 切换 (硬信号) 优先于
+    屏幕 done_pattern (软信号) — 屏幕历史里残留的老 'Compacted' 字样会假阳。
+    """
     key = (command or "").lstrip().split()[0] if command else ""
     opts: CmdOpts = backend.command_opts().get(key, CmdOpts())
     initial_session = b.last_session_id
+
+    # /compact 等 expect_new_session 命令: 入口拿压缩前 context size, 完成后对比
+    before_size: int | None = None
+    before_jsonl = None
+    if opts.expect_new_session:
+        try:
+            before_jsonl = backend.find_active_jsonl(b)
+            before_size = backend.read_context_size(before_jsonl)
+        except Exception as e:
+            log.debug(f"capture_and_push {key} read before context: {e}")
 
     notice_msg = None
     if opts.notice:
@@ -70,9 +108,7 @@ async def capture_and_push(
 
     for i in range(opts.max_iters):
         out = tmux_capture(b.tmux_target, opts.lines)
-        if opts.done_pattern and opts.done_pattern.search(strip_decorations(out)):
-            early_reason = "done_pattern"
-            break
+        # ★ session_switch 硬信号优先 — /compact /clear /new 必须确认 jsonl 已切换
         if (
             opts.expect_new_session
             and initial_session
@@ -82,7 +118,15 @@ async def capture_and_push(
             new_session_seen = True
             early_reason = "session_switch"
             break
-        if opts.parser and opts.parser_can_retry:
+        # done_pattern 仅对不要求新会话的命令认定 (避免屏幕历史里老 Compacted 假阳)
+        if (
+            not opts.expect_new_session
+            and opts.done_pattern
+            and opts.done_pattern.search(strip_decorations(out))
+        ):
+            early_reason = "done_pattern"
+            break
+        if opts.parser and opts.parser_can_retry and not opts.expect_new_session:
             try:
                 s = opts.parser(out)
             except Exception as e:
@@ -113,7 +157,19 @@ async def capture_and_push(
     ):
         new_session_seen = True
 
+    # /compact 等: 切换后拿压缩后 context size, 算 delta
+    delta_line: str | None = None
+    if opts.expect_new_session and new_session_seen:
+        try:
+            after_jsonl = backend.find_active_jsonl(b)
+            after_size = backend.read_context_size(after_jsonl)
+            delta_line = _fmt_token_delta(before_size, after_size)
+        except Exception as e:
+            log.debug(f"capture_and_push {key} read after context: {e}")
+
     try:
+        # 末尾再调一次 parser (覆盖 /clear /new 等固定文案 parser; 不会触发屏幕历史
+        # 假阳, 因为我们已经先确认 session_switch 或者非 expect_new_session)
         if summary is None and opts.parser and out.strip():
             try:
                 summary = opts.parser(out)
@@ -124,13 +180,22 @@ async def capture_and_push(
             if new_session_seen and b.last_session_id:
                 import html as _html
                 summary += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
+            if delta_line:
+                summary += f"\n{delta_line}"
             await frontend.send_html(chat_id, thread_id, summary)
+            return
+        if opts.expect_new_session and not new_session_seen:
+            # 关键: 没等到 jsonl 切换 = /compact 大概率没真触发, 报警告而非假阳成功
+            warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {opts.max_iters * opts.poll:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
+            await frontend.send_html(chat_id, thread_id, warn)
             return
         if opts.fallback_summary:
             fb = opts.fallback_summary
             if new_session_seen and b.last_session_id:
                 import html as _html
                 fb += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
+            if delta_line:
+                fb += f"\n{delta_line}"
             await frontend.send_html(chat_id, thread_id, fb)
             return
         if out.strip():

@@ -75,3 +75,11 @@ class Backend(ABC):
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         """聚合 jsonl 的 token usage (可选实现, 默认 None)"""
         return None
+
+    def read_context_size(self, jsonl_path: Path | None) -> int | None:
+        """从 jsonl 最后一条带 usage 的 message 拿 context size
+        (input_tokens + cache_read_input_tokens + cache_creation_input_tokens).
+
+        用于 /compact 在压缩前后做对比 (e.g. 880k → 22k)。
+        默认 None = backend 不支持, 调用方需检查 None 并跳过对比。"""
+        return None
