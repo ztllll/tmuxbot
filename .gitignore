@@ -1,0 +1,14 @@
+.env
+.env.local
+bindings.yaml
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.bak
+.venv/
+.mypy_cache/
+.pytest_cache/
+*.log
+.DS_Store
+.codex

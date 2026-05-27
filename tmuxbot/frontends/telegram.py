@@ -1,0 +1,677 @@
+"""Telegram 前端: aiogram 装配 + 命令注册 + 发送/编辑/反应/typing。
+
+每个 frontend = 一个 bot token + 一个 backend + 一组 bindings 子集。
+多 bot 共存: __main__ 装配多个 TelegramFrontend 实例并发 polling。
+"""
+from __future__ import annotations
+
+import asyncio
+import html
+import json
+import logging
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any, Callable, TYPE_CHECKING
+
+import yaml
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
+from aiogram.filters import Command
+from aiogram.types import (
+    BotCommand,
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReactionTypeEmoji,
+)
+
+from tmuxbot.frontends.base import Frontend
+from tmuxbot.tmux import tmux_capture, tmux_send_key
+from tmuxbot.utils import render_table, strip_decorations, utf16_len
+
+if TYPE_CHECKING:
+    from tmuxbot.backends.base import Backend
+    from tmuxbot.state import Binding, State
+
+log = logging.getLogger("tmuxbot")
+
+# ────────── 常量 ──────────
+TG_SPLIT = 3800
+TG_DOC_THRESHOLD = 8000
+MAX_FILE_MB = 19
+ACK_REACTION = "👀"
+
+
+# ────────── 工具函数 (TG-specific) ──────────
+def split_for_tg(text: str, limit: int = TG_SPLIT) -> list[str]:
+    if utf16_len(text) <= limit:
+        return [text]
+    chunks, cur, cur_len = [], [], 0
+    for line in text.split("\n"):
+        ll = utf16_len(line) + 1
+        if cur_len + ll > limit and cur:
+            chunks.append("\n".join(cur))
+            cur, cur_len = [line], ll
+        else:
+            cur.append(line)
+            cur_len += ll
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
+
+
+def source_key(m: Message) -> tuple[int, int | None]:
+    if m.chat.type == "private":
+        return (m.chat.id, None)
+    if getattr(m, "is_topic_message", False):
+        return (m.chat.id, m.message_thread_id)
+    return (m.chat.id, None)
+
+
+def thread_id_of(m: Message) -> int | None:
+    """跟 source_key 一致的 thread_id 提取"""
+    if m.chat.type == "private":
+        return None
+    if getattr(m, "is_topic_message", False):
+        return m.message_thread_id
+    return None
+
+
+# ────────── TelegramFrontend ──────────
+class TelegramFrontend(Frontend):
+    """Telegram bot 前端。装配 aiogram Bot + Dispatcher, 注册命令/handlers。"""
+
+    name = "telegram"
+
+    def __init__(
+        self,
+        token: str,
+        state: "State",
+        backend: "Backend",                 # ★ 单 backend (1 bot ↔ 1 backend)
+        bindings: list["Binding"],          # ★ 只接这些 binding (其他 bot 各管自己的)
+        env_file: Path,
+        bindings_file: Path,
+    ) -> None:
+        self.token = token
+        self.state = state
+        self.backend = backend
+        self.bindings = bindings
+        self.env_file = env_file
+        self.bindings_file = bindings_file
+        self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        self.dp = Dispatcher()
+        self._register_handlers()
+
+    def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
+        """只在自己接的 bindings 子集里找, 避免跨 frontend 冲突"""
+        for b in self.bindings:
+            if b.chat_id == chat_id and b.thread_id == thread_id:
+                return b
+        return None
+
+    # ────────── retry / 出站 ──────────
+    async def _tg_call(self, fn: Callable, max_retries: int = 4) -> Any:
+        for i in range(max_retries):
+            try:
+                return await fn()
+            except TelegramRetryAfter as e:
+                log.warning(f"flood wait {e.retry_after}s")
+                await asyncio.sleep(e.retry_after + 0.5)
+            except TelegramBadRequest as e:
+                log.warning(f"bad request (no retry): {e}")
+                return None
+            except TelegramNetworkError as e:
+                log.warning(f"net err (try {i + 1}): {e}")
+                await asyncio.sleep(2 ** i)
+            except Exception as e:
+                log.warning(f"send err (try {i + 1}): {e}")
+                await asyncio.sleep(2 ** i)
+        log.error("send giving up")
+        return None
+
+    async def send_html(self, chat_id: int, thread_id: int | None, html_text: str) -> Any:
+        """单条 HTML, 长则分片或转 .txt 附件。返回第一条 message 对象 (供后续 edit)"""
+        if utf16_len(html_text) > TG_DOC_THRESHOLD:
+            try:
+                plain = re.sub(r"<[^>]+>", "", html_text)
+                file = BufferedInputFile(plain.encode("utf-8"), filename="output.txt")
+                return await self._tg_call(
+                    lambda: self.bot.send_document(
+                        chat_id, file, caption="(long output)", message_thread_id=thread_id
+                    )
+                )
+            except Exception as e:
+                log.exception(f"send_document fallback to chunks: {e}")
+        first_msg = None
+        for chunk in split_for_tg(html_text):
+            msg = await self._tg_call(
+                lambda c=chunk: self.bot.send_message(chat_id, c, message_thread_id=thread_id)
+            )
+            if first_msg is None:
+                first_msg = msg
+        return first_msg
+
+    async def edit_html(self, chat_id: int, message_id: int, html_text: str) -> None:
+        """编辑已发送消息 — 工具调用聚合用。超长直接 truncate 末尾。"""
+        if utf16_len(html_text) > TG_SPLIT:
+            html_text = html_text[: TG_SPLIT - 30] + "\n<i>… (内容已截断)</i>"
+        await self._tg_call(
+            lambda: self.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id, text=html_text,
+            )
+        )
+
+    async def send_pre(self, chat_id: int, thread_id: int | None, raw_text: str) -> None:
+        if not raw_text.strip():
+            return
+        if utf16_len(raw_text) > TG_DOC_THRESHOLD:
+            try:
+                file = BufferedInputFile(raw_text.encode("utf-8"), filename="capture.txt")
+                await self._tg_call(
+                    lambda: self.bot.send_document(
+                        chat_id, file, caption="📷 capture (long)",
+                        message_thread_id=thread_id,
+                    )
+                )
+                return
+            except Exception as e:
+                log.exception(f"send_document fallback: {e}")
+        escaped = html.escape(raw_text)
+        for chunk in split_for_tg(escaped, limit=TG_SPLIT - 12):
+            wrapped = f"<pre>{chunk}</pre>"
+            await self._tg_call(
+                lambda c=wrapped: self.bot.send_message(
+                    chat_id, c, message_thread_id=thread_id
+                )
+            )
+
+    async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:
+        try:
+            await self.bot.send_chat_action(
+                chat_id=chat_id, action=action, message_thread_id=thread_id,
+            )
+        except Exception as e:
+            log.debug(f"send_chat_action err: {e}")
+
+    async def send_picker_card(
+        self, chat_id: int, thread_id: int | None,
+        body_html: str, binding_name: str, num_options: int = 9,
+    ) -> Any:
+        """picker 卡片 + 1-9 数字按钮 + ⎋ 取消。callback_data 格式: 'picker:<binding>:<n>'"""
+        rows: list[list[InlineKeyboardButton]] = []
+        row: list[InlineKeyboardButton] = []
+        for n in range(1, num_options + 1):
+            row.append(InlineKeyboardButton(
+                text=str(n), callback_data=f"picker:{binding_name}:{n - 1}",
+            ))
+            if len(row) == 3:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        rows.append([InlineKeyboardButton(
+            text="⎋ 取消 picker", callback_data=f"picker:{binding_name}:esc",
+        )])
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+        return await self._tg_call(lambda: self.bot.send_message(
+            chat_id, body_html, message_thread_id=thread_id, reply_markup=markup,
+        ))
+
+    # ────────── ACL ──────────
+    def _acl_ok(self, m: Message) -> bool:
+        if self.state.setup_mode:
+            return True
+        if not m.from_user:
+            return False
+        return m.from_user.id == self.state.boss_user_id
+
+    async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
+        if not self._acl_ok(m):
+            return None
+        b = self.find_binding(*source_key(m))   # ★ 仅在自己 frontend 的 binding 子集找
+        if not b:
+            await m.reply(
+                "⚠️ 未绑定该 source (或绑给了别的 bot)\n"
+                f"chat_id=<code>{m.chat.id}</code> thread_id=<code>{m.message_thread_id}</code>\n"
+                f"当前 bot 接 backend=<code>{self.backend.name}</code>"
+            )
+            return None
+        return b
+
+    # ────────── setup mode (首次锁定 user_id + chat_id) ──────────
+    def _save_env_user_id(self, user_id: int) -> None:
+        txt = self.env_file.read_text()
+        if re.search(r"^BOSS_USER_ID=.*$", txt, flags=re.M):
+            txt = re.sub(r"^BOSS_USER_ID=.*$", f"BOSS_USER_ID={user_id}", txt, flags=re.M)
+        else:
+            txt += f"\nBOSS_USER_ID={user_id}\n"
+        self.env_file.write_text(txt)
+
+    def _save_binding_chat_id(self, name: str, chat_id: int) -> None:
+        try:
+            raw = yaml.safe_load(self.bindings_file.read_text()) or {}
+            for b in raw.get("bindings", []):
+                if b.get("name") == name:
+                    b["chat_id"] = chat_id
+                    break
+            self.bindings_file.write_text(
+                yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+            )
+        except Exception as e:
+            log.exception(f"save_binding_chat_id err: {e}")
+
+    async def _do_setup(self, m: Message) -> "Binding | None":
+        if not self.state.setup_mode:
+            return None
+        if m.chat.type != "private":
+            await m.reply("Setup 模式: 请用 DM 发消息触发首次绑定")
+            return None
+        if not m.from_user:
+            return None
+        uid = m.from_user.id
+        log.info(f"SETUP: locking BOSS_USER_ID={uid}, chat_id={m.chat.id}")
+        self._save_env_user_id(uid)
+        target = next(
+            (b for b in self.state.bindings if b.chat_id == 0 and b.thread_id is None), None
+        )
+        if target:
+            self._save_binding_chat_id(target.name, m.chat.id)
+            target.chat_id = m.chat.id
+            log.info(f"SETUP: binding '{target.name}' chat_id locked to {m.chat.id}")
+        self.state.boss_user_id = uid
+        self.state.setup_mode = False
+        await m.reply(
+            "✅ Setup 完成\n"
+            f"user_id=<code>{uid}</code>\n"
+            f"绑定: <code>{target.name if target else 'none'}</code>\n"
+            f"tmux=<code>{html.escape(target.tmux_target) if target else '-'}</code>\n"
+            "现在可以直接发消息了, Claude 会在 tmux 里收到"
+        )
+        return target
+
+    # ────────── handlers 注册 ──────────
+    def _register_handlers(self) -> None:
+        dp = self.dp
+        S = self.state
+        F_ = self  # frontend self alias 给闭包
+
+        # ─── ack middleware (👀 反应 + typing) ─────────
+        @dp.message.middleware()
+        async def ack_received(handler, event: Message, data):
+            if not S.setup_mode and event.from_user and event.from_user.id == S.boss_user_id:
+                try:
+                    await event.bot.set_message_reaction(
+                        chat_id=event.chat.id,
+                        message_id=event.message_id,
+                        reaction=[ReactionTypeEmoji(emoji=ACK_REACTION)],
+                    )
+                except Exception as e:
+                    log.debug(f"set_message_reaction err: {e}")
+                tid = thread_id_of(event)
+                try:
+                    await event.bot.send_chat_action(
+                        chat_id=event.chat.id, action="typing", message_thread_id=tid,
+                    )
+                except Exception as e:
+                    log.debug(f"send_chat_action err: {e}")
+                # 垫一次 last_active(消息→jsonl 有空窗)
+                b = F_.find_binding(event.chat.id, tid)
+                if b:
+                    S.last_active[b.name] = time.time()
+            return await handler(event, data)
+
+        # ─── /whoami ─────────
+        @dp.message(Command("whoami"))
+        async def cmd_whoami(m: Message):
+            if not m.from_user:
+                return
+            await m.reply(
+                f"user_id=<code>{m.from_user.id}</code>\n"
+                f"chat_id=<code>{m.chat.id}</code>\n"
+                f"thread_id=<code>{m.message_thread_id}</code>\n"
+                f"type=<code>{m.chat.type}</code>"
+            )
+
+        # ─── /status (跟 backend 紧耦合, 走 inject_slash_and_capture) ─────────
+        @dp.message(Command("status"))
+        async def cmd_status(m: Message):
+            from tmuxbot.commands import inject_slash_and_capture
+
+            if not F_._acl_ok(m):
+                return
+            b = F_.find_binding(*source_key(m))
+            if not b:
+                rows = [[bb.name, str(bb.chat_id), str(bb.thread_id or "-")] for bb in F_.bindings]
+                await m.reply(
+                    f"<b>tmuxbot</b> · 当前 bot 接 backend=<code>{F_.backend.name}</code>, "
+                    f"{len(F_.bindings)} bindings\n"
+                    f"<pre>{html.escape(render_table(['name', 'chat_id', 'thread'], rows))}</pre>"
+                )
+                return
+
+            backend = F_.backend
+            notice = await m.reply("⏳ 抓综合状态…(注入 /context + /usage,可能短暂中断生成)")
+
+            # § 1 连接
+            from tmuxbot.tmux import tmux_has_session, tmux_pane_command
+            alive = tmux_has_session(b.tmux_session)
+            pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
+            conn_rows = [
+                ["tmux", "✅ 正常" if alive else "❌ 断开", b.tmux_target],
+                ["cwd", "✅", str(b.cwd)],
+                ["session", "✅ 活跃" if b.last_session_id else "—", b.last_session_id or "-"],
+                ["backend", "🔌", b.backend],
+                ["pane cmd", "·", pane_cmd],
+            ]
+            conn_table = render_table(["项目", "状态", "详情"], conn_rows)
+
+            # § 2 + § 3 注入 /context + /usage 抓屏
+            ctx_summary: str | None = None
+            try:
+                ctx_raw = await inject_slash_and_capture(b, "/context")
+                from tmuxbot.backends.claude_code import parse_context as _pc
+                ctx_summary = _pc(ctx_raw) if b.backend == "claude_code" else None
+            except Exception:
+                log.exception("inject /context err")
+
+            usage_summary: str | None = None
+            try:
+                usage_raw = await inject_slash_and_capture(b, "/usage")
+                from tmuxbot.backends.claude_code import parse_cost as _pcost
+                usage_summary = _pcost(usage_raw) if b.backend == "claude_code" else None
+            except Exception:
+                log.exception("inject /usage err")
+
+            # § 4 jsonl 累计
+            jl = backend.find_active_jsonl(b)
+            stats = backend.aggregate_usage(jl, last_n=500) if jl else None
+
+            parts = [
+                f"ℹ️ <b>综合状态</b>  · <code>{html.escape(b.name)}</code>",
+                "",
+                "🔌 <b>一、连接状态</b>",
+                f"<pre>{html.escape(conn_table)}</pre>",
+            ]
+            if ctx_summary:
+                parts += ["", "📊 <b>二、上下文用量</b>", ctx_summary]
+            if usage_summary:
+                parts += ["", "💰 <b>三、用量与花费</b>", usage_summary]
+            if stats:
+                sess_rows = [
+                    ["📥 输入 token", f"{stats['input']:,}"],
+                    ["📤 输出 token", f"{stats['output']:,}"],
+                    ["📦 缓存创建", f"{stats['cache_create']:,}"],
+                    ["📦 缓存命中", f"{stats['cache_read']:,}"],
+                    ["🎯 缓存命中率", f"{stats['cache_hit_rate']*100:.1f}%"],
+                    ["💬 助手回复", f"{stats['count']} 条"],
+                ]
+                parts += [
+                    "", "📈 <b>四、本会话累计 (jsonl)</b>",
+                    f"<pre>{html.escape(render_table(['项目', '值'], sess_rows))}</pre>",
+                ]
+
+            await m.reply("\n".join(parts))
+            try:
+                await notice.delete()
+            except Exception:
+                pass
+
+        # ─── /esc /cc /eof ─────────
+        async def _send_key(m: Message, key: str, label: str):
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            tmux_send_key(b.tmux_target, key)
+            await m.reply(label)
+
+        @dp.message(Command("esc"))
+        async def cmd_esc(m: Message):
+            await _send_key(m, "Escape", "⎋ Escape")
+
+        @dp.message(Command("cc"))
+        async def cmd_cc(m: Message):
+            await _send_key(m, "C-c", "⌃C")
+
+        @dp.message(Command("eof"))
+        async def cmd_eof(m: Message):
+            await _send_key(m, "C-d", "⌃D")
+
+        # ─── /screen ─────────
+        @dp.message(Command("screen"))
+        async def cmd_screen(m: Message):
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            out = tmux_capture(b.tmux_target, 60)
+            await F_.send_pre(m.chat.id, thread_id_of(m), out)
+
+        # ─── /info ─────────
+        @dp.message(Command("info"))
+        async def cmd_info(m: Message):
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            backend = F_.backend
+            jl = backend.find_active_jsonl(b)
+            if not jl:
+                await m.reply("📊 没找到 jsonl 文件")
+                return
+            stats = backend.aggregate_usage(jl, last_n=500)
+            if not stats:
+                await m.reply("📊 jsonl 里还没有 assistant 数据")
+                return
+
+            def fmt(n: int) -> str:
+                return f"{n:,}"
+
+            total_in = stats["input"] + stats["cache_create"] + stats["cache_read"]
+            parts = [
+                f"📊 <b>会话累计统计</b>  · {b.name}",
+                f"📨 助手回复 <b>{stats['count']}</b> 条",
+            ]
+            if stats.get("model"):
+                parts.append(f"🧠 当前模型 <code>{html.escape(stats['model'])}</code>")
+            parts += [
+                "",
+                f"📥 计费输入合计 <code>{fmt(total_in)}</code>",
+                f"   ├ 新输入 <code>{fmt(stats['input'])}</code>",
+                f"   ├ 缓存创建 <code>{fmt(stats['cache_create'])}</code>",
+                f"   └ 缓存命中 <code>{fmt(stats['cache_read'])}</code>",
+                f"📤 输出 token <code>{fmt(stats['output'])}</code>",
+                "",
+                f"🎯 <b>缓存命中率 {stats['cache_hit_rate'] * 100:.1f}%</b>",
+            ]
+            if stats.get("last_ts"):
+                parts.append(f"⏱ 最近回复 <code>{html.escape(stats['last_ts'])}</code>")
+            await m.reply("\n".join(parts))
+
+        # ─── /restart ─────────
+        @dp.message(Command("restart"))
+        async def cmd_restart(m: Message):
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            backend = F_.backend
+            tmux_send_key(b.tmux_target, "C-c")
+            await asyncio.sleep(0.5)
+            tmux_send_key(b.tmux_target, "C-d")
+            await asyncio.sleep(2.0)
+            await backend.ensure_running(b)
+            await m.reply(f"🔄 已 restart {backend.name}")
+
+        # ─── 文件 / 图片 ─────────
+        @dp.message(F.photo | F.document)
+        async def on_file(m: Message):
+            from tmuxbot.tmux import tmux_send_text
+
+            if S.setup_mode:
+                await F_._do_setup(m)
+                return
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            if m.photo:
+                photo = m.photo[-1]
+                fname = f"tb_{m.message_id}.jpg"
+                file_id = photo.file_id
+            else:
+                d = m.document
+                if d.file_size and d.file_size > MAX_FILE_MB * 1024 * 1024:
+                    await m.reply(f"文件超过 {MAX_FILE_MB}MB")
+                    return
+                fname = d.file_name or f"tb_{m.message_id}.bin"
+                file_id = d.file_id
+            save_path = Path("/tmp") / fname
+            try:
+                f = await m.bot.get_file(file_id)
+                await m.bot.download_file(f.file_path, destination=save_path)
+            except Exception as e:
+                await m.reply(f"❌ 下载失败: {html.escape(str(e))}")
+                return
+            caption = m.caption or "请处理这个文件"
+            backend = F_.backend
+            await backend.ensure_running(b)
+            await tmux_send_text(b.tmux_target, f"{caption}\n\n@{save_path}")
+            await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
+
+        # ─── 文本 ─────────
+        @dp.message(F.text)
+        async def on_text(m: Message):
+            from tmuxbot.commands import capture_and_push
+            from tmuxbot.tmux import tmux_send_text
+
+            if S.setup_mode:
+                await F_._do_setup(m)
+                return
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            backend = F_.backend
+            await backend.ensure_running(b)
+
+            # /rename 接管: pending_rename 态下文本作为名字
+            pending_ts = S.pending_rename.get(b.name)
+            if pending_ts and (time.time() - pending_ts) < 120:
+                S.pending_rename.pop(b.name, None)
+                if m.text.strip() in ("/esc", "/cc"):
+                    tmux_send_key(b.tmux_target, "Escape")
+                    await m.reply("⎋ <b>已取消 rename</b>")
+                    return
+                await tmux_send_text(b.tmux_target, m.text)
+                await m.reply(f"✏️ <b>已提交新名字</b>: <code>{html.escape(m.text)}</code>")
+                return
+            if pending_ts:
+                S.pending_rename.pop(b.name, None)
+
+            text = m.text
+            cmd_for_feedback: str | None = None
+            aliases = backend.command_aliases()
+            if text.lstrip().startswith("/"):
+                cmd_for_feedback = text.lstrip().split()[0]
+                if cmd_for_feedback in aliases:
+                    real_cmd = aliases[cmd_for_feedback]
+                    rest = text.lstrip()[len(cmd_for_feedback):]
+                    text = real_cmd + rest
+            await tmux_send_text(b.tmux_target, text)
+            if cmd_for_feedback == "/rename":
+                S.pending_rename[b.name] = time.time()
+            if cmd_for_feedback:
+                S.fire(
+                    capture_and_push(
+                        F_, b, backend, m.chat.id, thread_id_of(m), command=cmd_for_feedback,
+                    )
+                )
+
+        # ─── picker callback ─────────
+        @dp.callback_query(F.data.startswith("picker:"))
+        async def on_picker_callback(cq: CallbackQuery):
+            from tmuxbot.picker import extract_picker_block
+
+            if S.setup_mode:
+                await cq.answer("⚠️ setup 中"); return
+            if cq.from_user and cq.from_user.id != S.boss_user_id:
+                await cq.answer("⚠️ 无权限"); return
+            parts = (cq.data or "").split(":", 2)
+            if len(parts) != 3:
+                await cq.answer("⚠️ 格式错误"); return
+            _, b_name, action = parts
+            b = next((bb for bb in S.bindings if bb.name == b_name), None)
+            if not b:
+                await cq.answer("⚠️ binding 未找到"); return
+
+            pre_block = extract_picker_block(tmux_capture(b.tmux_target, 80))
+            if pre_block is None:
+                await cq.answer("⚠️ 屏幕上 picker 已消失,此卡片过时", show_alert=True)
+                try:
+                    await cq.message.edit_text(
+                        (cq.message.html_text or "") + "\n\n<i>⚠ picker 已消失,按钮无效</i>",
+                    )
+                except Exception:
+                    pass
+                return
+
+            if action == "esc":
+                tmux_send_key(b.tmux_target, "Escape")
+                op_label = "⎋ Escape"
+            else:
+                try:
+                    idx = int(action)
+                except ValueError:
+                    await cq.answer("⚠️ 参数错误"); return
+                for _ in range(idx):
+                    tmux_send_key(b.tmux_target, "Down")
+                    await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
+                tmux_send_key(b.tmux_target, "Enter")
+                op_label = f"选项 {idx + 1}"
+
+            await asyncio.sleep(0.6)
+            post_block = extract_picker_block(tmux_capture(b.tmux_target, 80))
+            if post_block is None:
+                await cq.answer(f"✓ {op_label} 已生效")
+                mark = f"<b>✓ {op_label} 已生效</b>"
+                S.picker_notified.pop(b.name, None)
+            else:
+                await cq.answer(f"⚠ 已发 {op_label},picker 仍在屏幕上", show_alert=True)
+                mark = f"<i>⚠ 已发 {op_label},但 picker 仍在</i>"
+
+            try:
+                await cq.message.edit_text((cq.message.html_text or "") + f"\n\n{mark}")
+            except Exception:
+                pass
+
+        # ─── 非白名单群自动 leave ─────────
+        @dp.my_chat_member()
+        async def on_membership(ev):
+            if S.setup_mode:
+                return
+            chat_id = ev.chat.id
+            if not any(b.chat_id == chat_id for b in S.bindings):
+                log.warning(f"left non-whitelisted chat {chat_id}")
+                try:
+                    await ev.bot.leave_chat(chat_id)
+                except Exception:
+                    pass
+
+    # ────────── 启动 / 停止 ──────────
+    async def start_polling(self) -> None:
+        try:
+            await self.bot.set_my_commands(
+                [BotCommand(command=c, description=d) for c, d in self.backend.bot_commands]
+            )
+        except Exception as e:
+            log.warning(f"set_my_commands err: {e}")
+        await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
+
+    async def stop(self) -> None:
+        await self.dp.stop_polling()
+        await self.bot.session.close()
