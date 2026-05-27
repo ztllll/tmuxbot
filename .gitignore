@@ -12,3 +12,9 @@ __pycache__/
 *.log
 .DS_Store
 .codex
+
+# AI 项目宪法 — 内部协作铁律, 不公开
+CLAUDE.md
+# 历史内部档案 — git 历史可查, 不挂仓库
+CODE_REVIEW.md
+RESEARCH.md
