@@ -1,0 +1,37 @@
+# tmuxbot — systemd user service
+#
+# 安装:
+#   mkdir -p ~/.config/systemd/user
+#   ln -s ABS_PATH_TO_REPO/deploy/systemd/tmuxbot.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tmuxbot.service
+#   loginctl enable-linger $USER   # 让 service 在 logout 后继续跑
+#
+# 看 log:  journalctl --user -u tmuxbot -f
+# 重启:    systemctl --user restart tmuxbot
+# 停:      systemctl --user stop tmuxbot
+#
+# 这个 unit 默认假设项目在 ~/claude-project/tmuxbot
+# 如果项目在别处, 改 WorkingDirectory + ExecStart 两行的路径
+
+[Unit]
+Description=tmuxbot — Telegram ↔ tmux AI CLI bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/claude-project/tmuxbot
+ExecStart=/usr/bin/python3 tmuxbot.py
+Restart=always
+RestartSec=5s
+StandardOutput=append:%h/claude-project/tmuxbot/data/tmuxbot.log
+StandardError=append:%h/claude-project/tmuxbot/data/tmuxbot.log
+# 资源上限 — 多 backend / 多 binding 后可适当调高
+MemoryHigh=2G
+MemoryMax=4G
+# bot 自身死了 5s 后拉起 (Restart=always),
+# 但底层 claude TUI / tmux pane 自行管理,这里只管 bot 进程
+
+[Install]
+WantedBy=default.target

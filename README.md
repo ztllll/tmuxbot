@@ -44,15 +44,35 @@ cp .env.example .env
 vim .env                    # 填 TG_BOT_TOKEN (可选 TG_CODEX_BOT_TOKEN) 和 BOSS_USER_ID
 vim bindings.yaml           # 填 chat_id / tmux_session / cwd / bot_token_env / backend
 
-# 3. 跑起来 (推荐 detached tmux session 包一层, 方便看日志)
-tmux new-session -d -s tmuxbot-runner -x 156 -y 40 \
-  "python3 tmuxbot.py 2>&1 | tee -a data/tmuxbot.log"
+# 3. 跑起来
+bash bin/restart.sh         # tmux session 包一层 + 第一次失败自动重试 + 心跳验证
 
-# 4. 验证
-grep -E "starting|backend=|heartbeat|polling" data/tmuxbot.log | tail -10
+# 4. 看状态
+bash bin/status.sh          # 进程 + session + 日志末尾 + 心跳
+
+# 停止
+bash bin/stop.sh
 ```
 
 在 TG 发 `/whoami`, bot 回 user_id / chat_id / thread_id → 通了。
+
+### 生产部署 (systemd, 推荐)
+
+```bash
+# 一次性安装 systemd user service
+mkdir -p ~/.config/systemd/user
+ln -sf "$(pwd)/deploy/systemd/tmuxbot.service" ~/.config/systemd/user/tmuxbot.service
+systemctl --user daemon-reload
+systemctl --user enable --now tmuxbot.service
+loginctl enable-linger $USER   # logout 后继续跑
+
+# 看 log / 重启 / 停
+journalctl --user -u tmuxbot -f
+systemctl --user restart tmuxbot
+systemctl --user stop tmuxbot
+```
+
+bot crash 后 5 秒内自动拉起,无需手动守护。
 
 ---
 

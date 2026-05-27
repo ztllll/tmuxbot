@@ -208,6 +208,14 @@ tmuxbot/
 
 ---
 
+### 2026-05-27 — tmux_send_text 加 TUI idle 检测,修图片+文字 race
+
+- **决策**: `tmux_send_text` paste 完后 **轮询 capture-pane 直到 TUI idle 才发 Enter**(超时 10s 兜底强发)
+- **为什么**: 旧实现 paste + sleep 0.5s + Enter, claude busy 态下 Enter 进 PTY buffer 排队, 切回 idle 时被 paste 上下文吃掉 → 消息丢/合并到下条
+- **检测方式**: 通用 regex 匹配「动词 + 时间字段」(`Working/Doing/Crunched/Sautéed/Cooking…(Xs|Xm Ys)`), 覆盖 claude 和 codex 双家 TUI
+- **反例已驳**: 检测 paste 内容是否出现在输入框 → claude busy 时输入框禁渲染, 永远 timeout; 检测固定 prompt 字符 → 各家 TUI 不同样式
+- **影响**: tmux.py 加 `_is_tui_busy` + `IDLE_WAIT_MAX=10s`; `tmux_send_text` 不再 sync 等 0.5s, 而是动态 ≤10s 等 idle
+
 ### 2026-05-27 — 多 bot token 共存,1 bot ↔ 1 backend ↔ N tmux 子线程
 
 - **决策**: 不同 CLI 类型(claude_code / codex / 未来其他)用**独立 bot token + 独立 TelegramFrontend 实例**,bindings.yaml 每个 binding 配 `bot_token_env` 字段路由
