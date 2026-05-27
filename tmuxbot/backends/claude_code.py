@@ -13,10 +13,13 @@ import html
 import json
 import logging
 import re
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
+from tmuxbot.quota import fetch_quota
 from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_send_text
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
 
@@ -241,8 +244,93 @@ def parse_cost(raw: str) -> str | None:
     return "\n".join(parts)
 
 
+# OAuth /api/oauth/usage 返回的窗口 key → 中文标签 (key 顺序决定渲染顺序)
+_QUOTA_WINDOW_LABEL = {
+    "five_hour":          "🕔 5 小时",
+    "seven_day":          "📅 本周 (总)",
+    "seven_day_opus":     "📅 本周 Opus",
+    "seven_day_sonnet":   "📅 本周 Sonnet",
+    "seven_day_oauth_apps": "📅 本周 OAuth Apps",
+}
+
+
+def _parse_iso8601(s: str) -> float | None:
+    """ISO-8601 字符串 → unix 时间戳"""
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return None
+
+
+def _fmt_remaining(target_ts: float) -> str:
+    """unix 时间戳距当下的剩余时间 → 人读格式 Xh Ym / Xd Yh"""
+    delta = int(target_ts - time.time())
+    if delta <= 0:
+        return "已过期"
+    if delta < 3600:
+        return f"{delta // 60}m{delta % 60}s"
+    if delta < 86400:
+        h, rem = divmod(delta, 3600)
+        return f"{h}h{rem // 60}m"
+    d, rem = divmod(delta, 86400)
+    h = rem // 3600
+    return f"{d}d{h}h"
+
+
+def _fmt_quota_lines(
+    payload: dict | None, fetched_at: float, last_error: str | None
+) -> list[str]:
+    """把 /api/oauth/usage 的 payload 渲染成 /status 的配额章节 (HTML)"""
+    lines = ["", "🚦 <b>订阅配额</b>"]
+    if not payload:
+        reason = f" ({last_error})" if last_error else ""
+        lines.append(f"  · 无法读取{html.escape(reason)}")
+        return lines
+
+    rows: list[list[str]] = []
+    for key, label in _QUOTA_WINDOW_LABEL.items():
+        win = payload.get(key)
+        if not isinstance(win, dict):
+            continue
+        util = win.get("utilization")
+        resets_at_str = win.get("resets_at")
+        if util is None and not resets_at_str:
+            continue
+        pct = float(util) if isinstance(util, (int, float)) else 0.0
+        bar_used = max(0, min(10, round(pct / 10)))
+        bar = "█" * bar_used + "░" * (10 - bar_used)
+        rem = "-"
+        if resets_at_str:
+            ts = _parse_iso8601(resets_at_str)
+            if ts is not None:
+                rem = _fmt_remaining(ts)
+        rows.append([label, f"{pct:.0f}%", bar, rem])
+
+    if rows:
+        lines.append(
+            f"<pre>{html.escape(render_table(['窗口', '已用', '进度', '还剩'], rows))}</pre>"
+        )
+
+    extra = payload.get("extra_usage") or {}
+    if isinstance(extra, dict) and extra.get("is_enabled"):
+        used = extra.get("used_credits")
+        cap = extra.get("monthly_limit")
+        cur = extra.get("currency") or "USD"
+        if used is not None and cap is not None:
+            lines.append(
+                f"  · 额外用量: <b>{html.escape(str(used))}/{html.escape(str(cap))} {html.escape(cur)}</b>"
+            )
+
+    if fetched_at:
+        age = int(time.time() - fetched_at)
+        lines.append(f"  <i>数据 {age}s 前刷新</i>")
+    return lines
+
+
 def parse_status(raw: str) -> str | None:
-    """/status → 关键 key:value 摘要 (中文化)"""
+    """/status → 关键 key:value 摘要 (中文化) + Anthropic 订阅配额章节"""
     clean = strip_decorations(raw)
     kvs = re.findall(r"^[\s│├└]*([A-Z][A-Za-z ]+):\s*(.+)$", clean, re.M)
     if not kvs:
@@ -258,6 +346,15 @@ def parse_status(raw: str) -> str | None:
         zh = STATUS_ZH.get(k, k)
         v = v.strip()[:200]
         parts.append(f"  · <b>{html.escape(zh)}</b>: {html.escape(v)}")
+
+    # 拼配额章节 (5h / 7d 等窗口 + 重置倒计时, 走 OAuth API, 30s cache)
+    # 第一次会发 HTTP 请求 (≤6s 阻塞), 后续 cache 内只查 dict 不阻塞
+    try:
+        payload, fetched_at, err = fetch_quota()
+        parts.extend(_fmt_quota_lines(payload, fetched_at, err))
+    except Exception as e:  # 兜底, 别因为 quota 拉挂整个 /status
+        log.warning(f"fetch_quota raised: {e}")
+
     return "\n".join(parts)
 
 
