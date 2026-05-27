@@ -228,24 +228,18 @@ class TelegramFrontend(Frontend):
 
     # ────────── ACL ──────────
     def _acl_ok(self, m: Message) -> bool:
+        """全局 ACL: from_user 在白名单 **且** source (chat_id, thread_id) 已配置 binding。
+        未配置的 source 即使 Boss 本人发也一律静默 — 不打 👀 / 不 typing / 不回复 / 不警告。"""
         if self.state.setup_mode:
             return True
-        if not m.from_user:
+        if not m.from_user or m.from_user.id != self.state.boss_user_id:
             return False
-        return m.from_user.id == self.state.boss_user_id
+        return self.find_binding(*source_key(m)) is not None
 
     async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
         if not self._acl_ok(m):
             return None
-        b = self.find_binding(*source_key(m))   # ★ 仅在自己 frontend 的 binding 子集找
-        if not b:
-            await m.reply(
-                "⚠️ 未绑定该 source (或绑给了别的 bot)\n"
-                f"chat_id=<code>{m.chat.id}</code> thread_id=<code>{m.message_thread_id}</code>\n"
-                f"当前 bot 接 backend=<code>{self.backend.name}</code>"
-            )
-            return None
-        return b
+        return self.find_binding(*source_key(m))  # ACL 已保证非 None
 
     # ────────── setup mode (首次锁定 user_id + chat_id) ──────────
     def _save_env_user_id(self, user_id: int) -> None:
@@ -307,25 +301,30 @@ class TelegramFrontend(Frontend):
         # ─── ack middleware (👀 反应 + typing) ─────────
         @dp.message.middleware()
         async def ack_received(handler, event: Message, data):
-            if not S.setup_mode and event.from_user and event.from_user.id == S.boss_user_id:
-                try:
-                    await event.bot.set_message_reaction(
-                        chat_id=event.chat.id,
-                        message_id=event.message_id,
-                        reaction=[ReactionTypeEmoji(emoji=ACK_REACTION)],
-                    )
-                except Exception as e:
-                    log.debug(f"set_message_reaction err: {e}")
+            # ★ ACL 全局规则: Boss 白名单 + source 必须有 binding 才 ack;
+            # 未配置 source 直接 pass 到 handler (handler 内 _acl_ok 也会拒)
+            if (
+                not S.setup_mode
+                and event.from_user
+                and event.from_user.id == S.boss_user_id
+            ):
                 tid = thread_id_of(event)
-                try:
-                    await event.bot.send_chat_action(
-                        chat_id=event.chat.id, action="typing", message_thread_id=tid,
-                    )
-                except Exception as e:
-                    log.debug(f"send_chat_action err: {e}")
-                # 垫一次 last_active(消息→jsonl 有空窗)
                 b = F_.find_binding(event.chat.id, tid)
-                if b:
+                if b is not None:
+                    try:
+                        await event.bot.set_message_reaction(
+                            chat_id=event.chat.id,
+                            message_id=event.message_id,
+                            reaction=[ReactionTypeEmoji(emoji=ACK_REACTION)],
+                        )
+                    except Exception as e:
+                        log.debug(f"set_message_reaction err: {e}")
+                    try:
+                        await event.bot.send_chat_action(
+                            chat_id=event.chat.id, action="typing", message_thread_id=tid,
+                        )
+                    except Exception as e:
+                        log.debug(f"send_chat_action err: {e}")
                     S.last_active[b.name] = time.time()
             return await handler(event, data)
 
@@ -349,15 +348,8 @@ class TelegramFrontend(Frontend):
             if not F_._acl_ok(m):
                 return
             b = F_.find_binding(*source_key(m))
-            if not b:
-                rows = [[bb.name, str(bb.chat_id), str(bb.thread_id or "-")] for bb in F_.bindings]
-                await m.reply(
-                    f"<b>tmuxbot</b> · 当前 bot 接 backend=<code>{F_.backend.name}</code>, "
-                    f"{len(F_.bindings)} bindings\n"
-                    f"<pre>{html.escape(render_table(['name', 'chat_id', 'thread'], rows))}</pre>"
-                )
-                return
-
+            # ACL 已保证 b 非 None (未配置 source 在 _acl_ok 就已拒)
+            assert b is not None
             backend = F_.backend
             notice = await m.reply("⏳ 抓综合状态…(注入 /context + /usage,可能短暂中断生成)")
 
@@ -607,6 +599,11 @@ class TelegramFrontend(Frontend):
                 await cq.answer("⚠️ setup 中"); return
             if cq.from_user and cq.from_user.id != S.boss_user_id:
                 await cq.answer("⚠️ 无权限"); return
+            # ★ 全局 ACL 双重门禁: source 没在本 frontend 的 binding 子集 → 静默
+            if cq.message:
+                cq_tid = getattr(cq.message, "message_thread_id", None)
+                if F_.find_binding(cq.message.chat.id, cq_tid) is None:
+                    await cq.answer(); return
             parts = (cq.data or "").split(":", 2)
             if len(parts) != 3:
                 await cq.answer("⚠️ 格式错误"); return

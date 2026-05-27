@@ -176,7 +176,7 @@ bindings:
 - ❌ pkill 用 -TERM 杀不死 zombie (jsonl_poll_loop 不响应 SIGTERM) → 用 -KILL
 - ✅ `~/.claude/settings.json` 必含 `"skipDangerousModePermissionPrompt": true`
 - ✅ TG bot 在群里设管理员或 BotFather 关 privacy mode
-- ✅ ACL: `from_user.id == BOSS_USER_ID` (单一来源, 不要求 @bot)
+- ✅ ACL **双重门禁**: `from_user.id == BOSS_USER_ID` **且** `source_key (chat_id, thread_id)` 已在 bindings.yaml 配置。未配置的 source 一律静默 (不打 👀 / 不 typing / 不回复 / 不警告), 即使 Boss 本人发。两套 bot (claude / codex) 共用
 - ✅ `.gitignore` 必含 `.env` / `bindings.yaml` / `data/`
 
 ---

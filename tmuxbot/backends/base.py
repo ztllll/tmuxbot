@@ -27,7 +27,8 @@ class CmdOpts:
     lines: int = 80
     parser_can_retry: bool = False    # parser 返回 None 时是否继续等
     done_pattern: re.Pattern | None = None    # 屏幕命中即结束
-    expect_new_session: bool = False  # /compact /clear 等会切 jsonl
+    expect_new_session: bool = False  # /clear /new: 切 session_id 新建 jsonl
+    expect_compact_done: bool = False # /compact: 不切 session_id, 同 jsonl 末尾追加压缩 marker
     notice: str | None = None         # 进度提示文案
     fallback_summary: str | None = None  # 走完都没出 summary 时用
 
@@ -80,6 +81,18 @@ class Backend(ABC):
         """从 jsonl 最后一条带 usage 的 message 拿 context size
         (input_tokens + cache_read_input_tokens + cache_creation_input_tokens).
 
-        用于 /compact 在压缩前后做对比 (e.g. 880k → 22k)。
+        用于 /compact 在压缩前显示 ctx 大小。
         默认 None = backend 不支持, 调用方需检查 None 并跳过对比。"""
+        return None
+
+    def compact_metadata_since(self, jsonl_path: Path | None, since_byte: int = 0) -> dict | None:
+        """从 since_byte 字节起读 jsonl 新增内容, 找 /compact 完成 marker 并解析 metadata。
+
+        claude 真触发 /compact 后会在**同一个 jsonl** 末尾 append 一条
+        ``type=system, subtype=compact_boundary`` 的事件 — session_id 不变, 这是唯一
+        可靠硬信号 (屏幕 'Compacted' 字样在 capture 历史里会假阳)。事件里的
+        ``compactMetadata`` 字段直接含 preTokens / postTokens / durationMs / trigger。
+
+        返回 dict (含上述字段) 表示找到 marker; 返回 None 表示没找到。
+        默认 None = backend 不支持 / 没有可观察的完成 marker。"""
         return None

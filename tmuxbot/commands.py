@@ -83,13 +83,18 @@ async def capture_and_push(
     opts: CmdOpts = backend.command_opts().get(key, CmdOpts())
     initial_session = b.last_session_id
 
-    # /compact 等 expect_new_session 命令: 入口拿压缩前 context size, 完成后对比
+    # /clear /new: 入口拿压缩前 ctx size (走 read_context_size); /compact: 入口锁
+    # jsonl 字节数, 用于 compact_boundary marker 的范围限定 (token 从 metadata 拿)
     before_size: int | None = None
     before_jsonl = None
-    if opts.expect_new_session:
+    before_jsonl_size: int = 0
+    if opts.expect_new_session or opts.expect_compact_done:
         try:
             before_jsonl = backend.find_active_jsonl(b)
-            before_size = backend.read_context_size(before_jsonl)
+            if before_jsonl and before_jsonl.is_file():
+                before_jsonl_size = before_jsonl.stat().st_size
+            if opts.expect_new_session:
+                before_size = backend.read_context_size(before_jsonl)
         except Exception as e:
             log.debug(f"capture_and_push {key} read before context: {e}")
 
@@ -104,11 +109,12 @@ async def capture_and_push(
     last_hash, stable, out = "", 0, ""
     summary: str | None = None
     new_session_seen = False
+    compact_meta: dict | None = None
     early_reason = "max_iters"
 
     for i in range(opts.max_iters):
         out = tmux_capture(b.tmux_target, opts.lines)
-        # ★ session_switch 硬信号优先 — /compact /clear /new 必须确认 jsonl 已切换
+        # ★ 硬信号 1: jsonl session 切换 — /clear /new 真触发会换 session_id 新建 jsonl
         if (
             opts.expect_new_session
             and initial_session
@@ -118,15 +124,31 @@ async def capture_and_push(
             new_session_seen = True
             early_reason = "session_switch"
             break
-        # done_pattern 仅对不要求新会话的命令认定 (避免屏幕历史里老 Compacted 假阳)
+        # ★ 硬信号 2: jsonl 末尾出现 compact_boundary system event — /compact 不切 session 但写 marker
+        if opts.expect_compact_done:
+            try:
+                cur_jsonl = backend.find_active_jsonl(b)
+                meta = backend.compact_metadata_since(cur_jsonl, before_jsonl_size)
+                if meta is not None:
+                    compact_meta = meta
+                    early_reason = "compact_boundary"
+                    break
+            except Exception as e:
+                log.debug(f"capture_and_push {key} compact_metadata_since err: {e}")
+        # done_pattern 仅对不要求 jsonl 硬信号的命令用 (避免屏幕历史里残留字样假阳)
         if (
             not opts.expect_new_session
+            and not opts.expect_compact_done
             and opts.done_pattern
             and opts.done_pattern.search(strip_decorations(out))
         ):
             early_reason = "done_pattern"
             break
-        if opts.parser and opts.parser_can_retry and not opts.expect_new_session:
+        if (
+            opts.parser and opts.parser_can_retry
+            and not opts.expect_new_session
+            and not opts.expect_compact_done
+        ):
             try:
                 s = opts.parser(out)
             except Exception as e:
@@ -136,18 +158,23 @@ async def capture_and_push(
                 summary = s
                 early_reason = "parser_hit"
                 break
-        h = str(hash(out))
-        if h == last_hash:
-            stable += 1
-            if stable >= 2:
-                early_reason = "stable"
-                break
-        else:
-            stable, last_hash = 0, h
+        # stable 早退: 仅对无 hard signal 的命令; expect_new_session / expect_compact_done
+        # 已有 jsonl 硬信号兜底, 屏幕静止 ≠ jsonl flush 完成 (claude TUI 事务式 flush —
+        # 屏幕显示 'Compacted' 字样会比 compact_boundary marker 落盘早 30-120s)
+        if not opts.expect_new_session and not opts.expect_compact_done:
+            h = str(hash(out))
+            if h == last_hash:
+                stable += 1
+                if stable >= 2:
+                    early_reason = "stable"
+                    break
+            else:
+                stable, last_hash = 0, h
         await asyncio.sleep(opts.poll)
 
     log.info(f"capture_and_push {key} done: {early_reason} (iter ~{i + 1})")
 
+    # 循环出口后再补一次 session_switch 检测 (jsonl tailer 可能在 sleep 间刚好刷上)
     if (
         not new_session_seen
         and opts.expect_new_session
@@ -156,9 +183,24 @@ async def capture_and_push(
         and b.last_session_id != initial_session
     ):
         new_session_seen = True
+    if compact_meta is None and opts.expect_compact_done:
+        # jsonl flush 是事务式的, marker 落盘可能比循环退出晚 — 5 次 × 1s 重试兜底
+        for retry in range(5):
+            try:
+                compact_meta = backend.compact_metadata_since(
+                    backend.find_active_jsonl(b), before_jsonl_size,
+                )
+            except Exception as e:
+                log.debug(f"capture_and_push {key} final compact check (retry {retry}): {e}")
+            if compact_meta is not None:
+                log.info(f"capture_and_push {key} compact_meta hit on retry {retry}")
+                break
+            await asyncio.sleep(1.0)
 
-    # /compact 等: 切换后拿压缩后 context size, 算 delta
+    # /clear /new: 新 session 后 jsonl 已切换, 拿 after_size 算压缩 delta
+    # /compact: 直接读 compactMetadata.pre/postTokens, 不走 read_context_size
     delta_line: str | None = None
+    compact_extra_line: str | None = None
     if opts.expect_new_session and new_session_seen:
         try:
             after_jsonl = backend.find_active_jsonl(b)
@@ -166,10 +208,15 @@ async def capture_and_push(
             delta_line = _fmt_token_delta(before_size, after_size)
         except Exception as e:
             log.debug(f"capture_and_push {key} read after context: {e}")
+    if opts.expect_compact_done and compact_meta:
+        delta_line = _fmt_token_delta(compact_meta.get("preTokens"), compact_meta.get("postTokens"))
+        dur_ms = compact_meta.get("durationMs")
+        trig = compact_meta.get("trigger") or "?"
+        if dur_ms:
+            compact_extra_line = f"⏱ 耗时 <code>{dur_ms / 1000:.1f}s</code> · 触发 <code>{trig}</code>"
 
     try:
-        # 末尾再调一次 parser (覆盖 /clear /new 等固定文案 parser; 不会触发屏幕历史
-        # 假阳, 因为我们已经先确认 session_switch 或者非 expect_new_session)
+        # 末尾再调一次 parser (覆盖 /clear /new 等固定文案 parser)
         if summary is None and opts.parser and out.strip():
             try:
                 summary = opts.parser(out)
@@ -182,11 +229,17 @@ async def capture_and_push(
                 summary += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
             if delta_line:
                 summary += f"\n{delta_line}"
+            if compact_extra_line:
+                summary += f"\n{compact_extra_line}"
             await frontend.send_html(chat_id, thread_id, summary)
             return
+        total_wait = opts.init_delay + opts.max_iters * opts.poll + 5  # +5s for final retry
         if opts.expect_new_session and not new_session_seen:
-            # 关键: 没等到 jsonl 切换 = /compact 大概率没真触发, 报警告而非假阳成功
-            warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {opts.max_iters * opts.poll:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
+            warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
+            await frontend.send_html(chat_id, thread_id, warn)
+            return
+        if opts.expect_compact_done and compact_meta is None:
+            warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未出现 compact_boundary marker (命令可能未真触发, 检查 TUI 屏幕)"
             await frontend.send_html(chat_id, thread_id, warn)
             return
         if opts.fallback_summary:
@@ -196,6 +249,8 @@ async def capture_and_push(
                 fb += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
             if delta_line:
                 fb += f"\n{delta_line}"
+            if compact_extra_line:
+                fb += f"\n{compact_extra_line}"
             await frontend.send_html(chat_id, thread_id, fb)
             return
         if out.strip():
@@ -203,7 +258,7 @@ async def capture_and_push(
             if cleaned:
                 await frontend.send_pre(chat_id, thread_id, cleaned)
     finally:
-        if not opts.expect_new_session:
+        if not opts.expect_new_session and not opts.expect_compact_done:
             try:
                 tmux_send_key(b.tmux_target, "Escape")
             except Exception:

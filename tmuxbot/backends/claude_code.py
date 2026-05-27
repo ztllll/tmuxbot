@@ -107,8 +107,9 @@ CAT_ZH = {
 def parse_context(raw: str) -> str | None:
     """/context → 标题 + render_table 卡片"""
     clean = strip_decorations(raw)
+    # 用量数字单位可省 (新会话 / 刚 /compact 后 = "0/1m tokens (0%)" 纯数字)
     total_m = re.search(
-        r"(\d+(?:\.\d+)?[kmKM])\s*/\s*(\d+[kmKM])\s*tokens?\s*\((\d+)%\)",
+        r"(\d+(?:\.\d+)?[kmKM]?)\s*/\s*(\d+[kmKM])\s*tokens?\s*\((\d+)%\)",
         clean,
     )
     if not total_m:
@@ -497,15 +498,10 @@ class ClaudeCodeBackend(Backend):
             return events
 
         if t == "attachment":
-            att = j.get("attachment") or {}
-            att_t = att.get("type", "")
-            if att_t.startswith("hook_") or att.get("hookEvent"):
-                return []
-            if att_t in ("image", "image_url"):
-                return [("attachment", "📷 收到图片附件")]
-            if att_t in ("file", "document"):
-                name = att.get("name") or att.get("path") or ""
-                return [("attachment", f"📎 附件 <code>{html.escape(str(name)[:80])}</code>")]
+            # 所有 attachment 事件都不推到 TG:
+            #   - Boss 在 TG 发图片是主动行为,bot 回声 "📎 附件" 无意义
+            #   - claude 自动注入的 compact_file_reference / file / date_change /
+            #     deferred_tools_delta / hook_* 等都是内部事件,Boss 不需要看
             return []
 
         return []
@@ -538,12 +534,19 @@ class ClaudeCodeBackend(Backend):
             "/status":  CmdOpts(parser=parse_status),
             "/help":    CmdOpts(parser=parse_help, lines=200),
             "/compact": CmdOpts(
-                # ★ 不挂 parser: parse_compact 的 COMPACT_DONE_RE 会命中屏幕历史里
-                # 老的 "Compacted (ctrl+o..)" 字样 → 假阳。完成由 expect_new_session
-                # (jsonl 切换硬信号) 判定, capture_and_push 切换后会自动拼 token 对比。
-                init_delay=2.0, poll=1.0, max_iters=120, lines=120,
-                expect_new_session=True,
-                notice="⏳ 压缩中…(可能 10-60s,完成后会发完成通知)",
+                # ★ /compact 不切 session_id, 在同一个 jsonl 末尾 append 一条
+                # type=system + subtype=compact_boundary 事件 (含 compactMetadata
+                # 直接给 pre/postTokens) — 这是唯一可靠硬信号。屏幕 "Compacted
+                # (ctrl+o..)" 字样在 120 行 capture 历史里会假阳, 所以不挂
+                # done_pattern; pre/post token 由 metadata 直接拿, 不再依赖
+                # read_context_size 倒扫 jsonl。
+                # max_iters=360: 圆桌脚本类大工程 dur 可超 200s, 加上 jsonl 事务式
+                # flush 滞后 30-120s, 给到 360s 窗口 + 5s retry = 367s 总等待裕度;
+                # commands.py 已禁 expect_compact_done 时的 stable 早退 (屏幕静止 ≠
+                # jsonl flush, claude TUI 事务式 flush 会有 30-120s 滞后)。
+                init_delay=2.0, poll=1.0, max_iters=360, lines=120,
+                expect_compact_done=True,
+                notice="⏳ 压缩中…(可能 2-5 分钟,完成后会发通知)",
                 fallback_summary="✅ <b>上下文已压缩</b>\n📜 完整摘要 TUI 内 <code>ctrl+o</code> 查看",
             ),
             "/clear": CmdOpts(parser=parse_clear, init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True),
@@ -587,6 +590,54 @@ class ClaudeCodeBackend(Backend):
             if total > 0:
                 return total
         return None
+
+    def compact_metadata_since(self, jsonl_path: Path | None, since_byte: int = 0) -> dict | None:
+        """/compact 完成硬信号 + metadata: 从 since_byte 起新增 jsonl 内容里找
+        ``type=system, subtype=compact_boundary`` 事件, 解析 ``compactMetadata``。
+
+        实测字段 (claude 2.1.150)::
+
+            {
+              "type": "system",
+              "subtype": "compact_boundary",
+              "compactMetadata": {
+                "trigger": "manual",     # 或 "auto"
+                "preTokens": 410228,     # 压缩前 ctx
+                "postTokens": 4888,      # 压缩后 ctx
+                "durationMs": 127331
+              }
+            }
+
+        since_byte 限定只看新增部分, 避免历史 marker 假阳。
+        """
+        if not jsonl_path or not jsonl_path.is_file():
+            return None
+        try:
+            with jsonl_path.open("rb") as f:
+                f.seek(since_byte)
+                tail = f.read()
+        except Exception as e:
+            log.debug(f"compact_metadata_since read err: {e}")
+            return None
+        if not tail or b"compact_boundary" not in tail:
+            return None
+        for raw in tail.splitlines():
+            if not raw or b"compact_boundary" not in raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                continue
+            if obj.get("type") == "system" and obj.get("subtype") == "compact_boundary":
+                meta = obj.get("compactMetadata") or {}
+                return {
+                    "preTokens": meta.get("preTokens"),
+                    "postTokens": meta.get("postTokens"),
+                    "durationMs": meta.get("durationMs"),
+                    "trigger": meta.get("trigger"),
+                }
+        return None
+        return False
 
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         try:
