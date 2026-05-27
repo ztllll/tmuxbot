@@ -576,7 +576,14 @@ class TelegramFrontend(Frontend):
             cmd_for_feedback: str | None = None
             aliases = backend.command_aliases()
             if text.lstrip().startswith("/"):
-                cmd_for_feedback = text.lstrip().split()[0]
+                raw_cmd = text.lstrip().split()[0]
+                # ★ 剥掉 group 命令的 @bot_username 后缀
+                # TG 在 group 内会自动给命令加 @bot_username (如 /compact@ztl_claude_bot)
+                # 不剥的话: COMMAND_OPTS 查 key miss + claude TUI 不认这种带 @ 的命令
+                cmd_for_feedback = raw_cmd.split("@", 1)[0]
+                # 把注入到 claude 的 text 也用纯净命令替换原 raw_cmd
+                if raw_cmd != cmd_for_feedback:
+                    text = cmd_for_feedback + text.lstrip()[len(raw_cmd):]
                 if cmd_for_feedback in aliases:
                     real_cmd = aliases[cmd_for_feedback]
                     rest = text.lstrip()[len(cmd_for_feedback):]
