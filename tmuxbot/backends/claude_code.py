@@ -217,12 +217,23 @@ def parse_cost(raw: str) -> str | None:
         bar = "█" * bar_used + "░" * (10 - bar_used)
         limit_rows.append([zh, f"{pct}%", bar, reset])
 
-    if limit_rows:
+    # ★ 限制窗口优先走 OAuth API (全 5 窗口 + 精确 resets_at), 屏幕 parse 只在 API 挂时兜底
+    # claude TUI /usage 屏幕只显示当前活跃/接近上限的窗口 → 5h 0% 时屏幕仅 2 行不全
+    api_quota_lines: list[str] = []
+    try:
+        payload, fetched_at, err = fetch_quota()
+        if payload:
+            api_quota_lines = _fmt_quota_lines(payload, fetched_at, err)
+    except Exception as e:
+        log.warning(f"fetch_quota raised in parse_cost: {e}")
+
+    if api_quota_lines:
+        parts.extend(api_quota_lines)
+    elif limit_rows:
         parts.append("📈 <b>限制窗口</b>")
         parts.append(f"<pre>{html.escape(render_table(['窗口', '已用', '进度', '重置时间'], limit_rows))}</pre>")
-
-    # 旧版 /cost 兜底
-    if not limit_rows:
+    else:
+        # 旧版 /cost 兜底 (API + 屏幕 limit_rows 都没拿到)
         win_m = re.search(
             r"(\d+)\s*/\s*(\d+)\s+(?:premium\s+)?(?:message|prompt|request)s?",
             clean, re.I,
@@ -460,6 +471,10 @@ class ClaudeCodeBackend(Backend):
         try:
             j = json.loads(line)
         except Exception:
+            return []
+        # ★ subagent (Agent tool) 内部对话以 isSidechain=true 写进主 jsonl, 非主会话真输出,
+        # 不推 TG — 否则派一次 subagent 会把整个子 agent transcript 回吐 (flood 隐患)
+        if j.get("isSidechain"):
             return []
         t = j.get("type")
 

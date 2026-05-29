@@ -26,6 +26,10 @@ log = logging.getLogger("tmuxbot")
 JSONL_POLL = 0.5
 AGGREGATOR_MAX_CHARS = 3500    # 累计超此长度封闭, 开新 aggregator
 AGGREGATOR_IDLE_SECONDS = 15   # 静默超此秒数 = turn 结束, watcher 自动封闭
+# ★ 积压保护阈值: 单次发现 jsonl 落盘新增超此字节数, 判定为「事务式 flush 爆发」
+# (claude TUI 在派 subagent / 超长 turn 时不实时落盘, 完成后一次性 flush 数 MB)。
+# 逐条推这种积压会瞬间撞 Telegram flood control → 直接跳末尾不回吐。正常单 turn 远 < 此值。
+JSONL_BACKLOG_LIMIT = 512 * 1024   # 512KB
 
 
 async def jsonl_poll_loop(
@@ -73,6 +77,27 @@ async def jsonl_poll_loop(
             off = state.offsets.get(key, sz)
             if sz < off:
                 off = 0
+            # ★ 积压保护: 一次性落盘超 JSONL_BACKLOG_LIMIT (事务式 flush 爆发, 典型为
+            # 自指会话里派 subagent 后整段 flush)。逐条推会撞 Telegram flood control →
+            # 跳末尾, 发一条提示, 不回吐积压 (TUI 里看得到, 不需要 TG 重放)。
+            if sz - off > JSONL_BACKLOG_LIMIT:
+                skipped = sz - off
+                log.warning(
+                    f"[{b.name}] backlog {skipped}B > {JSONL_BACKLOG_LIMIT}B 一次性落盘, "
+                    f"跳末尾防 flood (off {off} → {sz})"
+                )
+                state.offsets[key] = sz
+                save_offsets(offsets_file, state.offsets, force=True)
+                try:
+                    await frontend.send_html(
+                        b.chat_id, b.thread_id,
+                        f"⚠️ 检测到 <b>{skipped // 1024}KB</b> 内容一次性落盘, "
+                        f"已跳过未推送 (防 Telegram 限流)\n如需查看请到 TUI",
+                    )
+                except Exception:
+                    log.debug(f"[{b.name}] backlog notice send err")
+                await asyncio.sleep(JSONL_POLL)
+                continue
             if sz > off:
                 with open(jl, "rb") as f:
                     f.seek(off)
