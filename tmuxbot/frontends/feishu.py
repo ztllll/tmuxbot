@@ -222,7 +222,7 @@ class FeishuFrontend:
         body = (
             im_v1.CreateMessageReactionRequestBody.builder()
             .reaction_type(
-                im_v1.EmojiType.builder().emoji_type(emoji_type).build()
+                im_v1.Emoji.builder().emoji_type(emoji_type).build()
             )
             .build()
         )
@@ -284,13 +284,24 @@ class FeishuFrontend:
             msg_type: str = msg.message_type    # "text" / "image" / ...
             open_id: str = sender.sender_id.open_id
 
-            # ── ACL 双重门禁 ──
-            if not self._acl_ok(open_id, chat_id):
-                return
+            # 诊断: 收到的每条消息 (open_id 按 app 区分, 新接入时据此配白名单; debug 级不刷屏)
+            log.debug(
+                f"feishu 收到消息: chat_id={chat_id} chat_type={chat_type} "
+                f"open_id={open_id} msg_type={msg_type}"
+            )
 
+            # ── ACL 双重门禁 ──
+            # 非 Boss 白名单 → 静默
+            if not open_id or open_id not in self.boss_open_ids:
+                return
+            # Boss 发来但 source 未配置 binding → 打印 chat_id 提示 (便于加新 binding), 然后静默
             b = self.find_binding(chat_id)
             if b is None:
-                return  # 理论上 _acl_ok 已保证, 双重保险
+                log.info(
+                    f"feishu 未配置 source: chat_id={chat_id} chat_type={chat_type} "
+                    f"(来自 Boss open_id={open_id[:10]}…, 可据此在 bindings.yaml 加 binding)"
+                )
+                return
 
             # ── 群消息: group_only_when_mentioned 过滤 ──
             if chat_type == "group" and self.group_only_when_mentioned:

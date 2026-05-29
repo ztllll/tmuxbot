@@ -39,10 +39,12 @@ TOKEN_TO_BACKEND = {
     "TG_CODEX_BOT_TOKEN": "codex",
 }
 
+# 路径可被 env 覆盖, 支持同机多实例 (如 claude-feishu / codex-feishu 各一进程,
+# 因 lark-oapi 模块级全局 loop 不支持单进程跑多个飞书 app 的 ws client)
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_DIR / "data"
-ENV_FILE = PROJECT_DIR / ".env"
-BINDINGS_FILE = PROJECT_DIR / "bindings.yaml"
+DATA_DIR = Path(os.getenv("TMUXBOT_DATA_DIR") or (PROJECT_DIR / "data"))
+ENV_FILE = Path(os.getenv("TMUXBOT_ENV") or (PROJECT_DIR / ".env"))
+BINDINGS_FILE = Path(os.getenv("TMUXBOT_BINDINGS") or (PROJECT_DIR / "bindings.yaml"))
 OFFSETS_FILE = DATA_DIR / "offsets.json"
 LOCK_FILE = DATA_DIR / "tmuxbot.lock"
 
