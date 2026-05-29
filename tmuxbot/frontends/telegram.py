@@ -110,6 +110,7 @@ class TelegramFrontend(Frontend):
         self.bindings_file = bindings_file
         self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.dp = Dispatcher()
+        self._bot_username: str | None = None  # 懒加载, start_polling 时填入
         self._register_handlers()
 
     def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
@@ -538,8 +539,7 @@ class TelegramFrontend(Frontend):
         # ─── 文本 ─────────
         @dp.message(F.text)
         async def on_text(m: Message):
-            from tmuxbot.commands import capture_and_push
-            from tmuxbot.tmux import tmux_send_text
+            from tmuxbot.dispatch import dispatch_incoming_text
 
             if S.setup_mode:
                 await F_._do_setup(m)
@@ -547,48 +547,14 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
-            backend = F_.backend
-            await backend.ensure_running(b)
-
-            # /rename 接管: pending_rename 态下文本作为名字
-            pending_ts = S.pending_rename.get(b.name)
-            if pending_ts and (time.time() - pending_ts) < 120:
-                S.pending_rename.pop(b.name, None)
-                if m.text.strip() in ("/esc", "/cc"):
-                    tmux_send_key(b.tmux_target, "Escape")
-                    await m.reply("⎋ <b>已取消 rename</b>")
-                    return
-                await tmux_send_text(b.tmux_target, m.text)
-                await m.reply(f"✏️ <b>已提交新名字</b>: <code>{html.escape(m.text)}</code>")
-                return
-            if pending_ts:
-                S.pending_rename.pop(b.name, None)
-
-            text = m.text
-            cmd_for_feedback: str | None = None
-            aliases = backend.command_aliases()
-            if text.lstrip().startswith("/"):
-                raw_cmd = text.lstrip().split()[0]
-                # ★ 剥掉 group 命令的 @bot_username 后缀
-                # TG 在 group 内会自动给命令加 @bot_username (如 /compact@ztl_claude_bot)
-                # 不剥的话: COMMAND_OPTS 查 key miss + claude TUI 不认这种带 @ 的命令
-                cmd_for_feedback = raw_cmd.split("@", 1)[0]
-                # 把注入到 claude 的 text 也用纯净命令替换原 raw_cmd
-                if raw_cmd != cmd_for_feedback:
-                    text = cmd_for_feedback + text.lstrip()[len(raw_cmd):]
-                if cmd_for_feedback in aliases:
-                    real_cmd = aliases[cmd_for_feedback]
-                    rest = text.lstrip()[len(cmd_for_feedback):]
-                    text = real_cmd + rest
-            await tmux_send_text(b.tmux_target, text)
-            if cmd_for_feedback == "/rename":
-                S.pending_rename[b.name] = time.time()
-            if cmd_for_feedback:
-                S.fire(
-                    capture_and_push(
-                        F_, b, backend, m.chat.id, thread_id_of(m), command=cmd_for_feedback,
-                    )
-                )
+            # ★ bot_username 传入供 dispatch 剥 @bot_username 后缀
+            # (TG group 内命令自动带 /compact@ztl_claude_bot 形式)
+            # _bot_username 在 start_polling 时通过 get_me() 填入, 避免每条消息都 API 请求
+            await dispatch_incoming_text(
+                F_, F_.backend, b, S,
+                m.chat.id, thread_id_of(m), m.text,
+                bot_username=F_._bot_username,
+            )
 
         # ─── picker callback ─────────
         @dp.callback_query(F.data.startswith("picker:"))
@@ -668,6 +634,11 @@ class TelegramFrontend(Frontend):
 
     # ────────── 启动 / 停止 ──────────
     async def start_polling(self) -> None:
+        try:
+            me = await self.bot.get_me()
+            self._bot_username = me.username
+        except Exception as e:
+            log.warning(f"get_me err: {e}")
         try:
             await self.bot.set_my_commands(
                 [BotCommand(command=c, description=d) for c, d in self.backend.bot_commands]

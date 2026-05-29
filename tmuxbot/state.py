@@ -16,16 +16,22 @@ log = logging.getLogger("tmuxbot")
 
 @dataclass
 class Binding:
-    """一个 (TG bot ↔ TG 端点 ↔ tmux session ↔ cwd) 四元组"""
+    """一个 (IM 端点 ↔ tmux session ↔ cwd) 四元组
+
+    chat_id 类型:
+      - Telegram: int (正数 DM user_id / 负数 group chat_id)
+      - 飞书:     str (oc_xxx 格式的 chat_id)
+    """
     name: str
-    chat_id: int              # DM 时是正数 user_id, 群是负数 chat_id
-    thread_id: int | None     # forum topic id; None = DM/普通群/forum General
+    chat_id: int | str        # Telegram: int; 飞书: str (oc_xxx)
+    thread_id: int | None     # forum topic id; None = DM/普通群/forum General/飞书
     tmux_session: str
     tmux_window: int
     tmux_pane: int
     cwd: Path
     backend: str = "claude_code"            # ★ 多 backend: claude_code / codex
     bot_token_env: str = "TG_BOT_TOKEN"     # ★ 用哪个 token (env 变量名)
+    channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
     last_session_id: str | None = None      # 运行时学到的 jsonl 文件名
     idle_kill_seconds: int = 0             # >0 = 闲置超此秒数自动杀 claude 进程; 0 = 永不杀(默认)
 

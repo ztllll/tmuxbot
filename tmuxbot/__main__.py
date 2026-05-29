@@ -24,6 +24,14 @@ from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
 
+# 飞书前端按需 import (没装 lark-oapi 时不 crash, 只在实际使用时报错)
+try:
+    from tmuxbot.frontends.feishu import FeishuFrontend
+    _FEISHU_AVAILABLE = True
+except ImportError:
+    _FEISHU_AVAILABLE = False
+    FeishuFrontend = None  # type: ignore[assignment,misc]
+
 # ★ Boss 架构原则: 一个 bot ↔ 一个 backend (CLI 类型) ↔ N 个 tmux 子线程
 # 不同 backend 必须用不同 bot token, 避免协议串扰
 TOKEN_TO_BACKEND = {
@@ -68,9 +76,13 @@ async def main() -> None:
         "codex": CodexBackend(),
     }
 
-    # 按 bot_token_env 把 binding 分组 (一组 = 一个 bot)
+    # ── 按 channel 分拣: telegram bindings vs feishu bindings ──
+    tg_bindings = [b for b in S.bindings if b.channel != "feishu"]
+    fs_bindings = [b for b in S.bindings if b.channel == "feishu"]
+
+    # ── Telegram: 按 bot_token_env 把 binding 分组 (一组 = 一个 bot) ──
     bindings_by_token: dict[str, list] = defaultdict(list)
-    for b in S.bindings:
+    for b in tg_bindings:
         bindings_by_token[b.bot_token_env].append(b)
 
     # 验证: 每组 binding 的 backend 必须跟 TOKEN_TO_BACKEND 映射一致
@@ -89,7 +101,7 @@ async def main() -> None:
                 b.backend = expected
 
     # 为每个 token 创建一个 TelegramFrontend
-    frontends: list[TelegramFrontend] = []
+    frontends: list = []
     for token_env, bs in bindings_by_token.items():
         token = os.getenv(token_env)
         if not token or ":" not in token:
@@ -105,20 +117,94 @@ async def main() -> None:
         )
         frontends.append(fe)
 
+    # ── 飞书: 按 bot_token_env (= FEISHU_APP_ID_ENV 字段, 默认 "FEISHU") 分组 ──
+    # bindings.yaml 飞书 binding 示例:
+    #   channel: feishu
+    #   bot_token_env: FEISHU   # 实际读 FEISHU_APP_ID / FEISHU_APP_SECRET
+    #   backend: claude_code
+    #
+    # 多个飞书 binding 可用同一套 app_id/app_secret, 也可用不同的 (不同 bot_token_env)
+    if fs_bindings:
+        if not _FEISHU_AVAILABLE:
+            log.error(
+                "bindings.yaml 有 channel=feishu 的 binding, "
+                "但 lark-oapi 未安装; 跳过所有飞书 bindings。"
+                "请先安装: pip install lark-oapi"
+            )
+        else:
+            # 按 bot_token_env 分组 (飞书 bot_token_env 作为 key 区分不同 app)
+            fs_by_env: dict[str, list] = defaultdict(list)
+            for b in fs_bindings:
+                fs_by_env[b.bot_token_env].append(b)
+
+            for env_key, bs in fs_by_env.items():
+                # 约定: bot_token_env="FEISHU" → 读 FEISHU_APP_ID / FEISHU_APP_SECRET
+                #        bot_token_env="FEISHU2" → 读 FEISHU2_APP_ID / FEISHU2_APP_SECRET
+                app_id = os.getenv(f"{env_key}_APP_ID", "")
+                app_secret = os.getenv(f"{env_key}_APP_SECRET", "")
+                if not app_id or not app_secret:
+                    log.warning(
+                        f"飞书 {env_key}_APP_ID / {env_key}_APP_SECRET 未配置; "
+                        f"跳过 {len(bs)} 个 bindings"
+                    )
+                    continue
+                # boss_open_ids: env FEISHU_BOSS_OPEN_IDS 逗号分隔
+                raw_oids = os.getenv(f"{env_key}_BOSS_OPEN_IDS", "")
+                boss_open_ids = [x.strip() for x in raw_oids.split(",") if x.strip()]
+                if not boss_open_ids:
+                    log.warning(
+                        f"{env_key}_BOSS_OPEN_IDS 未配置, 飞书 ACL 会拒绝所有消息"
+                    )
+                backend_name = bs[0].backend  # 同一 env_key 下 backend 应一致
+                backend = backends_pool.get(backend_name)
+                if backend is None:
+                    log.error(f"飞书 binding backend={backend_name!r} 不在 backends_pool; 跳过")
+                    continue
+                # group_only_when_mentioned: 默认 False (claude 主对话方, 群里不需 @;
+                # 由 ACL 的 open_id 白名单兜底, 只响应 Boss)。可用 env
+                # {env_key}_GROUP_MENTION_ONLY=true 改回需 @ (注意 feishu.py 的 @ 检测
+                # 目前比的是 app_id, 真要用需先修成 bot open_id)
+                _mention_only = os.getenv(f"{env_key}_GROUP_MENTION_ONLY", "").lower() in ("1", "true", "yes")
+                fe = FeishuFrontend(
+                    app_id=app_id,
+                    app_secret=app_secret,
+                    state=S,
+                    backend=backend,
+                    bindings=bs,
+                    boss_open_ids=boss_open_ids,
+                    group_only_when_mentioned=_mention_only,
+                )
+                frontends.append(fe)
+                log.info(
+                    f"feishu frontend: app_id={app_id[:8]}… · backend={backend_name} "
+                    f"· {len(bs)} bindings"
+                )
+
     if not frontends:
         log.error("no frontends configured; check .env tokens and bindings.yaml")
         sys.exit(1)
 
-    # S.bot 兼容旧代码 (picker 等用 S.bot 引用); 取第一个 frontend 的 bot
-    S.bot = frontends[0].bot
+    # S.bot 兼容旧代码 (picker 等用 S.bot 引用); 取第一个 TelegramFrontend 的 bot
+    tg_frontends = [fe for fe in frontends if isinstance(fe, TelegramFrontend)]
+    if tg_frontends:
+        S.bot = tg_frontends[0].bot
 
     # log 启动信息
     for fe in frontends:
-        me = await fe.bot.get_me()
-        log.info(
-            f"bot @{me.username} (id={me.id}) starting · backend={fe.backend.name} "
-            f"· {len(fe.bindings)} bindings"
-        )
+        if isinstance(fe, TelegramFrontend):
+            try:
+                me = await fe.bot.get_me()
+                log.info(
+                    f"tg bot @{me.username} (id={me.id}) starting · backend={fe.backend.name} "
+                    f"· {len(fe.bindings)} bindings"
+                )
+            except Exception as e:
+                log.warning(f"tg bot get_me err: {e}")
+        else:
+            log.info(
+                f"{fe.name} frontend starting · backend={fe.backend.name} "
+                f"· {len(fe.bindings)} bindings"
+            )
     log.info(
         f"BOSS_USER_ID={S.boss_user_id} "
         f"({'SETUP MODE — 第一条 DM 自动锁定' if S.setup_mode else 'STRICT'})"

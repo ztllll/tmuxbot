@@ -22,10 +22,16 @@ def load_config(env_file: Path, bindings_file: Path, offsets_file: Path) -> None
     raw = yaml.safe_load(bindings_file.read_text()) or {}
     S.bindings = []
     for b in raw.get("bindings", []):
+        # chat_id 兼容 Telegram (int) 和飞书 (str: oc_xxx)
+        # 能转 int 就转 (Telegram); 否则保留 str (飞书)
+        cid_raw = b.get("chat_id", 0)
+        chat_id: int | str = (
+            int(cid_raw) if str(cid_raw).lstrip("-").isdigit() else str(cid_raw)
+        )
         S.bindings.append(
             Binding(
                 name=b["name"],
-                chat_id=int(b.get("chat_id", 0)),
+                chat_id=chat_id,
                 thread_id=b.get("thread_id"),
                 tmux_session=b["tmux_session"],
                 tmux_window=int(b.get("tmux_window", 0)),
@@ -34,6 +40,7 @@ def load_config(env_file: Path, bindings_file: Path, offsets_file: Path) -> None
                 backend=b.get("backend", "claude_code"),
                 bot_token_env=b.get("bot_token_env", "TG_BOT_TOKEN"),
                 idle_kill_seconds=int(b.get("idle_kill_seconds", 0) or 0),
+                channel=b.get("channel", "telegram"),
             )
         )
     S.offsets = load_offsets(offsets_file)
