@@ -18,6 +18,7 @@ from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
 from tmuxbot.heartbeat import HEARTBEAT_INTERVAL, heartbeat_typing_loop
+from tmuxbot.idle import idle_kill_loop
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
@@ -137,6 +138,7 @@ async def main() -> None:
                 tmux_new_session(b.tmux_session, b.cwd)
             S.fire(jsonl_poll_loop(b, fe.backend, fe, S, OFFSETS_FILE))
         S.fire(heartbeat_typing_loop(S, fe))
+        S.fire(idle_kill_loop(S, fe))
     log.info(
         f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"
     )

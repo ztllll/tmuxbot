@@ -33,6 +33,7 @@ def load_config(env_file: Path, bindings_file: Path, offsets_file: Path) -> None
                 cwd=Path(b["cwd"]),
                 backend=b.get("backend", "claude_code"),
                 bot_token_env=b.get("bot_token_env", "TG_BOT_TOKEN"),
+                idle_kill_seconds=int(b.get("idle_kill_seconds", 0) or 0),
             )
         )
     S.offsets = load_offsets(offsets_file)
