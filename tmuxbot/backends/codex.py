@@ -140,7 +140,9 @@ def parse_compact_codex(raw: str) -> str | None:
 # ────────── CodexBackend ──────────
 class CodexBackend(Backend):
     name = "codex"
-    pane_command_name = "codex"
+    # ★ codex v0.124.0 是 node CLI, tmux pane_current_command 显示 "node" 不是 "codex"
+    # (pane 专用: 非 bash 即 codex-as-node, 用 "node" 判活)
+    pane_command_name = "node"
     start_cmd = START_CMD
 
     bot_commands = [
@@ -275,7 +277,12 @@ class CodexBackend(Backend):
         if cmd != self.pane_command_name:
             # codex 没有 --resume <session_id> 直传方式 (只能通过 /resume 命令)
             await tmux_send_text(b.tmux_target, self.start_cmd)
-            await asyncio.sleep(3.0)  # codex Rust binary 启动稍慢, 多等
+            # codex 冷启动慢, 轮询等进程起来 (最多 ~12s), 否则首条消息 inject 落空
+            for _ in range(24):
+                await asyncio.sleep(0.5)
+                if tmux_pane_command(b.tmux_target) == self.pane_command_name:
+                    break
+            await asyncio.sleep(2.5)  # 进程起来后再等 prompt 渲染完成
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
