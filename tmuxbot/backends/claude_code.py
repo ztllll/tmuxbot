@@ -542,12 +542,14 @@ class ClaudeCodeBackend(Backend):
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
-            "/context": CmdOpts(parser=parse_context),
-            "/cost":    CmdOpts(parser=parse_cost),
-            "/usage":   CmdOpts(parser=parse_cost),
-            "/stats":   CmdOpts(parser=parse_cost),
-            "/status":  CmdOpts(parser=parse_status),
-            "/help":    CmdOpts(parser=parse_help, lines=200),
+            # lines=250: /context 等输出很长(context 满时网格+全分类+MCP+记忆+技能+建议
+            # 可达 80+ 行), 默认 80 行抓取会把顶部 token 总量行截掉 → parser 抓不到 → 回退原始屏。
+            "/context": CmdOpts(parser=parse_context, lines=250),
+            "/cost":    CmdOpts(parser=parse_cost, lines=250),
+            "/usage":   CmdOpts(parser=parse_cost, lines=250),
+            "/stats":   CmdOpts(parser=parse_cost, lines=250),
+            "/status":  CmdOpts(parser=parse_status, lines=250),
+            "/help":    CmdOpts(parser=parse_help, lines=250),
             "/compact": CmdOpts(
                 # ★ /compact 不切 session_id, 在同一个 jsonl 末尾 append 一条
                 # type=system + subtype=compact_boundary 事件 (含 compactMetadata
