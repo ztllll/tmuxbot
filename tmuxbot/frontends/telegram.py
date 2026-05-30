@@ -101,6 +101,9 @@ class TelegramFrontend(Frontend):
         bindings: list["Binding"],          # ★ 只接这些 binding (其他 bot 各管自己的)
         env_file: Path,
         bindings_file: Path,
+        offsets_file: Path | None = None,   # /init 起 tailer 用
+        project_base: str = "/data/project",  # /init 新项目目录的父目录
+        bot_token_env: str = "TG_BOT_TOKEN",  # 本 frontend 的 token env key (/init 持久化用)
     ) -> None:
         self.token = token
         self.state = state
@@ -108,6 +111,9 @@ class TelegramFrontend(Frontend):
         self.bindings = bindings
         self.env_file = env_file
         self.bindings_file = bindings_file
+        self.offsets_file = offsets_file
+        self.project_base = project_base
+        self.bot_token_env = bot_token_env
         self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.dp = Dispatcher()
         self._bot_username: str | None = None  # 懒加载, start_polling 时填入
@@ -536,6 +542,47 @@ class TelegramFrontend(Frontend):
             await tmux_send_text(b.tmux_target, f"{caption}\n\n@{save_path}")
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 
+        # ─── /init 自动开通 (未绑定 source + Boss) ─────────
+        # 注册在 F.text 之前: Boss 在**未绑定** chat 发 /init → 建会话。
+        # ACL 特殊性: 此场景 source 尚无 binding, 不能走 _acl_ok (它要求 source 已绑定),
+        # 只校验 from_user 是 Boss; 已绑定的 source 发 /init 直接忽略 (provision_chat 防重复)。
+        @dp.message(Command("init"))
+        async def cmd_init(m: Message):
+            from tmuxbot.provision import provision_chat
+
+            if S.setup_mode:
+                return
+            if not m.from_user or m.from_user.id != S.boss_user_id:
+                return  # 非 Boss → 静默
+            tid = thread_id_of(m)
+            if F_.find_binding(m.chat.id, tid) is not None:
+                return  # 已绑定 → 交给普通文本流, 这里静默 (避免重复开通)
+            display_name = (
+                m.chat.title
+                or getattr(m.chat, "full_name", None)
+                or f"tg-{m.chat.id}"
+            )
+            b = await provision_chat(
+                F_, S,
+                chat_id=m.chat.id,
+                thread_id=tid,
+                display_name=display_name,
+                offsets_file=F_.offsets_file,
+                bindings_file=F_.bindings_file,
+                bot_token_env=F_.bot_token_env,
+                project_base=F_.project_base,
+                channel="telegram",
+            )
+            if b is None:
+                await m.reply(
+                    "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml"
+                )
+                return
+            await m.reply(
+                f"✅ <b>已开通会话</b>\n名称: {html.escape(b.name)}\n"
+                f"目录: <code>{html.escape(str(b.cwd))}</code>\n现在可以直接对话了"
+            )
+
         # ─── 文本 ─────────
         @dp.message(F.text)
         async def on_text(m: Message):
@@ -619,13 +666,37 @@ class TelegramFrontend(Frontend):
             except Exception:
                 pass
 
-        # ─── 非白名单群自动 leave ─────────
+        # ─── 成员变更: 非白名单群自动 leave / 已绑定群被移除→拆除会话 ───
         @dp.my_chat_member()
         async def on_membership(ev):
+            from tmuxbot.provision import deprovision_chat
+
             if S.setup_mode:
                 return
             chat_id = ev.chat.id
-            if not any(b.chat_id == chat_id for b in S.bindings):
+            # bot 自己的新状态: left / kicked = 被移出群 (或群被删)
+            new_status = getattr(
+                getattr(ev, "new_chat_member", None), "status", None
+            )
+            removed = new_status in ("left", "kicked")
+
+            # 该 chat 在本 frontend 是否有 binding (含 forum topic 的 thread)
+            bound = [b for b in F_.bindings if b.chat_id == chat_id]
+
+            if removed and bound:
+                # 已绑定群被移除 → 拆除该 chat 下所有 binding (group 可能有多个 topic)
+                log.info(f"bot removed from bound chat {chat_id}, 拆除 {len(bound)} binding")
+                for b in list(bound):
+                    try:
+                        await deprovision_chat(
+                            F_, S, b, bindings_file=F_.bindings_file
+                        )
+                    except Exception:
+                        log.exception(f"deprovision {b.name} err")
+                return
+
+            # 未绑定且 bot 仍在群里 → 非白名单, 主动退群
+            if not bound:
                 log.warning(f"left non-whitelisted chat {chat_id}")
                 try:
                     await ev.bot.leave_chat(chat_id)

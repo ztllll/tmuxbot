@@ -321,148 +321,50 @@ class FeishuFrontend:
                 data = (json.loads(resp.read().decode("utf-8")) or {}).get("data") or {}
             return data.get("name") or None
 
-    def _preseed_trust_sync(self, proj_dir: str) -> None:
-        """同步预置 ~/.claude.json 信任 (在 asyncio.to_thread 里调)。失败只 log 不中断。"""
-        cfg_path = Path.home() / ".claude.json"
-        try:
-            cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
-        except Exception as e:
-            log.warning(f"auto-provision: 读 ~/.claude.json 失败 (跳过预置信任): {e}")
-            return
-        projects = cfg.setdefault("projects", {})
-        projects[proj_dir] = {
-            "hasTrustDialogAccepted": True,
-            "hasCompletedProjectOnboarding": True,
-            "projectOnboardingSeenCount": 1,
-        }
-        try:
-            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
-        except Exception as e:
-            log.warning(f"auto-provision: 写 ~/.claude.json 失败 (跳过预置信任): {e}")
-
-    def _persist_binding_sync(self, entry: dict) -> None:
-        """同步把新 binding append 到 bindings.yaml (在 asyncio.to_thread 里调)。"""
-        import yaml
-        if self.bindings_file is None:
-            log.warning("auto-provision: bindings_file 未配置, 跳过持久化")
-            return
-        try:
-            raw = yaml.safe_load(self.bindings_file.read_text()) or {}
-        except Exception as e:
-            log.warning(f"auto-provision: 读 bindings.yaml 失败 (跳过持久化): {e}")
-            return
-        raw.setdefault("bindings", []).append(entry)
-        self.bindings_file.write_text(
-            yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
-        )
-
     async def _auto_provision(self, chat_id: str, chat_type: str) -> None:
-        """飞书 /init: 自动建项目目录 + tmux + 注册 binding + 起 claude + 回确认。
+        """飞书 /init: 取群名 → 调公共 provision_chat → 回确认 / 失败卡片。
 
-        每步失败发卡片告知 Boss 并中止 (不留半成品 binding)。
+        provision 逻辑 (建目录 / 信任 / tmux / binding / tailer / yaml / 起 claude) 已抽到
+        tmuxbot.provision.provision_chat, 这里只负责飞书特有的取群名 + 回卡片。
         """
-        from tmuxbot.tmux import tmux_has_session, tmux_new_session
+        from tmuxbot.provision import provision_chat
 
-        # 防重复: 已绑定的 chat 直接忽略 (并发 /init 也兜住)
-        if self.find_binding(chat_id) is not None:
-            log.info(f"auto-provision: chat_id={chat_id} 已绑定, 忽略 /init")
-            return
-
-        # 1. 取群名 (失败 / p2p → 降级名)
+        # 取群名 (失败 / p2p → 降级名, 交给 provision_chat 的 _safe_name 兜底)
+        raw_name = ""
         try:
-            raw_name = None
             if chat_type != "p2p":
-                raw_name = await asyncio.to_thread(self._fetch_chat_name_sync, chat_id)
+                raw_name = await asyncio.to_thread(self._fetch_chat_name_sync, chat_id) or ""
         except Exception as e:
             log.warning(f"auto-provision: 取群名失败 (用降级名): {e}")
-            raw_name = None
-        if not raw_name:
+            raw_name = ""
+        if not raw_name and chat_type == "p2p":
             raw_name = f"feishu-dm-{chat_id[3:11]}"
 
-        # safe_name: 用于 tmux session 名 + binding name + 目录名。
-        # tmux target 用 ':' 和 '.' 分隔, 群名含这俩会破坏 target → 替换成 '-'。
-        # 中文 OK (encode_cwd 已能处理)。
-        safe_name = re.sub(r"[:.]", "-", raw_name).strip()
-        if not safe_name:
-            safe_name = f"feishu-dm-{chat_id[3:11]}"
+        b = await provision_chat(
+            self, self.state,
+            chat_id=chat_id,
+            thread_id=None,
+            display_name=raw_name,
+            offsets_file=self.offsets_file,
+            bindings_file=self.bindings_file,
+            bot_token_env=self.bot_token_env,
+            project_base=self.project_base,
+            channel="feishu",
+        )
 
-        proj_dir = f"{self.project_base}/{safe_name}"
-
-        try:
-            # 2. 防重复 (再查一次 bindings, 双保险)
-            if self.find_binding(chat_id) is not None:
-                return
-
-            # 3. 建目录
-            os.makedirs(proj_dir, exist_ok=True)
-
-            # 4. 预置 claude 信任 (失败只 log)
-            await asyncio.to_thread(self._preseed_trust_sync, proj_dir)
-
-            # 5. 建 tmux session
-            if not tmux_has_session(safe_name):
-                tmux_new_session(safe_name, proj_dir)
-
-            # 6. 注册 binding (内存)
-            from tmuxbot.state import Binding
-            b = Binding(
-                name=safe_name,
-                chat_id=chat_id,
-                thread_id=None,
-                tmux_session=safe_name,
-                tmux_window=0,
-                tmux_pane=0,
-                cwd=Path(proj_dir),
-                backend=self.backend.name,
-                bot_token_env=self.bot_token_env,
-                channel="feishu",
-                idle_kill_seconds=1800,
-            )
-            self.bindings.append(b)
-            self.state.bindings.append(b)
-
-            # 7. 起 tailer
-            from tmuxbot.jsonl import jsonl_poll_loop
-            self.state.fire(
-                jsonl_poll_loop(b, self.backend, self, self.state, self.offsets_file)
-            )
-
-            # 8. 持久化 bindings.yaml
-            entry = {
-                "name": safe_name,
-                "channel": "feishu",
-                "bot_token_env": self.bot_token_env,
-                "backend": self.backend.name,
-                "chat_id": chat_id,
-                "thread_id": None,
-                "tmux_session": safe_name,
-                "tmux_window": 0,
-                "tmux_pane": 0,
-                "cwd": proj_dir,
-                "idle_kill_seconds": 1800,
-            }
-            await asyncio.to_thread(self._persist_binding_sync, entry)
-
-            # 9. 起 claude
-            await self.backend.ensure_running(b)
-
-        except Exception as e:
-            log.exception(f"auto-provision failed for chat_id={chat_id}")
-            try:
+        if b is None:
+            # 已绑定 → 静默 (provision_chat 已 log); 真失败 → 回卡片
+            if self.find_binding(chat_id) is None:
                 await self.send_html(
                     chat_id, None,
-                    f"❌ <b>开通会话失败</b>\n{e}\n请检查日志或手动配置 bindings.yaml",
+                    "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml",
                 )
-            except Exception:
-                pass
             return
 
-        # 10. 回确认
-        log.info(f"auto-provision ok: {safe_name} chat_id={chat_id} cwd={proj_dir}")
         await self.send_html(
             chat_id, None,
-            f"✅ <b>已开通会话</b>\n群: {safe_name}\n"
-            f"目录: <code>{proj_dir}</code>\n现在可以直接对话了",
+            f"✅ <b>已开通会话</b>\n群: {b.name}\n"
+            f"目录: <code>{b.cwd}</code>\n现在可以直接对话了",
         )
 
     # ────────── 消息收发 handler ──────────
@@ -472,6 +374,38 @@ class FeishuFrontend:
         if self._main_loop is None:
             return
         asyncio.run_coroutine_threadsafe(self._handle_message(data), self._main_loop)
+
+    def _on_chat_removed(self, data) -> None:
+        """lark worker 线程回调: 群解散 / bot 被移出群 → 跳回主 loop 拆除会话。
+
+        群解散 (p2_im_chat_disbanded_v1) 和 bot 被移除 (p2_im_chat_member_bot_deleted_v1)
+        共用此回调 — 两者 event 都带 chat_id, 处理一致 (deprovision 该 binding)。
+        """
+        if self._main_loop is None:
+            return
+        try:
+            chat_id = data.event.chat_id
+        except Exception:
+            log.debug("feishu chat_removed event 无 chat_id, 忽略")
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._handle_chat_removed(chat_id), self._main_loop
+        )
+
+    async def _handle_chat_removed(self, chat_id: str) -> None:
+        """主 loop 里拆除 chat_id 对应的 binding (若有)"""
+        from tmuxbot.provision import deprovision_chat
+        try:
+            b = self.find_binding(chat_id)
+            if b is None:
+                log.debug(f"feishu chat_removed: chat_id={chat_id} 无 binding, 忽略")
+                return
+            log.info(f"feishu chat_removed: 拆除会话 chat_id={chat_id} binding={b.name}")
+            await deprovision_chat(self, self.state, b, bindings_file=self.bindings_file)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("feishu _handle_chat_removed err")
 
     async def _handle_message(self, data) -> None:
         """主 loop 里处理收到的飞书消息"""
@@ -574,11 +508,22 @@ class FeishuFrontend:
 
         self._main_loop = asyncio.get_running_loop()
 
-        handler = (
+        builder = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._on_message)
-            .build()
         )
+        # 群解散 + bot 被移出群 → 自动拆除会话。不同 lark-oapi 版本方法名可能缺,
+        # 用 getattr 防御性注册: 缺哪个只 warning, 不影响消息收发主链路。
+        for _evt_method in (
+            "register_p2_im_chat_disbanded_v1",          # 群解散
+            "register_p2_im_chat_member_bot_deleted_v1",  # bot 被移出群
+        ):
+            _reg = getattr(builder, _evt_method, None)
+            if _reg is not None:
+                _reg(self._on_chat_removed)
+            else:
+                log.warning(f"feishu: lark-oapi 缺 {_evt_method}, 跳过该解散事件注册")
+        handler = builder.build()
         self._ws_client = lark.ws.Client(
             self.app_id,
             self.app_secret,

@@ -116,6 +116,9 @@ async def main() -> None:
         fe = TelegramFrontend(
             token=token, state=S, backend=backend, bindings=bs,
             env_file=ENV_FILE, bindings_file=BINDINGS_FILE,
+            offsets_file=OFFSETS_FILE,
+            project_base=os.getenv("TMUXBOT_PROJECT_BASE", "/data/project"),
+            bot_token_env=token_env,
         )
         frontends.append(fe)
 

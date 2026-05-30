@@ -44,6 +44,12 @@ def tmux_new_session(s: str, cwd) -> None:
     _tmux("new-session", "-d", "-s", s, "-c", str(cwd))
 
 
+def tmux_kill_session(s: str) -> bool:
+    """杀掉整个 tmux session (deprovision 用)。session 名可能含中文/空格,
+    交给 _tmux 以参数数组方式传, 不走 shell 不需手动引号。返回是否成功。"""
+    return _tmux("kill-session", "-t", s).returncode == 0
+
+
 def tmux_pane_command(target: str) -> str:
     r = _tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
     return r.stdout.strip()

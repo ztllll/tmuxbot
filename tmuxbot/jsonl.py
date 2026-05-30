@@ -45,6 +45,11 @@ async def jsonl_poll_loop(
     last_picker_check: float = 0.0
     last_sz_change: float = time.time()
     while True:
+        # ★ binding 被 deprovision (群解散 / bot 被移除) 从 frontend.bindings 移除后,
+        # tailer 下一轮自行退出 (不再 tail 已拆除会话的 jsonl)。
+        if b not in frontend.bindings:
+            log.info(f"[{b.name}] binding 已注销, tailer 退出")
+            return
         tick += 1
         now = time.time()
         if now - last_hb > 60:
