@@ -11,8 +11,9 @@ log = logging.getLogger("tmuxbot")
 
 # ────────── 路径编码 ──────────
 def encode_cwd(p: Path) -> str:
-    """claude / codex 都用这个规则: / 和 . 都替换为 -"""
-    return str(p.resolve()).replace("/", "-").replace(".", "-")
+    """claude / codex 的真实规则: 把绝对路径里所有非 [A-Za-z0-9] 字符替换为 -
+    (/ . _ 空格 中文 等全部换)。中文项目目录的 jsonl 目录名才能跟 claude 算的一致。"""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(Path(p).resolve()))
 
 
 # ────────── 长度计算 ──────────

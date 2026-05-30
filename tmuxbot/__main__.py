@@ -175,6 +175,10 @@ async def main() -> None:
                     bindings=bs,
                     boss_open_ids=boss_open_ids,
                     group_only_when_mentioned=_mention_only,
+                    offsets_file=OFFSETS_FILE,
+                    bindings_file=BINDINGS_FILE,
+                    bot_token_env=env_key,
+                    project_base=os.getenv("TMUXBOT_PROJECT_BASE", "/data/project"),
                 )
                 frontends.append(fe)
                 log.info(

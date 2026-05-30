@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -122,6 +123,10 @@ class FeishuFrontend:
         bindings: list["Binding"],
         boss_open_ids: list[str],           # 飞书 open_id 白名单 (对应 TG BOSS_USER_ID)
         group_only_when_mentioned: bool = True,  # 群消息仅 @bot 时才响应
+        offsets_file: "Path | None" = None,      # offsets.json 路径 (auto-provision 起 tailer 用)
+        bindings_file: "Path | None" = None,     # bindings.yaml 路径 (auto-provision 持久化用)
+        bot_token_env: str = "FEISHU",           # 本 frontend 的 token env key (持久化写回用)
+        project_base: str = "/data/project",     # 新项目目录的父目录
     ) -> None:
         # 触发 lazy import 检查, 没装直接崩 (早于启动, 报错清晰)
         self._lark = _get_lark()
@@ -133,6 +138,10 @@ class FeishuFrontend:
         self.bindings = bindings
         self.boss_open_ids = set(boss_open_ids)
         self.group_only_when_mentioned = group_only_when_mentioned
+        self.offsets_file = offsets_file
+        self.bindings_file = bindings_file
+        self.bot_token_env = bot_token_env
+        self.project_base = project_base
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_client = None   # lark.ws.Client 实例
@@ -264,6 +273,198 @@ class FeishuFrontend:
         """飞书无 typing 状态 API → no-op"""
         return
 
+    # ────────── auto-provision (/init 自动开通会话) ──────────
+
+    def _fetch_chat_name_sync(self, chat_id: str) -> str | None:
+        """同步取群名 (在 asyncio.to_thread 里调)。失败返回 None。
+
+        两步: ① app_id/app_secret 换 tenant_access_token
+              ② 带 Bearer 调 GET /im/v1/chats/{chat_id} 取 data.name
+        优先用 requests, 没装则降级 urllib (纯 stdlib)。
+        """
+        try:
+            import requests  # type: ignore
+        except ImportError:
+            requests = None
+
+        token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+        token_body = {"app_id": self.app_id, "app_secret": self.app_secret}
+
+        if requests is not None:
+            r = requests.post(token_url, json=token_body, timeout=10)
+            tok = (r.json() or {}).get("tenant_access_token")
+            if not tok:
+                log.warning(f"feishu tenant_token err: {r.text[:200]}")
+                return None
+            chat_url = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}"
+            cr = requests.get(chat_url, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
+            data = (cr.json() or {}).get("data") or {}
+            return data.get("name") or None
+        else:
+            import urllib.request
+            req = urllib.request.Request(
+                token_url,
+                data=json.dumps(token_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                tok = (json.loads(resp.read().decode("utf-8")) or {}).get("tenant_access_token")
+            if not tok:
+                log.warning("feishu tenant_token err (urllib)")
+                return None
+            chat_url = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}"
+            creq = urllib.request.Request(
+                chat_url, headers={"Authorization": f"Bearer {tok}"}, method="GET"
+            )
+            with urllib.request.urlopen(creq, timeout=10) as resp:
+                data = (json.loads(resp.read().decode("utf-8")) or {}).get("data") or {}
+            return data.get("name") or None
+
+    def _preseed_trust_sync(self, proj_dir: str) -> None:
+        """同步预置 ~/.claude.json 信任 (在 asyncio.to_thread 里调)。失败只 log 不中断。"""
+        cfg_path = Path.home() / ".claude.json"
+        try:
+            cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        except Exception as e:
+            log.warning(f"auto-provision: 读 ~/.claude.json 失败 (跳过预置信任): {e}")
+            return
+        projects = cfg.setdefault("projects", {})
+        projects[proj_dir] = {
+            "hasTrustDialogAccepted": True,
+            "hasCompletedProjectOnboarding": True,
+            "projectOnboardingSeenCount": 1,
+        }
+        try:
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+        except Exception as e:
+            log.warning(f"auto-provision: 写 ~/.claude.json 失败 (跳过预置信任): {e}")
+
+    def _persist_binding_sync(self, entry: dict) -> None:
+        """同步把新 binding append 到 bindings.yaml (在 asyncio.to_thread 里调)。"""
+        import yaml
+        if self.bindings_file is None:
+            log.warning("auto-provision: bindings_file 未配置, 跳过持久化")
+            return
+        try:
+            raw = yaml.safe_load(self.bindings_file.read_text()) or {}
+        except Exception as e:
+            log.warning(f"auto-provision: 读 bindings.yaml 失败 (跳过持久化): {e}")
+            return
+        raw.setdefault("bindings", []).append(entry)
+        self.bindings_file.write_text(
+            yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+        )
+
+    async def _auto_provision(self, chat_id: str, chat_type: str) -> None:
+        """飞书 /init: 自动建项目目录 + tmux + 注册 binding + 起 claude + 回确认。
+
+        每步失败发卡片告知 Boss 并中止 (不留半成品 binding)。
+        """
+        from tmuxbot.tmux import tmux_has_session, tmux_new_session
+
+        # 防重复: 已绑定的 chat 直接忽略 (并发 /init 也兜住)
+        if self.find_binding(chat_id) is not None:
+            log.info(f"auto-provision: chat_id={chat_id} 已绑定, 忽略 /init")
+            return
+
+        # 1. 取群名 (失败 / p2p → 降级名)
+        try:
+            raw_name = None
+            if chat_type != "p2p":
+                raw_name = await asyncio.to_thread(self._fetch_chat_name_sync, chat_id)
+        except Exception as e:
+            log.warning(f"auto-provision: 取群名失败 (用降级名): {e}")
+            raw_name = None
+        if not raw_name:
+            raw_name = f"feishu-dm-{chat_id[3:11]}"
+
+        # safe_name: 用于 tmux session 名 + binding name + 目录名。
+        # tmux target 用 ':' 和 '.' 分隔, 群名含这俩会破坏 target → 替换成 '-'。
+        # 中文 OK (encode_cwd 已能处理)。
+        safe_name = re.sub(r"[:.]", "-", raw_name).strip()
+        if not safe_name:
+            safe_name = f"feishu-dm-{chat_id[3:11]}"
+
+        proj_dir = f"{self.project_base}/{safe_name}"
+
+        try:
+            # 2. 防重复 (再查一次 bindings, 双保险)
+            if self.find_binding(chat_id) is not None:
+                return
+
+            # 3. 建目录
+            os.makedirs(proj_dir, exist_ok=True)
+
+            # 4. 预置 claude 信任 (失败只 log)
+            await asyncio.to_thread(self._preseed_trust_sync, proj_dir)
+
+            # 5. 建 tmux session
+            if not tmux_has_session(safe_name):
+                tmux_new_session(safe_name, proj_dir)
+
+            # 6. 注册 binding (内存)
+            from tmuxbot.state import Binding
+            b = Binding(
+                name=safe_name,
+                chat_id=chat_id,
+                thread_id=None,
+                tmux_session=safe_name,
+                tmux_window=0,
+                tmux_pane=0,
+                cwd=Path(proj_dir),
+                backend=self.backend.name,
+                bot_token_env=self.bot_token_env,
+                channel="feishu",
+                idle_kill_seconds=1800,
+            )
+            self.bindings.append(b)
+            self.state.bindings.append(b)
+
+            # 7. 起 tailer
+            from tmuxbot.jsonl import jsonl_poll_loop
+            self.state.fire(
+                jsonl_poll_loop(b, self.backend, self, self.state, self.offsets_file)
+            )
+
+            # 8. 持久化 bindings.yaml
+            entry = {
+                "name": safe_name,
+                "channel": "feishu",
+                "bot_token_env": self.bot_token_env,
+                "backend": self.backend.name,
+                "chat_id": chat_id,
+                "thread_id": None,
+                "tmux_session": safe_name,
+                "tmux_window": 0,
+                "tmux_pane": 0,
+                "cwd": proj_dir,
+                "idle_kill_seconds": 1800,
+            }
+            await asyncio.to_thread(self._persist_binding_sync, entry)
+
+            # 9. 起 claude
+            await self.backend.ensure_running(b)
+
+        except Exception as e:
+            log.exception(f"auto-provision failed for chat_id={chat_id}")
+            try:
+                await self.send_html(
+                    chat_id, None,
+                    f"❌ <b>开通会话失败</b>\n{e}\n请检查日志或手动配置 bindings.yaml",
+                )
+            except Exception:
+                pass
+            return
+
+        # 10. 回确认
+        log.info(f"auto-provision ok: {safe_name} chat_id={chat_id} cwd={proj_dir}")
+        await self.send_html(
+            chat_id, None,
+            f"✅ <b>已开通会话</b>\n群: {safe_name}\n"
+            f"目录: <code>{proj_dir}</code>\n现在可以直接对话了",
+        )
+
     # ────────── 消息收发 handler ──────────
 
     def _on_message(self, data) -> None:
@@ -294,12 +495,25 @@ class FeishuFrontend:
             # 非 Boss 白名单 → 静默
             if not open_id or open_id not in self.boss_open_ids:
                 return
-            # Boss 发来但 source 未配置 binding → 打印 chat_id 提示 (便于加新 binding), 然后静默
+            # Boss 发来但 source 未配置 binding:
+            #   - text 以 /init 开头 → 自动开通会话 (建目录 + tmux + binding + 起 claude)
+            #   - 否则打印 chat_id 提示 (便于加新 binding) 后静默
             b = self.find_binding(chat_id)
             if b is None:
+                _text_for_init = ""
+                if msg_type == "text":
+                    try:
+                        _co = json.loads(msg.content)
+                        _text_for_init = (_co.get("text", "") or "").strip()
+                    except (json.JSONDecodeError, AttributeError):
+                        _text_for_init = str(msg.content or "").strip()
+                    _text_for_init = re.sub(r"@_user_\d+\s*", "", _text_for_init).strip()
+                if _text_for_init.startswith("/init"):
+                    await self._auto_provision(chat_id, chat_type)
+                    return
                 log.info(
                     f"feishu 未配置 source: chat_id={chat_id} chat_type={chat_type} "
-                    f"(来自 Boss open_id={open_id[:10]}…, 可据此在 bindings.yaml 加 binding)"
+                    f"(来自 Boss open_id={open_id[:10]}…, /init 可自动开通, 或在 bindings.yaml 手配)"
                 )
                 return
 
