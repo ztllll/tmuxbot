@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_mod
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -126,7 +128,7 @@ class FeishuFrontend:
         offsets_file: "Path | None" = None,      # offsets.json 路径 (auto-provision 起 tailer 用)
         bindings_file: "Path | None" = None,     # bindings.yaml 路径 (auto-provision 持久化用)
         bot_token_env: str = "FEISHU",           # 本 frontend 的 token env key (持久化写回用)
-        project_base: str = "/data/project",     # 新项目目录的父目录
+        project_base: str = os.path.expanduser("~/projects"),  # 新项目目录的父目录
     ) -> None:
         # 触发 lazy import 检查, 没装直接崩 (早于启动, 报错清晰)
         self._lark = _get_lark()
@@ -321,7 +323,24 @@ class FeishuFrontend:
                 data = (json.loads(resp.read().decode("utf-8")) or {}).get("data") or {}
             return data.get("name") or None
 
-    async def _auto_provision(self, chat_id: str, chat_type: str) -> None:
+    def _list_projects(self) -> str:
+        """列 project_base 下的直接子目录, 返回飞书 HTML 文本 (供 /projects 用)"""
+        base = self.project_base
+        try:
+            dirs = sorted(
+                d for d in os.listdir(base)
+                if os.path.isdir(os.path.join(base, d))
+            )
+        except OSError:
+            dirs = []
+        body = "\n".join(f"• {html_mod.escape(d)}" for d in dirs) if dirs else "（空）"
+        return (
+            f"📂 <b>项目目录</b> (base: <code>{html_mod.escape(base)}</code>)\n"
+            f"{body}\n\n"
+            "用法: <code>/init &lt;目录名&gt;</code> 绑定; <code>/init</code> 自动用群名新建"
+        )
+
+    async def _auto_provision(self, chat_id: str, chat_type: str, target_dir: str | None = None) -> None:
         """飞书 /init: 取群名 → 调公共 provision_chat → 回确认 / 失败卡片。
 
         provision 逻辑 (建目录 / 信任 / tmux / binding / tailer / yaml / 起 claude) 已抽到
@@ -350,6 +369,7 @@ class FeishuFrontend:
             bot_token_env=self.bot_token_env,
             project_base=self.project_base,
             channel="feishu",
+            target_dir=target_dir,
         )
 
         if b is None:
@@ -430,7 +450,9 @@ class FeishuFrontend:
             if not open_id or open_id not in self.boss_open_ids:
                 return
             # Boss 发来但 source 未配置 binding:
+            #   - text == /projects → 列 base 下现有目录 (未绑定群也能用)
             #   - text 以 /init 开头 → 自动开通会话 (建目录 + tmux + binding + 起 claude)
+            #     /init <目录名> → 用指定目录; /init → 用群名新建
             #   - 否则打印 chat_id 提示 (便于加新 binding) 后静默
             b = self.find_binding(chat_id)
             if b is None:
@@ -442,8 +464,13 @@ class FeishuFrontend:
                     except (json.JSONDecodeError, AttributeError):
                         _text_for_init = str(msg.content or "").strip()
                     _text_for_init = re.sub(r"@_user_\d+\s*", "", _text_for_init).strip()
+                if _text_for_init == "/projects":
+                    await self.send_html(chat_id, None, self._list_projects())
+                    return
                 if _text_for_init.startswith("/init"):
-                    await self._auto_provision(chat_id, chat_type)
+                    _parts = _text_for_init.split(maxsplit=1)
+                    _arg = _parts[1].strip() if len(_parts) > 1 else None
+                    await self._auto_provision(chat_id, chat_type, target_dir=_arg)
                     return
                 log.info(
                     f"feishu 未配置 source: chat_id={chat_id} chat_type={chat_type} "
@@ -478,6 +505,11 @@ class FeishuFrontend:
             text = re.sub(r"@_user_\d+\s*", "", text).strip()
 
             if not text:
+                return
+
+            # ── /projects: 列 base 下目录 (已绑定群也能用, 纯信息不进 dispatch) ──
+            if text == "/projects":
+                await self.send_html(chat_id, None, self._list_projects())
                 return
 
             # ── 👀 已读 reaction (ACL 通过后打, 失败不影响主流程) ──

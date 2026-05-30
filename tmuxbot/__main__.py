@@ -117,7 +117,7 @@ async def main() -> None:
             token=token, state=S, backend=backend, bindings=bs,
             env_file=ENV_FILE, bindings_file=BINDINGS_FILE,
             offsets_file=OFFSETS_FILE,
-            project_base=os.getenv("TMUXBOT_PROJECT_BASE", "/data/project"),
+            project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
             bot_token_env=token_env,
         )
         frontends.append(fe)
@@ -181,7 +181,7 @@ async def main() -> None:
                     offsets_file=OFFSETS_FILE,
                     bindings_file=BINDINGS_FILE,
                     bot_token_env=env_key,
-                    project_base=os.getenv("TMUXBOT_PROJECT_BASE", "/data/project"),
+                    project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
                 )
                 frontends.append(fe)
                 log.info(

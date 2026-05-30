@@ -106,10 +106,18 @@ async def provision_chat(
     bot_token_env: str,
     project_base: str,
     channel: str,
+    target_dir: str | None = None,
 ) -> "Binding | None":
     """开通一个新 chat 的会话。前端无关。失败返回 None (不留半成品 binding)。
 
     thread_id: 飞书恒 None; TG forum topic 可能非 None — chat_id + thread_id 都进 binding。
+
+    target_dir: /init 的可选目录参数。决定项目目录 (proj_dir):
+      - None        → project_base/safe_name (现状: 目录 = base/群名)
+      - 绝对路径    → 直接用作 proj_dir (任意位置)
+      - 相对名      → project_base/target_dir (base 下指定子目录)
+    无论 target_dir 取值, tmux session 名 / binding name 始终用 safe_name (群名派生),
+    只有项目目录受 target_dir 控制。proj_dir 已存在不报错 (ensure_running 处理 resume)。
     """
     # 防重复: 已绑定的 chat 直接 None (并发 /init 也兜住)
     if frontend.find_binding(chat_id, thread_id) is not None:
@@ -117,7 +125,14 @@ async def provision_chat(
         return None
 
     safe_name = _safe_name(display_name, channel=channel, chat_id=chat_id)
-    proj_dir = f"{project_base}/{safe_name}"
+    # 目录解析: tmux/binding 名始终群名派生, 只有 proj_dir 受 target_dir 影响
+    target_dir = (target_dir or "").strip() or None
+    if target_dir is None:
+        proj_dir = f"{project_base}/{safe_name}"
+    elif os.path.isabs(target_dir):
+        proj_dir = target_dir
+    else:
+        proj_dir = f"{project_base}/{target_dir}"
     b: "Binding | None" = None
 
     try:

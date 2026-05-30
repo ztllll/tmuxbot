@@ -102,7 +102,7 @@ class TelegramFrontend(Frontend):
         env_file: Path,
         bindings_file: Path,
         offsets_file: Path | None = None,   # /init 起 tailer 用
-        project_base: str = "/data/project",  # /init 新项目目录的父目录
+        project_base: str = os.path.expanduser("~/projects"),  # /init 新项目目录的父目录
         bot_token_env: str = "TG_BOT_TOKEN",  # 本 frontend 的 token env key (/init 持久化用)
     ) -> None:
         self.token = token
@@ -125,6 +125,23 @@ class TelegramFrontend(Frontend):
             if b.chat_id == chat_id and b.thread_id == thread_id:
                 return b
         return None
+
+    def _list_projects(self) -> str:
+        """列 project_base 下的直接子目录, 返回 HTML 文本 (供 /projects 用)"""
+        base = self.project_base
+        try:
+            dirs = sorted(
+                d for d in os.listdir(base)
+                if os.path.isdir(os.path.join(base, d))
+            )
+        except OSError:
+            dirs = []
+        body = "\n".join(f"• {html.escape(d)}" for d in dirs) if dirs else "（空）"
+        return (
+            f"📂 <b>项目目录</b> (base: <code>{html.escape(base)}</code>)\n"
+            f"{body}\n\n"
+            "用法: <code>/init &lt;目录名&gt;</code> 绑定; <code>/init</code> 自动用群名新建"
+        )
 
     # ────────── retry / 出站 ──────────
     async def _tg_call(self, fn: Callable, max_retries: int = 4) -> Any:
@@ -562,6 +579,9 @@ class TelegramFrontend(Frontend):
                 or getattr(m.chat, "full_name", None)
                 or f"tg-{m.chat.id}"
             )
+            # /init <目录名> → 用指定目录; /init → 用群名新建
+            _parts = (m.text or "").strip().split(maxsplit=1)
+            _arg = _parts[1].strip() if len(_parts) > 1 else None
             b = await provision_chat(
                 F_, S,
                 chat_id=m.chat.id,
@@ -572,6 +592,7 @@ class TelegramFrontend(Frontend):
                 bot_token_env=F_.bot_token_env,
                 project_base=F_.project_base,
                 channel="telegram",
+                target_dir=_arg,
             )
             if b is None:
                 await m.reply(
@@ -582,6 +603,15 @@ class TelegramFrontend(Frontend):
                 f"✅ <b>已开通会话</b>\n名称: {html.escape(b.name)}\n"
                 f"目录: <code>{html.escape(str(b.cwd))}</code>\n现在可以直接对话了"
             )
+
+        # ─── /projects 列 base 下现有目录 (Boss; 绑定/未绑定群都能用, 纯信息) ───
+        @dp.message(Command("projects"))
+        async def cmd_projects(m: Message):
+            if S.setup_mode:
+                return
+            if not m.from_user or m.from_user.id != S.boss_user_id:
+                return  # 非 Boss → 静默
+            await m.reply(F_._list_projects())
 
         # ─── 文本 ─────────
         @dp.message(F.text)
