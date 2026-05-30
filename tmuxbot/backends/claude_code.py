@@ -12,7 +12,6 @@ import asyncio
 import html
 import json
 import logging
-import os
 import re
 import time
 from datetime import datetime
@@ -30,11 +29,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-# 模型名 env 可配: 默认 1M 上下文变体 (直连 Anthropic 认 [1m] 别名);
-# 走中转/relay (new-api/one-api 等) 时其模型表通常无 [1m] 变体名 → 必须用裸名,
-# 否则透传未知模型 → 502/503。中转环境用 TMUXBOT_CLAUDE_MODEL=claude-opus-4-8 覆盖。
-_CLAUDE_MODEL = os.getenv("TMUXBOT_CLAUDE_MODEL", "claude-opus-4-8[1m]")
-START_CMD = f"claude --dangerously-skip-permissions --model '{_CLAUDE_MODEL}'"  # 单引号防 shell glob 展开 [1m]
+START_CMD = "claude --dangerously-skip-permissions --model 'claude-opus-4-8[1m]'"  # [1m]=1M上下文变体(单引号防 shell glob 展开)
 
 
 # ────────── tool 中文化 + 关键参数提取 ──────────
