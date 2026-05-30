@@ -4,6 +4,15 @@
 
 ---
 
+## [2026-05-30] 默认开 1M 上下文 + /init idle-kill 默认收紧
+
+### Changed
+
+- **`START_CMD` 默认开 1M 上下文变体**(`claude_code.py`,commit 21e99a2):默认模型从 `claude-opus-4-8` 改为 `'claude-opus-4-8[1m]'`(单引号防 shell glob 展开;`[1m]` 启用 1M 上下文,普通 `claude-opus-4-8` 为 200K)
+- **`/init` 自助开通 binding 的 idle-kill 默认从 1800 降到 600**(`provision.DEFAULT_IDLE_KILL_SECONDS`,commit d3b7d2e):闲置 10 分钟自动杀,来消息时 `--resume` 重生(上下文不丢)。手动配置的 binding 默认仍为 `idle_kill_seconds=0`(永不杀)
+
+---
+
 ## [2026-05-29] 飞书前端 + 多通道架构 + 多实例支持
 
 ### Added
@@ -42,7 +51,7 @@
 
 ### Changed
 
-- **默认模型升级**:`START_CMD` 默认模型改为 `claude-opus-4-8`(2026-05-28 发布)
+- **默认模型升级**:`START_CMD` 默认模型改为 1M 上下文变体 `claude-opus-4-8[1m]`(2026-05-28 发布 opus-4-8;`[1m]` 启用 1M 上下文,单引号防 shell glob 展开,普通 `claude-opus-4-8` 为 200K)
 - **`__main__.py` 按 `channel` 字段分拣**:tg bindings vs feishu bindings,各自装配对应前端;`bot_username` 在 `TelegramFrontend` 内部缓存,不再每次请求重新获取
 
 ---
