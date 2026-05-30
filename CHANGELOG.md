@@ -4,11 +4,12 @@
 
 ---
 
-## [2026-05-30] 默认开 1M 上下文 + /init idle-kill 默认收紧
+## [2026-05-30] codex 最高权限 + 默认开 1M 上下文 + /init idle-kill 默认收紧
 
 ### Changed
 
-- **`START_CMD` 默认开 1M 上下文变体**(`claude_code.py`,commit 21e99a2):默认模型从 `claude-opus-4-8` 改为 `'claude-opus-4-8[1m]'`(单引号防 shell glob 展开;`[1m]` 启用 1M 上下文,普通 `claude-opus-4-8` 为 200K)
+- **codex 启动加 `--dangerously-bypass-approvals-and-sandbox`**(`codex.py`,commit aae0d5d):codex 最高权限(跳过所有审批 + 无沙箱),等价 claude 的 `--dangerously-skip-permissions`。原裸跑 `codex` 默认审批+沙箱会弹审批 picker 卡住无人值守注入。`CODEX_BIN` 仍可配绝对路径,flag 始终追加
+- **`START_CMD` 默认开 1M 上下文变体**(`claude_code.py`,commit 21e99a2):默认模型从 `claude-opus-4-8` 改为 `'claude-opus-4-8[1m]'`(单引号防 shell glob 展开;`[1m]` 启用 1M 上下文,普通 `claude-opus-4-8` 为 200K)。**走中转(如 sub2api/new-api)也拿真 1M**:Claude Code 客户端把 `[1m]` 别名翻译成 body `model=claude-opus-4-8` + header `anthropic-beta: ...,context-1m-2025-08-07`,中转转发该 header → 上游 1M(实测 205k tokens 输入 HTTP 200)。⚠️ 勿手动把字面 `claude-opus-4-8[1m]` 当模型名发给中转(上游 404)
 - **`/init` 自助开通 binding 的 idle-kill 默认从 1800 降到 600**(`provision.DEFAULT_IDLE_KILL_SECONDS`,commit d3b7d2e):闲置 10 分钟自动杀,来消息时 `--resume` 重生(上下文不丢)。手动配置的 binding 默认仍为 `idle_kill_seconds=0`(永不杀)
 
 ---
