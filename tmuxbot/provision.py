@@ -35,6 +35,14 @@ log = logging.getLogger("tmuxbot")
 DEFAULT_IDLE_KILL_SECONDS = 1800
 
 
+class AsciiDirRequired(Exception):
+    """群名含中文且未给英文目录参数 → 项目目录无法定为 ASCII, 拒绝开通。
+
+    tmux session 名 / binding name 仍可用中文 (encode_cwd 能处理), 只有项目目录
+    必须 ASCII。调用方 (telegram/feishu /init) 捕获后引导 Boss 用 /init <英文目录名>。
+    """
+
+
 def _safe_name(display_name: str, *, channel: str, chat_id) -> str:
     """display_name → tmux session 名 / binding name / 目录名。
     tmux target 用 ':' 和 '.' 分隔, 含这俩会破坏 target → 替换成 '-'。
@@ -130,14 +138,20 @@ async def provision_chat(
         return None
 
     safe_name = _safe_name(display_name, channel=channel, chat_id=chat_id)
-    # 目录解析: tmux/binding 名始终群名派生, 只有 proj_dir 受 target_dir 影响
+    # 目录解析: tmux/binding 名始终群名派生, 只有 proj_dir 受 target_dir 影响。
+    # 项目目录名必须 ASCII (英文): 绝对路径直接用; 相对名/safe_name 含非 ASCII → 拒绝。
+    # raise 在建目录/注册 binding 之前, 不留半成品。
     target_dir = (target_dir or "").strip() or None
     if target_dir is None:
+        if not safe_name.isascii():
+            raise AsciiDirRequired()
         proj_dir = f"{project_base}/{safe_name}"
     elif os.path.isabs(target_dir):
         proj_dir = target_dir
-    else:
+    elif target_dir.isascii():
         proj_dir = f"{project_base}/{target_dir}"
+    else:
+        raise AsciiDirRequired()
     b: "Binding | None" = None
 
     try:

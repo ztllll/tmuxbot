@@ -590,7 +590,7 @@ class TelegramFrontend(Frontend):
         # 只校验 from_user 是 Boss; 已绑定的 source 发 /init 直接忽略 (provision_chat 防重复)。
         @dp.message(Command("init"))
         async def cmd_init(m: Message):
-            from tmuxbot.provision import provision_chat
+            from tmuxbot.provision import AsciiDirRequired, provision_chat
 
             if S.setup_mode:
                 return
@@ -618,18 +618,26 @@ class TelegramFrontend(Frontend):
             # /init <目录名> → 用指定目录; /init → 用群名新建
             _parts = (m.text or "").strip().split(maxsplit=1)
             _arg = _parts[1].strip() if len(_parts) > 1 else None
-            b = await provision_chat(
-                F_, S,
-                chat_id=m.chat.id,
-                thread_id=tid,
-                display_name=display_name,
-                offsets_file=F_.offsets_file,
-                bindings_file=F_.bindings_file,
-                bot_token_env=F_.bot_token_env,
-                project_base=F_.project_base,
-                channel="telegram",
-                target_dir=_arg,
-            )
+            try:
+                b = await provision_chat(
+                    F_, S,
+                    chat_id=m.chat.id,
+                    thread_id=tid,
+                    display_name=display_name,
+                    offsets_file=F_.offsets_file,
+                    bindings_file=F_.bindings_file,
+                    bot_token_env=F_.bot_token_env,
+                    project_base=F_.project_base,
+                    channel="telegram",
+                    target_dir=_arg,
+                )
+            except AsciiDirRequired:
+                await m.reply(
+                    "⚠️ <b>群/话题名含中文,项目目录需英文</b>\n"
+                    "请用 <code>/init &lt;英文目录名&gt;</code> 指定 (tmux 仍用名字)\n"
+                    "或 /projects 看现有目录"
+                )
+                return
             if b is None:
                 await m.reply(
                     "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml"

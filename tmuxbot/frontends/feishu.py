@@ -346,7 +346,7 @@ class FeishuFrontend:
         provision 逻辑 (建目录 / 信任 / tmux / binding / tailer / yaml / 起 claude) 已抽到
         tmuxbot.provision.provision_chat, 这里只负责飞书特有的取群名 + 回卡片。
         """
-        from tmuxbot.provision import provision_chat
+        from tmuxbot.provision import AsciiDirRequired, provision_chat
 
         # 取群名 (失败 / p2p → 降级名, 交给 provision_chat 的 _safe_name 兜底)
         raw_name = ""
@@ -359,18 +359,27 @@ class FeishuFrontend:
         if not raw_name and chat_type == "p2p":
             raw_name = f"feishu-dm-{chat_id[3:11]}"
 
-        b = await provision_chat(
-            self, self.state,
-            chat_id=chat_id,
-            thread_id=None,
-            display_name=raw_name,
-            offsets_file=self.offsets_file,
-            bindings_file=self.bindings_file,
-            bot_token_env=self.bot_token_env,
-            project_base=self.project_base,
-            channel="feishu",
-            target_dir=target_dir,
-        )
+        try:
+            b = await provision_chat(
+                self, self.state,
+                chat_id=chat_id,
+                thread_id=None,
+                display_name=raw_name,
+                offsets_file=self.offsets_file,
+                bindings_file=self.bindings_file,
+                bot_token_env=self.bot_token_env,
+                project_base=self.project_base,
+                channel="feishu",
+                target_dir=target_dir,
+            )
+        except AsciiDirRequired:
+            await self.send_html(
+                chat_id, None,
+                "⚠️ <b>群名含中文,项目目录需英文</b>\n"
+                "请用 <code>/init &lt;英文目录名&gt;</code> 指定 (tmux 仍用群名)\n"
+                "或 /projects 看现有目录",
+            )
+            return
 
         if b is None:
             # 已绑定 → 静默 (provision_chat 已 log); 真失败 → 回卡片
