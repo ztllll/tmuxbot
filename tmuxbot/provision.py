@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-DEFAULT_IDLE_KILL_SECONDS = 1800
+DEFAULT_IDLE_KILL_SECONDS = 600
 
 
 class AsciiDirRequired(Exception):
