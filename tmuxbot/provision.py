@@ -138,7 +138,11 @@ async def provision_chat(
         return None
 
     safe_name = _safe_name(display_name, channel=channel, chat_id=chat_id)
-    # 目录解析: tmux/binding 名始终群名派生, 只有 proj_dir 受 target_dir 影响。
+    # tmux/binding 名按 backend 区分: 同一 chat 多 bot(claude/codex)不抢同一 tmux 名
+    # (否则 codex 占了 tmux, claude 起不来)。claude_code 用原名, 其余加后缀。
+    bname = frontend.backend.name
+    sess_name = safe_name if bname == "claude_code" else f"{safe_name}-{bname}"
+    # 目录解析: 只有 proj_dir 受 target_dir 影响 (proj_dir 用 safe_name/target_dir, 非 sess_name)。
     # 项目目录名必须 ASCII (英文): 绝对路径直接用; 相对名/safe_name 含非 ASCII → 拒绝。
     # raise 在建目录/注册 binding 之前, 不留半成品。
     target_dir = (target_dir or "").strip() or None
@@ -166,15 +170,15 @@ async def provision_chat(
         await asyncio.to_thread(_preseed_trust_sync, proj_dir)
 
         # 3. 建 tmux session
-        if not tmux_has_session(safe_name):
-            tmux_new_session(safe_name, proj_dir)
+        if not tmux_has_session(sess_name):
+            tmux_new_session(sess_name, proj_dir)
 
         # 4. 注册 binding (内存 + state)
         b = Binding(
-            name=safe_name,
+            name=sess_name,
             chat_id=chat_id,
             thread_id=thread_id,
-            tmux_session=safe_name,
+            tmux_session=sess_name,
             tmux_window=0,
             tmux_pane=0,
             cwd=Path(proj_dir),
@@ -191,13 +195,13 @@ async def provision_chat(
 
         # 6. 持久化 bindings.yaml
         entry = {
-            "name": safe_name,
+            "name": sess_name,
             "channel": channel,
             "bot_token_env": bot_token_env,
             "backend": frontend.backend.name,
             "chat_id": chat_id,
             "thread_id": thread_id,
-            "tmux_session": safe_name,
+            "tmux_session": sess_name,
             "tmux_window": 0,
             "tmux_pane": 0,
             "cwd": proj_dir,
