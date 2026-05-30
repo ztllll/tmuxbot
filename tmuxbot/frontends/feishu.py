@@ -464,6 +464,33 @@ class FeishuFrontend:
             #     /init <目录名> → 用指定目录; /init → 用群名新建
             #   - 否则打印 chat_id 提示 (便于加新 binding) 后静默
             b = self.find_binding(chat_id)
+            # ── /deinit 手动拆除该 source 的 binding (Boss; 已绑定群) ──
+            # 放 ACL 白名单后、/init 检测附近, 在"未绑定静默"分支之前判断:
+            # 有 binding → deprovision (复用 provision.deprovision_chat, 不重写);
+            # 无 binding → 回提示 (这里是回提示而非静默, 放 ACL 后即可)。
+            _text_now = ""
+            if msg_type == "text":
+                try:
+                    _cn = json.loads(msg.content)
+                    _text_now = (_cn.get("text", "") or "").strip()
+                except (json.JSONDecodeError, AttributeError):
+                    _text_now = str(msg.content or "").strip()
+                _text_now = re.sub(r"@_user_\d+\s*", "", _text_now).strip()
+            if _text_now == "/deinit":
+                from tmuxbot.provision import deprovision_chat
+                if b is None:
+                    await self.send_html(chat_id, None, "本群/话题未绑定,无需拆除")
+                    return
+                _name = b.name
+                await deprovision_chat(self, self.state, b, bindings_file=self.bindings_file)
+                await self.send_html(
+                    chat_id, None,
+                    f"✅ 已拆除会话「{_name}」\n"
+                    "tmux 已关 · binding 注销\n"
+                    "项目目录和历史 jsonl 保留(可重新 /init 接回)",
+                )
+                return
+
             if b is None:
                 _text_for_init = ""
                 if msg_type == "text":

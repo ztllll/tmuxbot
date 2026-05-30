@@ -655,6 +655,30 @@ class TelegramFrontend(Frontend):
                 f"{_tip}"
             )
 
+        # ─── /deinit 手动拆除当前 source 的 binding (Boss; 已绑定群/话题) ───
+        # 复用 provision.deprovision_chat: 注销 binding + 杀 tmux + 删 yaml 条目,
+        # 项目目录/jsonl 保留 (可重新 /init 接回)。
+        # source 含 thread_id, 话题精确匹配该话题的 binding (find_binding 本就只查本前端子集)。
+        @dp.message(Command("deinit"))
+        async def cmd_deinit(m: Message):
+            from tmuxbot.provision import deprovision_chat
+
+            if S.setup_mode:
+                return
+            if not m.from_user or m.from_user.id != S.boss_user_id:
+                return  # 非 Boss → 静默
+            b = F_.find_binding(*source_key(m))
+            if b is None:
+                await m.reply("本群/话题未绑定,无需拆除")
+                return
+            _name = b.name
+            await deprovision_chat(F_, S, b, bindings_file=F_.bindings_file)
+            await m.reply(
+                f"✅ 已拆除会话「{html.escape(_name)}」\n"
+                "tmux 已关 · binding 注销\n"
+                "项目目录和历史 jsonl 保留(可重新 /init 接回)"
+            )
+
         # ─── /projects 列 base 下现有目录 (Boss; 绑定/未绑定群都能用, 纯信息) ───
         @dp.message(Command("projects"))
         async def cmd_projects(m: Message):
