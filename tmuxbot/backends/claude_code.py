@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-START_CMD = "claude --dangerously-skip-permissions --model claude-opus-4-8"
+START_CMD = "claude --dangerously-skip-permissions --model 'claude-opus-4-8[1m]'"  # [1m]=1M上下文变体(单引号防 shell glob 展开)
 
 
 # ────────── tool 中文化 + 关键参数提取 ──────────
