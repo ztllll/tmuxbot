@@ -38,11 +38,16 @@ DEFAULT_IDLE_KILL_SECONDS = 1800
 def _safe_name(display_name: str, *, channel: str, chat_id) -> str:
     """display_name → tmux session 名 / binding name / 目录名。
     tmux target 用 ':' 和 '.' 分隔, 含这俩会破坏 target → 替换成 '-'。
+    emoji / variation selector / zero-width joiner 对 tmux session 名不友好 → 直接剥掉。
     中文 OK (encode_cwd 已能处理)。空名 → channel + chat_id 后 8 位降级。"""
-    name = re.sub(r"[:.]", "-", display_name or "").strip()
-    if not name:
-        name = f"{channel}-{str(chat_id)[-8:]}"
-    return name
+    # \u53bb emoji + \u7b26\u53f7: \u53ea\u7559 \u5b57\u6bcd\u6570\u5b57(\u542b\u5404\u56fd\u6587\u5b57)/\u4e2d\u6587/\u7a7a\u683c/-/_
+    # \w \u914d re.UNICODE \u542b\u4e2d\u6587/\u5b57\u6bcd/\u6570\u5b57/\u4e0b\u5212\u7ebf, \u4f46\u4e0d\u542b emoji (\u9ad8\u4f4d\u5e73\u9762) \u2192 \u88ab\u5254\u9664
+    name = re.sub(r"[^\w\u4e00-\u9fff \-]", "", display_name or "", flags=re.UNICODE)
+    name = re.sub(r"\s+", " ", name).strip()        # \u6298\u53e0\u7a7a\u767d
+    safe_name = re.sub(r"[:.]", "-", name).strip()  # \u4ecd\u9632 tmux target \u5206\u9694\u7b26(\w \u542b _ \u4e0d\u542b : .)
+    if not safe_name:
+        safe_name = f"{channel}-{str(chat_id)[-8:]}"
+    return safe_name
 
 
 def _preseed_trust_sync(proj_dir: str) -> None:

@@ -117,6 +117,10 @@ class TelegramFrontend(Frontend):
         self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.dp = Dispatcher()
         self._bot_username: str | None = None  # 懒加载, start_polling 时填入
+        # forum topic 名缓存: key=(chat_id, thread_id) → topic name。
+        # 话题名只在 forum_topic_created / _edited 服务消息里, 普通 message 拿不到 →
+        # 服务消息进来时缓存, /init 时按 (chat_id, thread_id) 命中, 取代群名。
+        self._topic_names: dict[tuple[int, int], str] = {}
         self._register_handlers()
 
     def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
@@ -559,6 +563,27 @@ class TelegramFrontend(Frontend):
             await tmux_send_text(b.tmux_target, f"{caption}\n\n@{save_path}")
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 
+        # ─── forum topic 名缓存 (服务消息, 只缓存不干别的) ─────────
+        # F.forum_topic_created / _edited 是独立 filter, 普通文本不匹配 → 不吞正常消息流。
+        @dp.message(F.forum_topic_created)
+        async def on_topic_created(m: Message):
+            if m.message_thread_id is not None and m.forum_topic_created:
+                F_._topic_names[(m.chat.id, m.message_thread_id)] = (
+                    m.forum_topic_created.name
+                )
+
+        @dp.message(F.forum_topic_edited)
+        async def on_topic_edited(m: Message):
+            # edited 可能只改名; .name 在改名时才有值
+            if (
+                m.message_thread_id is not None
+                and m.forum_topic_edited
+                and m.forum_topic_edited.name
+            ):
+                F_._topic_names[(m.chat.id, m.message_thread_id)] = (
+                    m.forum_topic_edited.name
+                )
+
         # ─── /init 自动开通 (未绑定 source + Boss) ─────────
         # 注册在 F.text 之前: Boss 在**未绑定** chat 发 /init → 建会话。
         # ACL 特殊性: 此场景 source 尚无 binding, 不能走 _acl_ok (它要求 source 已绑定),
@@ -574,11 +599,22 @@ class TelegramFrontend(Frontend):
             tid = thread_id_of(m)
             if F_.find_binding(m.chat.id, tid) is not None:
                 return  # 已绑定 → 交给普通文本流, 这里静默 (避免重复开通)
-            display_name = (
-                m.chat.title
-                or getattr(m.chat, "full_name", None)
-                or f"tg-{m.chat.id}"
-            )
+            # 取名优先级: 话题名 (forum topic) > 群名 > full_name > tg-<id>。
+            # 话题里 m.chat.title 是群名, 话题名只在缓存里 (forum_topic_created 服务消息)。
+            _topic_missing = False
+            if m.message_thread_id is not None:
+                _topic = F_._topic_names.get((m.chat.id, m.message_thread_id))
+                if _topic:
+                    display_name = _topic
+                else:
+                    _topic_missing = True  # 没缓存到 → 退回群名, 确认消息里提示
+                    display_name = m.chat.title or f"tg-{m.chat.id}"
+            else:
+                display_name = (
+                    m.chat.title
+                    or getattr(m.chat, "full_name", None)
+                    or f"tg-{m.chat.id}"
+                )
             # /init <目录名> → 用指定目录; /init → 用群名新建
             _parts = (m.text or "").strip().split(maxsplit=1)
             _arg = _parts[1].strip() if len(_parts) > 1 else None
@@ -599,9 +635,16 @@ class TelegramFrontend(Frontend):
                     "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml"
                 )
                 return
+            _tip = ""
+            if _topic_missing and not _arg:
+                _tip = (
+                    "\n⚠️ 未取到话题名 (用了群名), "
+                    "可 <code>/init &lt;名&gt;</code> 指定"
+                )
             await m.reply(
                 f"✅ <b>已开通会话</b>\n名称: {html.escape(b.name)}\n"
                 f"目录: <code>{html.escape(str(b.cwd))}</code>\n现在可以直接对话了"
+                f"{_tip}"
             )
 
         # ─── /projects 列 base 下现有目录 (Boss; 绑定/未绑定群都能用, 纯信息) ───
