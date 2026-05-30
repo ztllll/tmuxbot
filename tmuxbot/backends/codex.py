@@ -307,7 +307,7 @@ class CodexBackend(Backend):
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
             # codex 实际跑这些命令时屏幕反馈格式跟 claude 不同, 但 fallback raw 也能用
-            "/status":  CmdOpts(parser=parse_status_codex),
+            "/status":  CmdOpts(parser=parse_status_codex, lines=250),  # 长输出抓全(同 claude)
             "/clear":   CmdOpts(
                 parser=parse_clear_codex,
                 init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True,
