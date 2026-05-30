@@ -277,12 +277,12 @@ class FeishuFrontend:
 
     # ────────── auto-provision (/init 自动开通会话) ──────────
 
-    def _fetch_chat_name_sync(self, chat_id: str) -> str | None:
-        """同步取群名 (在 asyncio.to_thread 里调)。失败返回 None。
+    def _get_tenant_token_sync(self) -> str | None:
+        """同步用 app_id/app_secret 换 tenant_access_token (在 asyncio.to_thread 里调)。
 
-        两步: ① app_id/app_secret 换 tenant_access_token
-              ② 带 Bearer 调 GET /im/v1/chats/{chat_id} 取 data.name
-        优先用 requests, 没装则降级 urllib (纯 stdlib)。
+        POST /open-apis/auth/v3/tenant_access_token/internal
+          body {"app_id","app_secret"} → 取 data.tenant_access_token。
+        优先用 requests, 没装则降级 urllib (纯 stdlib)。失败返回 None + log。
         """
         try:
             import requests  # type: ignore
@@ -298,10 +298,7 @@ class FeishuFrontend:
             if not tok:
                 log.warning(f"feishu tenant_token err: {r.text[:200]}")
                 return None
-            chat_url = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}"
-            cr = requests.get(chat_url, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
-            data = (cr.json() or {}).get("data") or {}
-            return data.get("name") or None
+            return tok
         else:
             import urllib.request
             req = urllib.request.Request(
@@ -315,13 +312,90 @@ class FeishuFrontend:
             if not tok:
                 log.warning("feishu tenant_token err (urllib)")
                 return None
-            chat_url = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}"
+            return tok
+
+    def _fetch_chat_name_sync(self, chat_id: str) -> str | None:
+        """同步取群名 (在 asyncio.to_thread 里调)。失败返回 None。
+
+        两步: ① 换 tenant_access_token (_get_tenant_token_sync)
+              ② 带 Bearer 调 GET /im/v1/chats/{chat_id} 取 data.name
+        优先用 requests, 没装则降级 urllib (纯 stdlib)。
+        """
+        tok = self._get_tenant_token_sync()
+        if not tok:
+            return None
+
+        try:
+            import requests  # type: ignore
+        except ImportError:
+            requests = None
+
+        chat_url = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat_id}"
+        if requests is not None:
+            cr = requests.get(chat_url, headers={"Authorization": f"Bearer {tok}"}, timeout=10)
+            data = (cr.json() or {}).get("data") or {}
+            return data.get("name") or None
+        else:
+            import urllib.request
             creq = urllib.request.Request(
                 chat_url, headers={"Authorization": f"Bearer {tok}"}, method="GET"
             )
             with urllib.request.urlopen(creq, timeout=10) as resp:
                 data = (json.loads(resp.read().decode("utf-8")) or {}).get("data") or {}
             return data.get("name") or None
+
+    def _download_image_sync(self, message_id: str, file_key: str) -> str | None:
+        """同步下载消息里的图片资源 (在 asyncio.to_thread 里调)。失败返回 None + log。
+
+        GET /im/v1/messages/{message_id}/resources/{file_key}?type=image
+          header Authorization: Bearer <tenant_access_token>
+        响应是二进制 → 存 /tmp/tb_{message_id}_{file_key前8}.jpg, 返回路径。
+        优先用 requests, 没装则降级 urllib (纯 stdlib)。
+
+        ⚠️ 需飞书 app 开通 im:resource 权限, 否则 403。
+        """
+        tok = self._get_tenant_token_sync()
+        if not tok:
+            return None
+
+        url = (
+            f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
+            f"/resources/{file_key}?type=image"
+        )
+        save_path = str(Path("/tmp") / f"tb_{message_id}_{file_key[:8]}.jpg")
+
+        try:
+            import requests  # type: ignore
+        except ImportError:
+            requests = None
+
+        try:
+            if requests is not None:
+                r = requests.get(
+                    url, headers={"Authorization": f"Bearer {tok}"}, timeout=30
+                )
+                if r.status_code != 200:
+                    log.warning(
+                        f"feishu download_image err: status={r.status_code} "
+                        f"body={r.text[:200]} mid={message_id} key={file_key[:12]}"
+                    )
+                    return None
+                with open(save_path, "wb") as f:
+                    f.write(r.content)
+            else:
+                import urllib.request
+                req = urllib.request.Request(
+                    url, headers={"Authorization": f"Bearer {tok}"}, method="GET"
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    with open(save_path, "wb") as f:
+                        f.write(resp.read())
+            return save_path
+        except Exception as e:
+            log.warning(
+                f"feishu download_image err: {e} mid={message_id} key={file_key[:12]}"
+            )
+            return None
 
     def _list_projects(self) -> str:
         """列 project_base 下的直接子目录, 返回飞书 HTML 文本 (供 /projects 用)"""
@@ -524,6 +598,82 @@ class FeishuFrontend:
                 )
                 if not bot_mentioned:
                     return
+
+            # ── image / post 图文: 下载图片 → 拼 caption + @路径 注入 tmux ──
+            # 对齐 TG on_file: claude TUI 用 @路径 引用本地文件。
+            # 已在 ACL + find_binding 之后, b 必非 None; 未绑定群早已静默 return。
+            # 不走 dispatch (图文不是命令), 直接 ensure_running + tmux_send_text 注入。
+            if msg_type in ("image", "post"):
+                from tmuxbot.tmux import tmux_send_text
+
+                caption = ""
+                image_keys: list[str] = []
+                try:
+                    content_obj = json.loads(msg.content)
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    content_obj = {}
+
+                if msg_type == "image":
+                    # content = {"image_key": "img_v3_xxx"}
+                    ik = (content_obj or {}).get("image_key")
+                    if ik:
+                        image_keys.append(ik)
+                    caption = "请处理这个图片"
+                else:
+                    # post = {"title": "...", "content": [[{tag,text/image_key}, ...], ...]}
+                    title = (content_obj or {}).get("title", "") or ""
+                    text_parts: list[str] = []
+                    for line in (content_obj or {}).get("content", []) or []:
+                        for node in line or []:
+                            tag = node.get("tag")
+                            if tag == "text":
+                                t = node.get("text", "")
+                                if t:
+                                    text_parts.append(t)
+                            elif tag == "a":
+                                # 超链接: 取可见文本 + href
+                                t = node.get("text", "") or node.get("href", "")
+                                if t:
+                                    text_parts.append(t)
+                            elif tag == "img":
+                                ik = node.get("image_key")
+                                if ik:
+                                    image_keys.append(ik)
+                    caption = (title + ("\n" if title and text_parts else "") +
+                               "".join(text_parts)).strip()
+
+                if not image_keys:
+                    log.debug(f"feishu: {msg_type} msg 无 image_key, 忽略")
+                    return
+
+                # 👀 已读 reaction (失败不影响主流程)
+                self.state.last_active[b.name] = time.time()
+                try:
+                    await asyncio.to_thread(self._add_reaction_sync, msg.message_id, "OnIt")
+                except Exception as e:
+                    log.debug(f"feishu reaction err: {e}")
+
+                # 逐个下载图片 (同步 HTTP 放 to_thread, 失败跳过该图)
+                paths: list[str] = []
+                for ik in image_keys:
+                    p = await asyncio.to_thread(
+                        self._download_image_sync, msg.message_id, ik
+                    )
+                    if p:
+                        paths.append(p)
+
+                if not paths:
+                    await self.send_html(
+                        chat_id, None,
+                        "❌ <b>图片下载失败</b>\n"
+                        "请检查飞书 app 是否开通 <code>im:resource</code> 权限",
+                    )
+                    return
+
+                inject = (caption or "请处理") + "\n\n" + "\n".join(f"@{p}" for p in paths)
+                await self.backend.ensure_running(b)
+                await tmux_send_text(b.tmux_target, inject)
+                return
 
             # ── 只处理 text 类型 ──
             if msg_type != "text":
