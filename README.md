@@ -64,12 +64,15 @@ pip install -e ".[feishu]"
 # 2. 配凭证
 cp .env.example .env
 vim .env                    # 填 TG_BOT_TOKEN,BOSS_USER_ID;接 codex 再加 TG_CODEX_BOT_TOKEN;接飞书加 FEISHU_APP_ID/SECRET/BOSS_OPEN_IDS
-vim bindings.yaml           # 填 chat_id / tmux_session / cwd / bot_token_env / backend / channel
 
-# 3. 启动
+# 3. 配 binding(IM 端点 ↔ tmux pane 映射)
+cp bindings.example.yaml bindings.yaml
+vim bindings.yaml           # 改 chat_id / tmux_session / cwd / backend / bot_token_env / channel(模板含 TG/codex/飞书 5 个示例)
+
+# 4. 启动
 bash bin/restart.sh         # 含失败自动重试 + 心跳验证
 
-# 4. 看状态
+# 5. 看状态
 bash bin/status.sh
 
 # 停止

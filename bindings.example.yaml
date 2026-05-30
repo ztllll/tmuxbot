@@ -1,0 +1,76 @@
+# bindings.example.yaml —— 复制为 bindings.yaml 后填你自己的值
+#
+#   cp bindings.example.yaml bindings.yaml
+#
+# 一个 binding = 一个 IM 端点(DM / 群 / forum topic / 飞书群)绑定到一个 tmux pane。
+# 1 bot ↔ 1 backend ↔ N 个 binding(同类 CLI 可绑多个项目)。
+#
+# 字段说明:
+#   name          binding 唯一名(日志 / 运行时状态键),建议跟 tmux_session 一致
+#   channel       前端渠道: telegram(默认) / feishu
+#   chat_id       Telegram: int(正数=DM user_id,负数=群 chat_id);飞书: str(oc_xxx)
+#                 不知道填啥 → 先随便配,在该端点发 /whoami,bot 回 chat_id/thread_id
+#   thread_id     仅 Telegram supergroup forum topic 需要;DM / 普通群 / 飞书 → null
+#   tmux_session  tmux 会话名(bot 会 ensure_running 自动建 + 起 cli)
+#   tmux_window   tmux window 序号,通常 0
+#   tmux_pane     tmux pane 序号,通常 0
+#   cwd           项目目录(cli 在此目录启动,加载该目录的 CLAUDE.md / AGENTS.md)
+#   backend       AI CLI: claude_code(默认) / codex
+#   bot_token_env 用哪个凭证(env 变量名)。Telegram: TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN;
+#                 飞书: FEISHU(→ 读 FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_BOSS_OPEN_IDS)
+#   idle_kill_seconds  >0 = 闲置超此秒数自动杀 cli 进程(来消息 --resume 重生,上下文不丢);
+#                      0 = 永不杀(默认,适合自指开发会话 / 内存充足的机器)
+
+bindings:
+
+  # ① Telegram DM 接 claude_code(最简单的起步配置)
+  - name: my-project
+    channel: telegram
+    chat_id: 123456789           # 你的 TG user_id(/whoami 拿)
+    thread_id: null
+    tmux_session: my-project
+    tmux_window: 0
+    tmux_pane: 0
+    cwd: /home/youruser/projects/my-project
+    backend: claude_code
+    bot_token_env: TG_BOT_TOKEN
+    idle_kill_seconds: 0
+
+  # ② Telegram supergroup forum topic 接 claude_code(群里某个话题)
+  - name: roundtable
+    channel: telegram
+    chat_id: -1001234567890      # 群 chat_id(负数)
+    thread_id: 1070              # forum topic id(/whoami 在该话题里拿)
+    tmux_session: roundtable
+    tmux_window: 0
+    tmux_pane: 0
+    cwd: /home/youruser/projects/roundtable
+    backend: claude_code
+    bot_token_env: TG_BOT_TOKEN
+    idle_kill_seconds: 1800      # 闲置 30min 自动杀,省内存
+
+  # ③ Telegram DM 接 codex(独立 bot token,跟 claude bot 并存)
+  - name: my-project-codex
+    channel: telegram
+    chat_id: 123456789
+    thread_id: null
+    tmux_session: my-project-codex
+    tmux_window: 0
+    tmux_pane: 0
+    cwd: /home/youruser/projects/my-project
+    backend: codex
+    bot_token_env: TG_CODEX_BOT_TOKEN
+    idle_kill_seconds: 0
+
+  # ④ 飞书群聊接 claude_code(凭证走 FEISHU_APP_ID/SECRET,白名单走 FEISHU_BOSS_OPEN_IDS)
+  - name: feishu-team
+    channel: feishu
+    chat_id: oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 飞书群 chat_id(str)
+    thread_id: null
+    tmux_session: feishu-team
+    tmux_window: 0
+    tmux_pane: 0
+    cwd: /home/youruser/projects/feishu-team
+    backend: claude_code
+    bot_token_env: FEISHU
+    idle_kill_seconds: 600       # 闲置 10min 自动杀
