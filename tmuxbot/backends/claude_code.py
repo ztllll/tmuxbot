@@ -107,6 +107,12 @@ CAT_ZH = {
 def parse_context(raw: str) -> str | None:
     """/context → 标题 + render_table 卡片"""
     clean = strip_decorations(raw)
+    # 屏幕滚动历史里可能堆了多个 /context 输出 (如 [1m] 重启前的旧 200k + 现在的 1m),
+    # re.search 会抓最靠上=最旧的那条 → 1M 会话被误报成 200k。只截取最后一个
+    # "Context Usage" 块 (最新那次) 再解析, 杜绝旧块串味。
+    _last = clean.rfind("Context Usage")
+    if _last != -1:
+        clean = clean[_last:]
     # 用量数字单位可省 (新会话 / 刚 /compact 后 = "0/1m tokens (0%)" 纯数字)
     total_m = re.search(
         r"(\d+(?:\.\d+)?[kmKM]?)\s*/\s*(\d+[kmKM])\s*tokens?\s*\((\d+)%\)",
