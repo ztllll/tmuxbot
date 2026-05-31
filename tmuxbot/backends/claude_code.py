@@ -294,12 +294,12 @@ def _fmt_remaining(target_ts: float) -> str:
 def _fmt_quota_lines(
     payload: dict | None, fetched_at: float, last_error: str | None
 ) -> list[str]:
-    """把 /api/oauth/usage 的 payload 渲染成 /status 的配额章节 (HTML)"""
-    lines = ["", "🚦 <b>订阅配额</b>"]
+    """把 /api/oauth/usage 的 payload 渲染成 /status 的配额章节 (HTML)。
+    取不到 (无 OAuth 凭证 / 走中转的环境) → 返回 [] 整段省略, 不显示"无法读取"噪音,
+    保证有订阅 (直连) 与无订阅 (中转) 两种环境的 /status·/cost 核心内容一致。"""
     if not payload:
-        reason = f" ({last_error})" if last_error else ""
-        lines.append(f"  · 无法读取{html.escape(reason)}")
-        return lines
+        return []
+    lines = ["", "🚦 <b>订阅配额</b>"]
 
     rows: list[list[str]] = []
     for key, label in _QUOTA_WINDOW_LABEL.items():
