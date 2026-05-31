@@ -32,8 +32,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-DEFAULT_IDLE_KILL_SECONDS = 600
-
 
 class AsciiDirRequired(Exception):
     """群名含中文且未给英文目录参数 → 项目目录无法定为 ASCII, 拒绝开通。
@@ -185,7 +183,6 @@ async def provision_chat(
             backend=frontend.backend.name,
             bot_token_env=bot_token_env,
             channel=channel,
-            idle_kill_seconds=DEFAULT_IDLE_KILL_SECONDS,
         )
         frontend.bindings.append(b)
         state.bindings.append(b)
@@ -205,7 +202,6 @@ async def provision_chat(
             "tmux_window": 0,
             "tmux_pane": 0,
             "cwd": proj_dir,
-            "idle_kill_seconds": DEFAULT_IDLE_KILL_SECONDS,
         }
         await asyncio.to_thread(_persist_binding_sync, bindings_file, entry)
 

@@ -49,7 +49,6 @@
 - 不在电脑前时,用手机 TG 或飞书推动本地 AI 跑代码 / 改项目 / 看日志
 - 多项目并行:每个项目一个 tmux session 一个 cwd,各自加载项目自己的 `CLAUDE.md`
 - 多 cli 共存:claude 用一个 bot,codex 用另一个 bot,各管各的
-- 内存受限机器:配 `idle_kill_seconds` 闲置自动杀 claude,来消息 `--resume` 重生,上下文不丢
 
 ---
 
@@ -110,7 +109,6 @@ bot crash 后 5 秒内自动拉起,无需手动守护。
 - **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
-- **idle-kill**:配 `idle_kill_seconds` 闲置自动杀 claude,来消息 `--resume` 重生,节省内存
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)
 - **健壮性**:tmux paste 等 TUI idle 才 send Enter;jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
 
@@ -156,7 +154,7 @@ ClaudeCodeBackend  CodexBackend
 - **M1** ✅ 单文件骨架 + 双 binding + 命令组 + heartbeat
 - **M2** ✅ 代码审查 + 可插拔重构(`backends/` + `frontends/` + `dispatch.py`)
 - **M3** ✅ 接入 Codex CLI + 双 bot 共存(1 bot ↔ 1 backend ↔ N tmux 子线程)+ systemd 部署
-- **M4** ✅ 接入飞书前端(lark-oapi WebSocket + interactive card)+ idle-kill + 多实例支持
+- **M4** ✅ 接入飞书前端(lark-oapi WebSocket + interactive card)+ 多实例支持
 
 ---
 

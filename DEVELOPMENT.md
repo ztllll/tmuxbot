@@ -26,7 +26,7 @@ tmuxbot/                       ← 仓库根
 │       └── tmuxbot.service    ← systemd user unit (Restart=always, MemoryMax=4G)
 ├── tmuxbot/                   ← Python package
 │   ├── __init__.py
-│   ├── __main__.py            ← 装配入口: backends + frontends + tailer/heartbeat/idle
+│   ├── __main__.py            ← 装配入口: backends + frontends + tailer/heartbeat
 │   ├── state.py               ← Binding + State + fire()
 │   ├── config.py              ← .env + bindings.yaml + offsets.json → State
 │   ├── utils.py               ← encode_cwd / cwidth / render_table / offsets debounced
@@ -36,7 +36,6 @@ tmuxbot/                       ← 仓库根
 │   ├── heartbeat.py           ← heartbeat_typing_loop (TUI 指纹判活跃)
 │   ├── commands.py            ← capture_and_push (slash 注入 + 屏幕等待 + 结构化反馈)
 │   ├── dispatch.py            ← 共享命令分发层 (TG/飞书共用 stop/capture/text 逻辑)
-│   ├── idle.py                ← idle_kill_loop (闲置自动杀 claude, 来消息 --resume 重生)
 │   ├── quota.py               ← OAuth API 订阅配额 (5h/7d 五窗口 + 重置倒计时)
 │   ├── backends/
 │   │   ├── base.py            ← Backend ABC + CmdOpts
@@ -173,25 +172,7 @@ TMUXBOT_DATA_DIR=/data/codex-feishu TMUXBOT_BINDINGS=/etc/tmuxbot/codex-feishu.y
 
 ---
 
-## 5. Idle-kill watcher
-
-binding 级闲置自动管理 claude 进程,节省内存(7GB 内存机器扛不住多会话常驻)。
-
-| 字段 | 说明 |
-|---|---|
-| `idle_kill_seconds: 0` | 默认,永不触发(保护自指开发会话) |
-| `idle_kill_seconds: 1800` | 闲置 30min 后优雅杀 |
-
-> 手动配置的 binding 默认 `idle_kill_seconds=0`(永不杀);但通过 `/init` 自助开通的 binding 默认 600 秒(闲置 10 分钟自动杀),对应 `provision.DEFAULT_IDLE_KILL_SECONDS`。
-
-**工作流程**:
-1. 每 60s 检查一次,idle >= 阈值 + TUI 非 busy + pane 在跑 claude
-2. 发双 Ctrl-C 优雅杀,2.5s 后验证
-3. 来新消息时 `ensure_running` 自动 `claude --resume <session_id>`,jsonl 原地追加,上下文不丢
-
----
-
-## 6. `bindings.yaml` schema
+## 5. `bindings.yaml` schema
 
 ```yaml
 bindings:
@@ -206,7 +187,6 @@ bindings:
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/you/projects/alpha
-    idle_kill_seconds: 0           # 0 = 永不杀 (默认)
 
   # Telegram supergroup forum topic binding
   - name: proj-beta-topic
@@ -219,7 +199,6 @@ bindings:
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/you/projects/beta
-    idle_kill_seconds: 1800        # 30min 闲置自动杀,来消息 --resume 重生
 
   # 飞书 binding
   - name: proj-gamma-feishu
@@ -232,7 +211,6 @@ bindings:
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/you/projects/gamma
-    idle_kill_seconds: 3600        # 1h 闲置自动杀
 ```
 
 **对应 `.env` 飞书相关变量**:
@@ -251,7 +229,7 @@ FEISHU_BOSS_OPEN_IDS=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # 逗号分隔多个
 
 ---
 
-## 7. 部署
+## 6. 部署
 
 ### 开发启动 (tmux session)
 
@@ -306,7 +284,7 @@ RestartSec=5s
 
 ---
 
-## 8. 当前命令清单
+## 7. 当前命令清单
 
 ### TG / 飞书共用命令 (经 `dispatch.py` 分发)
 
@@ -332,7 +310,7 @@ RestartSec=5s
 
 ---
 
-## 9. 关键事实 (实测, 不能错)
+## 8. 关键事实 (实测, 不能错)
 
 参见 `CLAUDE.md` 第 2 节。摘要:
 
@@ -348,7 +326,7 @@ RestartSec=5s
 
 ---
 
-## 10. 部署红线
+## 9. 部署红线
 
 - ❌ 不能 root/sudo 跑 claude
 - ❌ 项目里不要配 `PreToolUse` hook
@@ -361,7 +339,7 @@ RestartSec=5s
 
 ---
 
-## 11. 调试
+## 10. 调试
 
 ```bash
 # tmux sessions 状态
@@ -379,12 +357,12 @@ grep "starting\|heartbeat\|polling\|EXCEPTION\|WARNING" data/tmuxbot.log
 
 ---
 
-## 12. Milestone 路线
+## 11. Milestone 路线
 
 - **M1** (✅ 2026-05-27): 单文件骨架 + 双 binding + 命令组 + heartbeat typing + 消息反应 + picker 兜底
 - **M2** (✅ 2026-05-27): 地毯代码审查 → 可插拔重构 (`backends/` + `frontends/` + `dispatch.py`)
 - **M3** (✅ 2026-05-27): 接入 Codex CLI + 双 bot 共存 + systemd 部署
-- **M4** (✅ 2026-05-29): 接入飞书前端 (lark-oapi WebSocket + interactive card) + idle-kill + 多实例
+- **M4** (✅ 2026-05-29): 接入飞书前端 (lark-oapi WebSocket + interactive card) + 多实例
 
 ---
 

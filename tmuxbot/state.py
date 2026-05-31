@@ -33,7 +33,6 @@ class Binding:
     bot_token_env: str = "TG_BOT_TOKEN"     # ★ 用哪个 token (env 变量名)
     channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
     last_session_id: str | None = None      # 运行时学到的 jsonl 文件名
-    idle_kill_seconds: int = 0             # >0 = 闲置超此秒数自动杀 claude 进程; 0 = 永不杀(默认)
 
     @property
     def tmux_target(self) -> str:

@@ -4,6 +4,20 @@
 
 ---
 
+## [2026-05-31] 下线 idle-kill 模块
+
+### Removed
+
+- **彻底移除 idle-kill 功能模块**:hbhy 内存已升级,不再需要"省内存式闲置自动杀进程"——该机制会打断长任务 / 定时唤醒,弊大于利,整模块下线。具体移除:
+  - 删整个 `tmuxbot/idle.py`(`idle_kill_loop` 闲置自动杀 claude 的看门狗)
+  - 删 `Binding.idle_kill_seconds` 字段(`state.py`)及其在 `config.py` / `provision.py` 的读取与默认赋值
+  - 删 `provision.DEFAULT_IDLE_KILL_SECONDS`(连同 `/init` 自助开通 binding 写 yaml 的 `idle_kill_seconds` 字段)
+  - 删 `__main__.py` 的 `idle_kill_loop` import + 启动 `S.fire(...)` 行
+  - 删 `tmux.py` 的 `tmux_respawn_pane`(仅 idle-kill 兜底用,现无引用)
+  - `last_active` 状态**保留不动**(heartbeat typing 指示 / 前端仍在用,非 idle 专属)
+
+---
+
 ## [2026-05-30] codex 最高权限 + 默认开 1M 上下文 + /init idle-kill 默认收紧
 
 ### Changed
