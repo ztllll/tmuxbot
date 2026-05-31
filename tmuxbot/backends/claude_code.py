@@ -169,6 +169,11 @@ def parse_cost(raw: str) -> str | None:
     clean = strip_decorations(raw)
     if not clean:
         return None
+    # 同 /context: 屏幕历史可能堆多份 settings 对话框, 只取最后一次开启 (Tab 栏定位),
+    # 否则 re.search 抓到旧块 → 花费/用量显示陈旧值。guard: 找不到锚点就退回全文。
+    _m = list(re.finditer(r"Settings\s+Status\s+Config\s+Usage\s+Stats", clean))
+    if _m:
+        clean = clean[_m[-1].start():]
     parts = ["💰 <b>用量与花费</b>"]
 
     sess_rows: list[list[str]] = []
@@ -350,6 +355,11 @@ def _fmt_quota_lines(
 def parse_status(raw: str) -> str | None:
     """/status → 关键 key:value 摘要 (中文化) + Anthropic 订阅配额章节"""
     clean = strip_decorations(raw)
+    # 同 /context /cost: 屏幕历史可能堆多份 settings 对话框, 只取最后一次开启
+    # (Tab 栏定位), 否则 KV findall 会混进旧对话框的陈旧值。guard 找不到则退回全文。
+    _m = list(re.finditer(r"Settings\s+Status\s+Config\s+Usage\s+Stats", clean))
+    if _m:
+        clean = clean[_m[-1].start():]
     kvs = re.findall(r"^[\s│├└]*([A-Z][A-Za-z ]+):\s*(.+)$", clean, re.M)
     if not kvs:
         return None
