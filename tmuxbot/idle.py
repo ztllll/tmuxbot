@@ -13,7 +13,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from tmuxbot.tmux import tmux_capture, tmux_pane_command, tmux_send_key
+from tmuxbot.tmux import tmux_capture, tmux_pane_command, tmux_respawn_pane, tmux_send_key
 
 if TYPE_CHECKING:
     from tmuxbot.frontends.base import Frontend
@@ -90,10 +90,27 @@ async def idle_kill_loop(state: "State", frontend: "Frontend") -> None:
                         f"[{b.name}] idle {idle:.0f}s > {b.idle_kill_seconds}s, "
                         f"claude 已优雅杀 (来消息会自动 --resume 重生)"
                     )
+                    continue
+
+                # 双 Ctrl-C 没杀掉 (输入框有残留字符时 C-c 只清不退) →
+                # 升级强制重生 pane (respawn -k), 可靠兜底, 不再干等下次 tick
+                log.warning(
+                    f"[{b.name}] 双 Ctrl-C 未退出, 升级 respawn-pane 强制杀..."
+                )
+                tmux_respawn_pane(b.tmux_target)
+                await asyncio.sleep(1.5)
+                try:
+                    final_cmd = tmux_pane_command(b.tmux_target)
+                except Exception:
+                    final_cmd = backend.pane_command_name
+                if final_cmd != backend.pane_command_name:
+                    log.info(
+                        f"[{b.name}] idle {idle:.0f}s, claude 已强制杀 (respawn-pane; "
+                        f"来消息会自动 --resume 重生)"
+                    )
                 else:
                     log.warning(
-                        f"[{b.name}] idle-kill 发了双 Ctrl-C 但 claude 仍在, "
-                        f"跳过本轮 (下次 tick 重试)"
+                        f"[{b.name}] respawn-pane 后 pane 仍是 {final_cmd}, 下次 tick 重试"
                     )
 
         except asyncio.CancelledError:

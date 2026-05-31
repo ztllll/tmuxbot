@@ -55,6 +55,13 @@ def tmux_pane_command(target: str) -> str:
     return r.stdout.strip()
 
 
+def tmux_respawn_pane(target: str) -> bool:
+    """强制重生 pane: -k 杀掉 pane 内当前进程 (SIGKILL), 换回默认 shell → 回到 bash。
+    idle-kill 双 Ctrl-C 失败时的可靠兜底 (claude 输入框有残留字符时 C-c 只清不退)。
+    pane 是 idle 态, 无未落盘数据, 强杀安全; ensure_running 来消息时 --resume 重生。"""
+    return _tmux("respawn-pane", "-k", "-t", target).returncode == 0
+
+
 def tmux_send_key(target: str, key: str) -> None:
     _tmux("send-keys", "-t", target, key)
 
