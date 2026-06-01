@@ -231,6 +231,13 @@ async def capture_and_push(
                 summary += f"\n{delta_line}"
             if compact_extra_line:
                 summary += f"\n{compact_extra_line}"
+            # /status 补「跟上游无关、两端通用」的综合信息 (上下文/缓存/token, 读 jsonl)
+            # → 直连/中转两端 /status 核心内容一致, 只有配额(OAuth)因接口差异中转端省略
+            if key == "/status":
+                try:
+                    summary += backend.status_extra(b)
+                except Exception:
+                    log.exception(f"status_extra err for {b.name}")
             await frontend.send_html(chat_id, thread_id, summary)
             return
         total_wait = opts.init_delay + opts.max_iters * opts.poll + 5  # +5s for final retry

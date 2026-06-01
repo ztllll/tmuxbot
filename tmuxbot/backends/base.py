@@ -77,6 +77,12 @@ class Backend(ABC):
         """读取该 backend 的当前任务列表, 给任务 footer 渲染用 (默认无任务源)。"""
         return []
 
+    def status_extra(self, b: "Binding") -> str:
+        """给 /status 补「跟上游接口无关、两端通用」的综合信息 (jsonl 来源:
+        当前上下文 / 缓存命中率 / token 累计)。默认无 (返回 "")。
+        配额那种依赖 OAuth 官方接口的留给各 backend 的 parse_status 自己处理。"""
+        return ""
+
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         """聚合 jsonl 的 token usage (可选实现, 默认 None)"""
         return None

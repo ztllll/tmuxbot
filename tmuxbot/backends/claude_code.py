@@ -504,6 +504,30 @@ class ClaudeCodeBackend(Backend):
         tasks.sort(key=lambda t: t["id"])
         return tasks
 
+    def status_extra(self, b: "Binding") -> str:
+        """给 /status 补 jsonl 来源的综合信息: 当前上下文 + 会话累计 token + 缓存命中率。
+        全部读 jsonl, 跟直连/中转无关 → 两端一致 (配额另由 parse_status 走 OAuth, 中转省略)。"""
+        jl = self.find_active_jsonl(b)
+        if not jl:
+            return ""
+        lines: list[str] = []
+        ctx = self.read_context_size(jl)
+        if ctx:
+            lines.append(f"🧮 <b>当前上下文</b> <code>{ctx / 1000:.1f}k</code> tokens")
+        st = self.aggregate_usage(jl)
+        if st:
+            def _f(n: int) -> str:
+                return f"{n:,}"
+            total_in = st["input"] + st["cache_create"] + st["cache_read"]
+            lines.append(f"📊 <b>会话累计</b> · 助手 {st['count']} 条")
+            lines.append(
+                f"  📥 计费输入 <code>{_f(total_in)}</code> "
+                f"(新 {_f(st['input'])} / 缓存创建 {_f(st['cache_create'])} / 缓存命中 {_f(st['cache_read'])})"
+            )
+            lines.append(f"  📤 输出 <code>{_f(st['output'])}</code>")
+            lines.append(f"  🎯 <b>缓存命中率 {st['cache_hit_rate'] * 100:.1f}%</b>")
+        return ("\n" + "\n".join(lines)) if lines else ""
+
     def parse_event(self, line: str) -> list[tuple[str, str]]:
         """jsonl 一行 → events 列表。
         区分 assistant_tools (thinking + tool_use) 和 assistant_text (真说话)
