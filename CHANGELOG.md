@@ -17,6 +17,14 @@
 
 ---
 
+## [2026-06-01] claude 启动去掉 --model(最新版默认即 opus-4.8 1M)
+
+### Changed
+
+- **START_CMD 去掉 `--model 'claude-opus-4-8[1m]'`** → `claude --dangerously-skip-permissions`(只剩最高权限免审批)。Claude Code 升级到最新版后**默认 opus 模型即 opus-4.8 1M 上下文**(Boss + 网络同传裸启动实测确认 `Opus 4.8 (1M context)`),`--model` 多余。两端启动统一为"干净 + 最高权限":claude=`--dangerously-skip-permissions`,codex=`--dangerously-bypass-approvals-and-sandbox`。auto-update timer 保证 CLI 常新 → 默认始终 1M。
+
+---
+
 ## [2026-05-31] 下线 idle-kill 模块
 
 ### Removed
