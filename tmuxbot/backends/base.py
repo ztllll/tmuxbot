@@ -73,6 +73,10 @@ class Backend(ABC):
     def command_aliases(self) -> dict[str, str]:
         """bot 端命令别名 (e.g. /new → /clear)"""
 
+    def read_tasks(self, b: "Binding") -> list:
+        """读取该 backend 的当前任务列表, 给任务 footer 渲染用 (默认无任务源)。"""
+        return []
+
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         """聚合 jsonl 的 token usage (可选实现, 默认 None)"""
         return None

@@ -63,9 +63,6 @@ class State:
         # 工具调用聚合器: binding.name → {msg_id, content_lines: list[str], last_ts, target}
         # tool_use/thinking 类事件累计到一条可编辑消息, text 事件触发"封闭"并发新消息
         self.tool_aggregator: dict[str, dict] = {}
-        # 任务状态: binding.name → claude 最新 TodoWrite 的 todos 列表
-        # bot 据此渲染任务 footer 追加到 assistant_text 推送 (§6, 不靠 claude 手写)
-        self.task_state: dict[str, list] = {}
 
     def fire(self, coro):
         """create_task + 强引用保存 + 完成时自动清理 + 异常自动 log"""

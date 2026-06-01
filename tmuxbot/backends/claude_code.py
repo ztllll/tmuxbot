@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+TASKS_DIR = Path.home() / ".claude" / "tasks"
 START_CMD = "claude --dangerously-skip-permissions --model 'claude-opus-4-8[1m]'"  # [1m]=1M上下文变体(单引号防 shell glob 展开)
 
 
@@ -480,6 +481,29 @@ class ClaudeCodeBackend(Backend):
             return None
         return max(files, key=lambda p: p.stat().st_mtime)
 
+    def read_tasks(self, b: "Binding") -> list:
+        """读 harness 任务文件 ~/.claude/tasks/<session_id>/*.json → 当前任务列表。
+        session_id = 该 binding active jsonl 的 stem。无目录/无文件 → []。"""
+        jl = self.find_active_jsonl(b)
+        if not jl:
+            return []
+        tdir = TASKS_DIR / jl.stem
+        if not tdir.is_dir():
+            return []
+        tasks = []
+        for f in sorted(tdir.glob("*.json")):
+            try:
+                d = json.loads(f.read_text())
+                tasks.append({
+                    "id": int(d.get("id", 0)),
+                    "subject": d.get("subject", ""),
+                    "status": d.get("status", ""),
+                })
+            except Exception:
+                continue
+        tasks.sort(key=lambda t: t["id"])
+        return tasks
+
     def parse_event(self, line: str) -> list[tuple[str, str]]:
         """jsonl 一行 → events 列表。
         区分 assistant_tools (thinking + tool_use) 和 assistant_text (真说话)
@@ -506,7 +530,6 @@ class ClaudeCodeBackend(Backend):
             content = msg.get("content") or []
             text_parts: list[str] = []
             tool_parts: list[str] = []
-            latest_todos: list | None = None  # 最近一次 TodoWrite 的任务列表
             for blk in content:
                 if not isinstance(blk, dict):
                     continue
@@ -520,16 +543,9 @@ class ClaudeCodeBackend(Backend):
                             f"💭 <i>{html.escape(tx[:300])}{'…' if len(tx) > 300 else ''}</i>"
                         )
                 elif bt == "tool_use":
-                    name = blk.get("name", "?")
-                    inp = blk.get("input") or {}
-                    tool_parts.append(format_tool_use(name, inp))
-                    # ★ TodoWrite → 抓真实任务状态, bot 据此渲染任务 footer (§6)
-                    if name == "TodoWrite" and isinstance(inp.get("todos"), list):
-                        latest_todos = inp["todos"]
+                    tool_parts.append(format_tool_use(blk.get("name", "?"), blk.get("input") or {}))
             # 注: AskUserQuestion 已全局封禁, picker 兜底由 detect_idle_picker 处理
             events: list[tuple[str, str]] = []
-            if latest_todos is not None:
-                events.append(("task_state", json.dumps(latest_todos)))
             if tool_parts:
                 events.append(("assistant_tools", "\n".join(tool_parts)))
             if text_parts:

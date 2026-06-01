@@ -10,9 +10,10 @@ from pathlib import Path
 
 log = logging.getLogger("tmuxbot")
 
-# ────────── 任务进度 footer (bot 从 claude TodoWrite 状态渲染) ──────────
-# 全局宪法 §6: Boss 远程看不到 TUI 任务列表 → bot 把 claude 的真实 TodoWrite
-# 状态渲染成 footer 追加到推送。claude 只管维护 TodoWrite, 不手写 footer。
+# ────────── 任务进度 footer (bot 从 harness 任务文件渲染) ──────────
+# 全局宪法 §6: Boss 远程看不到 TUI 任务列表 → bot 把 harness 任务文件
+# (~/.claude/tasks/<session_id>/*.json) 渲染成 footer 追加到推送。
+# claude 只管维护任务 (TaskCreate/TaskUpdate), 不手写 footer。
 _HANDWRITTEN_FOOTER_RE = re.compile(r"\n*━━━\s*任务\s*━━━.*$", re.S)
 
 
@@ -23,9 +24,10 @@ def strip_handwritten_footer(text: str) -> str:
 
 
 def render_task_footer(todos: "list | None") -> str:
-    """claude TodoWrite todos → §6 格式的任务 footer (HTML)。无任务返回 ""(不渲染)。
+    """任务列表 → §6 格式的任务 footer (HTML)。无任务返回 ""(不渲染)。
 
-    todo item: {"content": str, "status": "pending|in_progress|completed", ...}
+    task item: {"subject": str, "status": "pending|in_progress|completed", ...}
+    (兼容旧 TodoWrite 的 "content" 字段)
     格式: ◼ in_progress(加粗) · ◻ pending · ✓ <s>completed</s>(最早3个, 其余折叠)
     """
     if not todos:
@@ -39,11 +41,11 @@ def render_task_footer(todos: "list | None") -> str:
         f"{n} tasks ({len(done)} done, {len(in_prog)} in progress, {len(pending)} open)",
     ]
     for t in in_prog:
-        lines.append(f"◼ <b>{html.escape(str(t.get('content', '')))}</b>")
+        lines.append(f"◼ <b>{html.escape(str(t.get('subject') or t.get('content') or ''))}</b>")
     for t in pending:
-        lines.append(f"◻ {html.escape(str(t.get('content', '')))}")
+        lines.append(f"◻ {html.escape(str(t.get('subject') or t.get('content') or ''))}")
     for t in done[:3]:
-        lines.append(f"✓ <s>{html.escape(str(t.get('content', '')))}</s>")
+        lines.append(f"✓ <s>{html.escape(str(t.get('subject') or t.get('content') or ''))}</s>")
     if len(done) > 3:
         lines.append(f"… +{len(done) - 3} completed")
     return "\n".join(lines)

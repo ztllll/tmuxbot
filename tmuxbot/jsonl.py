@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from pathlib import Path
@@ -182,14 +181,6 @@ async def on_tmux_event(
     if kind == "user":
         return
 
-    # ★ task_state: 更新该 binding 的 TodoWrite 任务状态, 不推送 (footer 由 assistant_text 带出)
-    if kind == "task_state":
-        try:
-            state.task_state[b.name] = json.loads(body)
-        except Exception:
-            pass
-        return
-
     if not body.strip():
         return
 
@@ -201,9 +192,9 @@ async def on_tmux_event(
 
     if kind == "assistant_text":
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
-        # 剥掉 claude 手写 footer + 从真实 TodoWrite 状态渲染任务 footer 追加 (§6)
+        # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
-        footer = render_task_footer(state.task_state.get(b.name))
+        footer = render_task_footer(backend.read_tasks(b))
         out = f"{text}\n\n{footer}" if footer else text
         if out.strip():
             await frontend.send_html(b.chat_id, b.thread_id, out)
