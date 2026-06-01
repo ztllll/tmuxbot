@@ -136,10 +136,11 @@ async def provision_chat(
         return None
 
     safe_name = _safe_name(display_name, channel=channel, chat_id=chat_id)
-    # tmux/binding 名按 backend 区分: 同一 chat 多 bot(claude/codex)不抢同一 tmux 名
-    # (否则 codex 占了 tmux, claude 起不来)。claude_code 用原名, 其余加后缀。
+    # tmux/binding 名按 backend 加友好后缀区分: claude_code→-claude, codex→-codex。
+    # (同一 chat 多 bot 各带后缀, 互不抢同一 tmux 名 + 一眼看出是哪个 CLI。)
     bname = frontend.backend.name
-    sess_name = safe_name if bname == "claude_code" else f"{safe_name}-{bname}"
+    suffix = {"claude_code": "claude"}.get(bname, bname)
+    sess_name = f"{safe_name}-{suffix}"
     # 目录解析: 只有 proj_dir 受 target_dir 影响 (proj_dir 用 safe_name/target_dir, 非 sess_name)。
     # 项目目录名必须 ASCII (英文): 绝对路径直接用; 相对名/safe_name 含非 ASCII → 拒绝。
     # raise 在建目录/注册 binding 之前, 不留半成品。
