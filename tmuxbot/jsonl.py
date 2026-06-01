@@ -123,7 +123,7 @@ async def jsonl_poll_loop(
                     # 串行只影响本 binding tailer 实时性, 不影响其他 binding 并发
                     for kind, body in events:
                         try:
-                            await on_tmux_event(b, kind, body, frontend, state)
+                            await on_tmux_event(b, kind, body, frontend, state, backend)
                         except Exception:
                             log.exception(f"[{b.name}] on_tmux_event err")
                 state.offsets[key] = safe_off
@@ -162,7 +162,7 @@ async def _aggregator_idle_watcher(
 
 async def on_tmux_event(
     b: "Binding", kind: str, body: str,
-    frontend: "Frontend", state: "State",
+    frontend: "Frontend", state: "State", backend: "Backend",
 ) -> None:
     """JSONL tailer → TG 路由 (★ Boss 最终定型规则)。
 
