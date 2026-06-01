@@ -506,6 +506,7 @@ class ClaudeCodeBackend(Backend):
             content = msg.get("content") or []
             text_parts: list[str] = []
             tool_parts: list[str] = []
+            latest_todos: list | None = None  # 最近一次 TodoWrite 的任务列表
             for blk in content:
                 if not isinstance(blk, dict):
                     continue
@@ -519,9 +520,16 @@ class ClaudeCodeBackend(Backend):
                             f"💭 <i>{html.escape(tx[:300])}{'…' if len(tx) > 300 else ''}</i>"
                         )
                 elif bt == "tool_use":
-                    tool_parts.append(format_tool_use(blk.get("name", "?"), blk.get("input") or {}))
+                    name = blk.get("name", "?")
+                    inp = blk.get("input") or {}
+                    tool_parts.append(format_tool_use(name, inp))
+                    # ★ TodoWrite → 抓真实任务状态, bot 据此渲染任务 footer (§6)
+                    if name == "TodoWrite" and isinstance(inp.get("todos"), list):
+                        latest_todos = inp["todos"]
             # 注: AskUserQuestion 已全局封禁, picker 兜底由 detect_idle_picker 处理
             events: list[tuple[str, str]] = []
+            if latest_todos is not None:
+                events.append(("task_state", json.dumps(latest_todos)))
             if tool_parts:
                 events.append(("assistant_tools", "\n".join(tool_parts)))
             if text_parts:

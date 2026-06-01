@@ -4,6 +4,19 @@
 
 ---
 
+## [2026-06-01] 任务 footer 改由 bot 从 TodoWrite 渲染(根治"演任务")
+
+### Changed
+
+- **任务 footer 数据源:claude 手写 → bot 从真实 TodoWrite 渲染**。根因:旧 §6 让 claude "手写任务面板",claude 便用散文叙述任务(实测某会话 footer 报 46 任务但 TodoWrite 只建过 3 个、line 71 后彻底废弃任务工具)——footer 与真实任务状态脱钩、且鼓励"演任务"而非"用任务模式"。
+  - `claude_code.py parse_event`:遇 `TodoWrite` tool_use → 抓 `todos` 发 `("task_state", json)` 事件
+  - `state.py`:加 `task_state: dict[str, list]`(binding → 最新 todos)
+  - `jsonl.py`:`task_state` 事件更新状态;`assistant_text` 推送时**剥掉 claude 手写 footer** + **从真实 TodoWrite 渲染 footer 追加**
+  - `utils.py`:`render_task_footer(todos)`(§6 格式)+ `strip_handwritten_footer(text)`
+  - 全局宪法 §6 改:claude **只管维护 TodoWrite,不手写 footer**(手写会被剥掉)→ 逼出真任务模式、footer 永远忠实反映真实任务
+
+---
+
 ## [2026-05-31] 下线 idle-kill 模块
 
 ### Removed
