@@ -4,6 +4,18 @@
 
 ---
 
+## [2026-06-01] 修 tailer 切新会话丢首条回复(/clear /new 可靠化)
+
+### Fixed
+
+- **`jsonl.py` 切新会话 offset 跳末尾 → 丢首条回复**。旧逻辑:tailer 检测到 jsonl 切换(`jl != last_file`)且 `key not in offsets` 时,一律把 offset 设成 `jl.stat().st_size`(跳末尾防积压回吐)。但 **`/clear` `/new` 运行中新建会话**时,新会话首条回复常在 tailer 切过来前就落盘 → 被跳过 → Boss 收不到 `/new` 后第一条回复。
+  - **修法**:区分两种「key 首见」——「初次启动」(`last_file is None` → 跳末尾,防 bootstrap 回吐历史积压)vs「运行中切到新会话」(`last_file` 已有 → 从 offset **0** 读全)。一行条件:`state.offsets[key] = 0 if last_file is not None else jl.stat().st_size`。
+  - 新会话 jsonl 很小无 flood 风险;`JSONL_BACKLOG_LIMIT`(512KB)仍兜底意外大文件。
+  - **意义**:Boss 的"存记忆 → `/new` 开新会话 → 接着干"工作流从此可靠(此前 `/new` 首条回复时序竞争丢失)。
+  - 自指会话重启实测:`[tmuxbot]` 从已存 offset 续读、未回吐 32MB 积压、无 backlog 触发。
+
+---
+
 ## [2026-06-01] 任务 footer 改由 bot 从 TodoWrite 渲染(根治"演任务")
 
 ### Changed

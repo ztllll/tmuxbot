@@ -65,7 +65,12 @@ async def jsonl_poll_loop(
                 if last_file is not None:
                     log.info(f"[{b.name}] jsonl switch: {last_file.name} → {jl.name}")
                 if key not in state.offsets:
-                    state.offsets[key] = jl.stat().st_size
+                    # 初次启动 (last_file is None) → 跳末尾, 防 bootstrap 时把历史积压
+                    # 一次性回吐撞 flood; 运行中切到新会话 (/clear /new, last_file 已有)
+                    # → 从 0 读全, 否则新会话首条回复在 tailer 切过来前已落盘 → 被跳过 →
+                    # Boss 收不到 /new 后第一条回复。新会话很小无 flood 风险,
+                    # JSONL_BACKLOG_LIMIT 仍兜底意外大文件。
+                    state.offsets[key] = 0 if last_file is not None else jl.stat().st_size
                     save_offsets(offsets_file, state.offsets, force=True)
                 last_file = jl
                 b.last_session_id = jl.stem
