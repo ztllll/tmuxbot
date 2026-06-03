@@ -73,6 +73,40 @@ Exit criteria:
 - Parser tests cover representative real JSONL shapes.
 - A backend parser change fails tests before reaching deployment.
 
+### Phase 1.5: Slash Command And TUI Interaction Adapter
+
+Goal: make Claude Code and Codex slash commands reliable from IM frontends
+without reimplementing each upstream TUI command.
+
+- Add a backend command registry that describes each slash command by behavior:
+  capture, state transition, workflow, interactive TUI, or blocked/dangerous.
+- Add command transactions that record the injected command, starting JSONL
+  offset/session, pane snapshot, expected result source, timeout, and current
+  interaction state.
+- Generalize picker detection into an interaction detector that can surface
+  picker/dialog/approval/slider/text-entry screens as frontend cards.
+- Add a frontend-neutral interaction card contract for remote keys: Up, Down,
+  Left, Right, Tab, Space, Enter, Escape, Refresh, plus optional semantic
+  actions for known prompts.
+- Treat `/plan` as a first-class workflow: inject the command, let transcript
+  output flow normally, detect plan approval, and route approve/reject/modify
+  actions back to the active TUI.
+- Forward unknown slash commands through the active provider, but attach a
+  short failure probe that checks transcript and pane deltas for unknown or
+  unsupported command errors.
+- Add provider-specific busy behavior, especially Codex's queued slash-command
+  path while a task is running.
+
+Exit criteria:
+
+- Existing `/context`, `/status`, `/usage`, `/compact`, `/clear`, `/new`,
+  `/resume`, and `/rename` behavior is preserved under the new command engine.
+- `/plan`, `/model`, `/permissions`, and `/resume` can be driven from Telegram
+  and Feishu without needing direct terminal access.
+- Unknown slash commands no longer silently disappear when the provider rejects
+  them.
+- Interaction state is per binding and is recoverable after card refresh.
+
 ### Phase 2: Core Extraction
 
 Goal: shrink frontend files and remove hidden coupling.
@@ -93,6 +127,19 @@ Exit criteria:
 Goal: make daemon behavior observable and predictable.
 
 - Track background tasks by type and binding.
+- Replace process-name-only `ensure_running` checks with a lifecycle state
+  machine: tmux missing, pane shell, CLI booting, CLI ready, CLI busy, TUI
+  blocked, exited, and unhealthy.
+- Validate resume identifiers before injecting provider resume commands; never
+  pass arbitrary strings from runtime state to `--resume`.
+- Add provider-specific startup readiness checks before forwarding the user's
+  pending message into the pane.
+- Queue inbound messages while a backend is booting or recovering, then flush
+  only after the backend is confirmed ready.
+- Add recovery logging around every lifecycle decision: observed pane command,
+  child process, selected resume id, readiness screen, and final outcome.
+- Add a periodic health probe for bound panes so exited or wedged CLIs are
+  detected before the next user message when possible.
 - Add graceful cancellation for tailers and heartbeat loops.
 - Make lock acquisition and stale process diagnostics clearer.
 - Add structured startup summary and validation output.
@@ -102,6 +149,9 @@ Exit criteria:
 
 - `tmuxbot doctor` or equivalent can validate deployment prerequisites.
 - Shutdown does not depend on process kill for normal operation.
+- A message sent after Claude/Codex exits restarts the provider, resumes the
+  most recent valid session when supported, waits for readiness, and then
+  injects the original message exactly once.
 
 ### Phase 4: Product Surface
 
@@ -128,6 +178,10 @@ Exit criteria:
 - Unknown sources are silent unless they are explicit provisioning commands.
 - Normal text injection must not send Escape first.
 - TUI command parsers belong to backends, not frontends.
+- Slash command routing must go through the shared command adapter, not
+  frontend-specific command handlers.
+- TUI interactions are remote keyboard sessions over the existing tmux pane;
+  semantic buttons are optional enhancements, not the source of truth.
 
 ## Near-Term Backlog
 
@@ -138,3 +192,14 @@ Exit criteria:
 5. Split `FeishuFrontend` REST card operations from message dispatch.
 6. Add a non-network `tmuxbot validate-config` path.
 7. Reword README policy section to separate official facts from project design.
+8. Introduce `CommandSpec`/command registry for Claude and Codex built-ins.
+9. Add `CommandTransaction` tracking around slash command injection.
+10. Replace picker-only fallback with generic TUI interaction detection.
+11. Add frontend-neutral interaction cards and callback routing.
+12. Add `/plan` approval handling as the first semantic workflow adapter.
+13. Add unknown slash-command failure probes from JSONL and pane deltas.
+14. Replace `ensure_running` with lifecycle-aware recovery for exited or
+    unhealthy Claude/Codex panes.
+15. Add resume-id validation and boot readiness checks before message injection.
+16. Add queue-and-flush behavior for messages received while a backend is
+    recovering.
