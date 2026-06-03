@@ -22,6 +22,7 @@ from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
+from tmuxbot.validation import TELEGRAM_TOKEN_BACKENDS
 
 # 飞书前端按需 import (没装 lark-oapi 时不 crash, 只在实际使用时报错)
 try:
@@ -33,10 +34,7 @@ except ImportError:
 
 # ★ Boss 架构原则: 一个 bot ↔ 一个 backend (CLI 类型) ↔ N 个 tmux 子线程
 # 不同 backend 必须用不同 bot token, 避免协议串扰
-TOKEN_TO_BACKEND = {
-    "TG_BOT_TOKEN": "claude_code",
-    "TG_CODEX_BOT_TOKEN": "codex",
-}
+TOKEN_TO_BACKEND = dict(TELEGRAM_TOKEN_BACKENDS)
 
 # 路径可被 env 覆盖, 支持同机多实例 (如 claude-feishu / codex-feishu 各一进程,
 # 因 lark-oapi 模块级全局 loop 不支持单进程跑多个飞书 app 的 ws client)

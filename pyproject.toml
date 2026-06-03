@@ -1,7 +1,7 @@
 [project]
 name = "tmuxbot"
 version = "0.1.0"
-description = "Telegram <-> tmux Claude Code TUI bridge (单文件极简版)"
+description = "Telegram/Feishu <-> tmux AI CLI TUI bridge"
 requires-python = ">=3.10"
 dependencies = [
     "aiogram>=3.13",
@@ -13,6 +13,21 @@ dependencies = [
 feishu = [
     "lark-oapi>=1.4",
 ]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F"]
 
 [project.authors]
 name = "ztllll"

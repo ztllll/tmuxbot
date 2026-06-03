@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import html
-import json
 import logging
 import os
 import re
@@ -37,7 +36,7 @@ from aiogram.types import (
 
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.tmux import tmux_capture, tmux_send_key
-from tmuxbot.utils import render_table, strip_decorations, utf16_len
+from tmuxbot.utils import render_table, utf16_len
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend

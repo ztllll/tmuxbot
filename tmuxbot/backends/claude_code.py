@@ -458,7 +458,7 @@ class ClaudeCodeBackend(Backend):
     pane_command_name = "claude"
     start_cmd = START_CMD
 
-    # 给 BotFather 注册菜单 (M3 codex 可以有不同清单)
+    # 给 BotFather 注册菜单 (其他 backend 可以有不同清单)
     bot_commands = [
         ("status", "ℹ️ 综合状态(含上下文/余量/缓存)"),
         ("info", "📊 累计 token + 缓存命中率(只读 jsonl)"),

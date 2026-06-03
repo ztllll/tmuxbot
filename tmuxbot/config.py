@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from tmuxbot.state import Binding, S
 from tmuxbot.utils import load_offsets
+from tmuxbot.validation import validate_bindings
 
 log = logging.getLogger("tmuxbot")
 
@@ -43,3 +44,4 @@ def load_config(env_file: Path, bindings_file: Path, offsets_file: Path) -> None
             )
         )
     S.offsets = load_offsets(offsets_file)
+    validate_bindings(S.bindings)

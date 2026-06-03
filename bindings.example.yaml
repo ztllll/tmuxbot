@@ -18,8 +18,6 @@
 #   backend       AI CLI: claude_code(默认) / codex
 #   bot_token_env 用哪个凭证(env 变量名)。Telegram: TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN;
 #                 飞书: FEISHU(→ 读 FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_BOSS_OPEN_IDS)
-#   idle_kill_seconds  >0 = 闲置超此秒数自动杀 cli 进程(来消息 --resume 重生,上下文不丢);
-#                      0 = 永不杀(默认,适合自指开发会话 / 内存充足的机器)
 
 bindings:
 
@@ -34,7 +32,6 @@ bindings:
     cwd: /home/youruser/projects/my-project
     backend: claude_code
     bot_token_env: TG_BOT_TOKEN
-    idle_kill_seconds: 0
 
   # ② Telegram supergroup forum topic 接 claude_code(群里某个话题)
   - name: roundtable
@@ -47,7 +44,6 @@ bindings:
     cwd: /home/youruser/projects/roundtable
     backend: claude_code
     bot_token_env: TG_BOT_TOKEN
-    idle_kill_seconds: 1800      # 闲置 30min 自动杀,省内存
 
   # ③ Telegram DM 接 codex(独立 bot token,跟 claude bot 并存)
   - name: my-project-codex
@@ -60,7 +56,6 @@ bindings:
     cwd: /home/youruser/projects/my-project
     backend: codex
     bot_token_env: TG_CODEX_BOT_TOKEN
-    idle_kill_seconds: 0
 
   # ④ 飞书群聊接 claude_code(凭证走 FEISHU_APP_ID/SECRET,白名单走 FEISHU_BOSS_OPEN_IDS)
   - name: feishu-team
@@ -73,4 +68,3 @@ bindings:
     cwd: /home/youruser/projects/feishu-team
     backend: claude_code
     bot_token_env: FEISHU
-    idle_kill_seconds: 600       # 闲置 10min 自动杀

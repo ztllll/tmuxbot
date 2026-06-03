@@ -5,34 +5,32 @@
 
 > Telegram + 飞书 ↔ tmux 内 AI CLI(Claude Code / Codex)双向桥 —— 远程在 IM 发消息推动本地 tmux pane 里的 cli,cli 输出实时回推同端点。
 >
-> **不调 API、不消费 token、用 tmux pane TUI 注入(模拟人手敲键盘)** —— 绕开 6 月 15 日起的 programmatic 限制。
+> **不调 API、不走 headless `claude -p` / SDK 路径、用 tmux pane TUI 注入** —— 保留本地交互式 CLI 作为唯一执行面。
 
 ---
 
-## 为什么需要 tmuxbot?(2026-06-15 价值主张)
+## 为什么需要 tmuxbot?(2026-06-15 背景)
 
-**Anthropic 2026-06-15 新政:** Claude 付费 plan 把 **programmatic 使用** 单独划成一个独立 credit:
+Anthropic 文档说明:从 **2026-06-15** 起,Claude 订阅用户的 **Agent SDK / `claude -p` / Claude Code GitHub Actions / 第三方 Agent SDK app** 会走独立的 Agent SDK monthly credit;交互式 Claude Code terminal / IDE 继续走原订阅 usage limits。
 
-| 走 programmatic credit(将受额度限制) | 走普通订阅(不受影响) |
+| 明确走 Agent SDK credit | 文档说明仍走交互式订阅 usage limits |
 |---|---|
-| Claude **Agent SDK** | 在终端跑 `claude` TUI(人坐在电脑前) |
+| Claude **Agent SDK** | 交互式 Claude Code terminal / IDE |
 | `claude -p` headless / `--print` mode | 在 IDE 插件里用 Claude Code |
-| Claude Code **GitHub Actions** | 用 `/resume <id>` 在 TUI 里恢复对话 |
+| Claude Code **GitHub Actions** | Claude web / desktop / mobile conversations |
 | 基于 **Agent SDK 的第三方应用** | — |
-| 任何 IM bridge **走 `claude -p` 子进程** | — |
 
-**已有的 IM ↔ Claude bridge 项目(基于 Agent SDK / `claude -p`)6.15 后会撞 credit 天花板。** 比如 `claude-code-im-channel` 这类项目,飞书 / Discord / Telegram 都是用 `claude -p` headless 跑的 — 6.15 后用着用着会限速 / 要补差价。
+很多 IM ↔ Claude bridge 采用 Agent SDK 或 `claude -p` headless 子进程路线,这类路径已经被官方明确归入 Agent SDK credit。tmuxbot 的设计目标是避开这些 headless/programmatic 执行面,只远程控制本机已经存在的交互式 TUI。
 
-**tmuxbot 用 tmux pane TUI 注入,跟人手动敲键盘等价:**
+**tmuxbot 用 tmux pane TUI 注入:**
 
 - bot 通过 `tmux paste-buffer` 把消息粘到 pane 里
 - pane 里的 `claude` / `codex` 是**正常 TUI 模式跑**,不是 `-p` / SDK
 - jsonl 写到 `~/.claude/projects/<encoded-cwd>/*.jsonl`,跟人手动跑完全一样
-- 在 Anthropic 视角看,就是"一个人在终端用 claude",**不算 programmatic**
 
-→ **6.15 后继续走普通订阅,无 credit 限制。**
+这不是官方政策承诺,而是项目的工程边界:不调用 vendor API、不派 headless 子进程、不把 IM bridge 做成 Agent SDK app。是否以及如何计量最终以各 CLI/vendor 的实际规则为准。
 
-这是 tmuxbot 区别于其他 IM bridge 的核心价值,也是它存在的唯一理由。
+这是 tmuxbot 区别于 SDK/headless bridge 的核心价值。
 
 ---
 
@@ -146,6 +144,15 @@ ClaudeCodeBackend  CodexBackend
 ```
 
 技术细节看 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+
+## 维护质量
+
+```bash
+make install-dev
+make check
+```
+
+长期产品化路线看 [PRODUCTIZATION.md](./PRODUCTIZATION.md)。
 
 ---
 

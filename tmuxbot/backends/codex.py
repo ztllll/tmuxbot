@@ -342,7 +342,7 @@ class CodexBackend(Backend):
         except Exception as e:
             log.debug(f"read codex jsonl err: {e}")
             return None
-        total_in = total_out = cached = reasoning_out = 0
+        total_in = total_out = cached = 0
         count = 0
         last_ts = None
         model = None
@@ -367,7 +367,6 @@ class CodexBackend(Backend):
                     total_in = int(usage.get("input_tokens", 0) or 0)
                     total_out = int(usage.get("output_tokens", 0) or 0)
                     cached = int(usage.get("cached_input_tokens", 0) or 0)
-                    reasoning_out = int(usage.get("reasoning_output_tokens", 0) or 0)
                     last_ts = j.get("timestamp") or last_ts
                 continue
             if t == "response_item" and (j.get("payload") or {}).get("type") == "message":

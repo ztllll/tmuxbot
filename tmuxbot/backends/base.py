@@ -2,14 +2,14 @@
 
 接入新 backend 时实现这个接口即可:
 - ClaudeCodeBackend (现成)
-- CodexBackend (M3)
+- CodexBackend
 - 未来其他 AI cli
 """
 from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 

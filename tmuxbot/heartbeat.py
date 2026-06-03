@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING
 from tmuxbot.tmux import tmux_capture
 
 if TYPE_CHECKING:
-    from tmuxbot.backends.base import Backend
-    from tmuxbot.frontends.base import Frontend
     from tmuxbot.state import State
 
 log = logging.getLogger("tmuxbot")
