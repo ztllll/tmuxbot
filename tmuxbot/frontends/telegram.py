@@ -35,6 +35,7 @@ from aiogram.types import (
 )
 
 from tmuxbot.frontends.base import Frontend
+from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key
 from tmuxbot.utils import render_table, utf16_len
 
@@ -524,7 +525,9 @@ class TelegramFrontend(Frontend):
             await asyncio.sleep(0.5)
             tmux_send_key(b.tmux_target, "C-d")
             await asyncio.sleep(2.0)
-            await backend.ensure_running(b)
+            await ensure_binding_running(
+                backend, b, self.state, reason="telegram-restart", wait=True
+            )
             await m.reply(f"🔄 已 restart {backend.name}")
 
         # ─── 文件 / 图片 ─────────
@@ -558,7 +561,9 @@ class TelegramFrontend(Frontend):
                 return
             caption = m.caption or "请处理这个文件"
             backend = F_.backend
-            await backend.ensure_running(b)
+            await ensure_binding_running(
+                backend, b, self.state, reason="telegram-file", wait=True
+            )
             await tmux_send_text(b.tmux_target, f"{caption}\n\n@{save_path}")
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 

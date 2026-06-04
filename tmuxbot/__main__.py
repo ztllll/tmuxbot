@@ -19,6 +19,7 @@ from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
 from tmuxbot.heartbeat import HEARTBEAT_INTERVAL, heartbeat_typing_loop
 from tmuxbot.jsonl import jsonl_poll_loop
+from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
@@ -230,6 +231,7 @@ async def main() -> None:
                 tmux_new_session(b.tmux_session, b.cwd)
             S.fire(jsonl_poll_loop(b, fe.backend, fe, S, OFFSETS_FILE))
         S.fire(heartbeat_typing_loop(S, fe))
+    S.fire(lifecycle_watch_loop(frontends, S))
     log.info(
         f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"
     )
@@ -261,8 +263,10 @@ async def main() -> None:
         for t in polling_tasks:
             try:
                 await t
-            except Exception:
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                log.exception("frontend polling task exited with error")
         for fe in frontends:
             try:
                 await fe.stop()

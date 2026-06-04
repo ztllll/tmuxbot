@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from tmuxbot.jsonl import jsonl_poll_loop
+from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.state import Binding
 from tmuxbot.tmux import tmux_has_session, tmux_kill_session, tmux_new_session
 
@@ -206,8 +207,10 @@ async def provision_chat(
         }
         await asyncio.to_thread(_persist_binding_sync, bindings_file, entry)
 
-        # 7. 起 claude
-        await frontend.backend.ensure_running(b)
+        # 7. 起 CLI
+        await ensure_binding_running(
+            frontend.backend, b, state, reason="provision", wait=True
+        )
 
     except Exception:
         log.exception(f"provision failed for chat_id={chat_id} thread_id={thread_id}")

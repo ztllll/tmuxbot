@@ -21,6 +21,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ async def dispatch_incoming_text(
     """
     from tmuxbot.commands import capture_and_push
 
-    await backend.ensure_running(b)
+    await ensure_binding_running(backend, b, state, reason="incoming", wait=True)
 
     # ── /rename pending 态: 下一条文本作为名字 ──
     pending_ts = state.pending_rename.get(b.name)
@@ -169,7 +170,7 @@ async def dispatch_incoming_text(
         await asyncio.sleep(0.5)
         tmux_send_key(b.tmux_target, "C-d")
         await asyncio.sleep(2.0)
-        await backend.ensure_running(b)
+        await ensure_binding_running(backend, b, state, reason="restart", wait=True)
         await frontend.send_html(chat_id, thread_id, f"🔄 已 restart {html.escape(backend.name)}")
         return
 

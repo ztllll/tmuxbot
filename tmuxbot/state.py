@@ -63,6 +63,8 @@ class State:
         # 工具调用聚合器: binding.name → {msg_id, content_lines: list[str], last_ts, target}
         # tool_use/thinking 类事件累计到一条可编辑消息, text 事件触发"封闭"并发新消息
         self.tool_aggregator: dict[str, dict] = {}
+        # ensure_running 串行锁: 避免消息入口和后台巡检同时拉起同一个 pane
+        self.ensure_locks: dict[str, asyncio.Lock] = {}
 
     def fire(self, coro):
         """create_task + 强引用保存 + 完成时自动清理 + 异常自动 log"""

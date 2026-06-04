@@ -24,6 +24,8 @@ import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from tmuxbot.lifecycle import ensure_binding_running
+
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
     from tmuxbot.state import Binding, State
@@ -671,7 +673,9 @@ class FeishuFrontend:
                     return
 
                 inject = (caption or "请处理") + "\n\n" + "\n".join(f"@{p}" for p in paths)
-                await self.backend.ensure_running(b)
+                await ensure_binding_running(
+                    self.backend, b, self.state, reason="feishu-image", wait=True
+                )
                 await tmux_send_text(b.tmux_target, inject)
                 return
 
@@ -720,7 +724,7 @@ class FeishuFrontend:
     # ────────── 启动 / 停止 ──────────
 
     async def start_polling(self) -> None:
-        """建 WebSocket 长连接, 阻塞直到 stop() 被调用"""
+        """建 WebSocket 长连接, 断开后退避重连, 直到 stop() 被调用"""
         lark = self._lark
         import lark_oapi.ws.client as _wsc
 
@@ -742,37 +746,63 @@ class FeishuFrontend:
             else:
                 log.warning(f"feishu: lark-oapi 缺 {_evt_method}, 跳过该解散事件注册")
         handler = builder.build()
-        self._ws_client = lark.ws.Client(
-            self.app_id,
-            self.app_secret,
-            event_handler=handler,
-            log_level=lark.LogLevel.WARNING,
-        )
-
-        log.info(f"feishu ws starting · app_id={self.app_id[:8]}… · {len(self.bindings)} bindings")
-
         stop_event = asyncio.Event()
         self._stop_event = stop_event
+        retry_delay = 1.0
 
-        def _run():
-            # ★ SDK 必须在同一 worker thread 里建新 event loop, 并覆盖 SDK 模块级 loop
-            # 否则 "loop already running" 报错
-            import asyncio as _asyncio
-            nl = _asyncio.new_event_loop()
-            _asyncio.set_event_loop(nl)
-            _wsc.loop = nl
-            self._ws_client.start()
+        while not stop_event.is_set():
+            self._ws_client = lark.ws.Client(
+                self.app_id,
+                self.app_secret,
+                event_handler=handler,
+                log_level=lark.LogLevel.WARNING,
+            )
 
-        # 在 to_thread 里阻塞跑 ws client; start_polling 本身阻塞在 stop_event
-        ws_task = asyncio.get_running_loop().run_in_executor(None, _run)
-        try:
-            await stop_event.wait()
-        finally:
-            ws_task.cancel()
+            log.info(
+                f"feishu ws starting · app_id={self.app_id[:8]}… · {len(self.bindings)} bindings"
+            )
+
+            def _run():
+                # ★ SDK 必须在同一 worker thread 里建新 event loop, 并覆盖 SDK 模块级 loop
+                # 否则 "loop already running" 报错
+                import asyncio as _asyncio
+                nl = _asyncio.new_event_loop()
+                _asyncio.set_event_loop(nl)
+                _wsc.loop = nl
+                self._ws_client.start()
+
+            ws_task = asyncio.get_running_loop().run_in_executor(None, _run)
+            stop_task = asyncio.create_task(stop_event.wait())
+            pending: set[asyncio.Future] = set()
             try:
-                await ws_task
-            except Exception:
-                pass
+                done, pending = await asyncio.wait(
+                    {ws_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if stop_task in done:
+                    break
+
+                exc = ws_task.exception()
+                if exc is not None:
+                    log.warning("feishu ws exited with error: %r", exc)
+                else:
+                    log.warning("feishu ws exited unexpectedly; reconnecting")
+
+                try:
+                    self._ws_client.stop()
+                except Exception as e:
+                    log.debug(f"feishu ws stop after exit err: {e}")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30.0)
+            finally:
+                stop_task.cancel()
+                for task in pending:
+                    task.cancel()
+
+        try:
+            if self._ws_client is not None:
+                self._ws_client.stop()
+        except Exception as e:
+            log.debug(f"feishu ws final stop err: {e}")
 
     async def stop(self) -> None:
         """停止 WebSocket 长连接"""
