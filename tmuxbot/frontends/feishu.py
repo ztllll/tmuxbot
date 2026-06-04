@@ -277,6 +277,12 @@ class FeishuFrontend:
         """飞书无 typing 状态 API → no-op"""
         return
 
+    async def send_interaction_card(
+        self, chat_id: int | str, thread_id: int | None, html_text: str, binding_name: str
+    ) -> Any:
+        """飞书先降级为说明卡; 用户可用 /up /down /enter 等文本命令继续操作。"""
+        return await self.send_html(chat_id, thread_id, html_text)
+
     # ────────── auto-provision (/init 自动开通会话) ──────────
 
     def _get_tenant_token_sync(self) -> str | None:

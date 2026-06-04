@@ -45,3 +45,9 @@ class Frontend(ABC):
         self, chat_id: int, thread_id: int | None, action: str
     ) -> None:
         """发"正在输入/上传"等状态 (typing 心跳用)"""
+
+    async def send_interaction_card(
+        self, chat_id: int, thread_id: int | None, html_text: str, binding_name: str
+    ) -> Any:
+        """发 TUI 交互卡。默认降级为普通 HTML, 支持按钮的前端可覆盖。"""
+        return await self.send_html(chat_id, thread_id, html_text)

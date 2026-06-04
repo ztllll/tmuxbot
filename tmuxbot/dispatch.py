@@ -21,6 +21,15 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from tmuxbot.command_adapter import (
+    action_from_command,
+    classify_command,
+    handle_interactive_command,
+    handle_passthrough_command,
+    handle_tui_action,
+    parse_slash_text,
+    CommandKind,
+)
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
 
@@ -84,30 +93,36 @@ async def dispatch_incoming_text(
     if pending_ts:
         state.pending_rename.pop(b.name, None)
 
-    # ── 命令解析 ──
     raw_text = text
     cmd_for_feedback: str | None = None
+    parsed = parse_slash_text(
+        text, bot_username=bot_username, aliases=backend.command_aliases()
+    )
 
-    if text.lstrip().startswith("/"):
-        raw_cmd = text.lstrip().split()[0]
+    if parsed:
+        raw_text = parsed.injected_text
+        cmd_for_feedback = parsed.command
+        spec = classify_command(backend, parsed.command)
 
-        # ★ 剥 @bot_username 后缀 (TG group 内会自动拼: /compact@ztl_claude_bot)
-        # 飞书不传 bot_username → 只按 @ 分割, 无后缀时原样保留
-        if bot_username and raw_cmd.lower().endswith(f"@{bot_username.lower()}"):
-            cmd_for_feedback = raw_cmd[: -(len(bot_username) + 1)]
-        else:
-            cmd_for_feedback = raw_cmd.split("@", 1)[0]
+        action = action_from_command(parsed.command, parsed.args)
+        if action:
+            await handle_tui_action(frontend, b, chat_id, thread_id, action)
+            return
 
-        # 替换 text 里的 raw_cmd 为干净命令
-        if raw_cmd != cmd_for_feedback:
-            raw_text = cmd_for_feedback + text.lstrip()[len(raw_cmd):]
+        if spec.kind == CommandKind.BLOCKED:
+            return await frontend.send_html(chat_id, thread_id, spec.notice)
 
-        # ★ 解析 backend 别名 (e.g. /new → /clear)
-        aliases = backend.command_aliases()
-        if cmd_for_feedback in aliases:
-            real_cmd = aliases[cmd_for_feedback]
-            rest = raw_text.lstrip()[len(cmd_for_feedback):]
-            raw_text = real_cmd + rest
+        if spec.kind == CommandKind.INTERACTIVE:
+            await handle_interactive_command(
+                frontend, b, state, chat_id, thread_id, spec, raw_text
+            )
+            return
+
+        if spec.kind == CommandKind.PASSTHROUGH:
+            await handle_passthrough_command(
+                frontend, b, state, chat_id, thread_id, spec, raw_text
+            )
+            return
 
     # ── stop 命令: 发 tmux key, 不注入 claude ──
     if cmd_for_feedback in _STOP_CMDS:

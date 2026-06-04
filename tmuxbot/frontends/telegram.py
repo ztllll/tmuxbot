@@ -34,6 +34,7 @@ from aiogram.types import (
     ReactionTypeEmoji,
 )
 
+from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key
@@ -253,6 +254,36 @@ class TelegramFrontend(Frontend):
         return await self._tg_call(lambda: self.bot.send_message(
             chat_id, body_html, message_thread_id=thread_id, reply_markup=markup,
         ))
+
+    async def send_interaction_card(
+        self, chat_id: int, thread_id: int | None, html_text: str, binding_name: str
+    ) -> Any:
+        token = binding_token(binding_name)
+        rows = [
+            [
+                InlineKeyboardButton(text="↑", callback_data=f"tui:{token}:up"),
+            ],
+            [
+                InlineKeyboardButton(text="←", callback_data=f"tui:{token}:left"),
+                InlineKeyboardButton(text="↵", callback_data=f"tui:{token}:enter"),
+                InlineKeyboardButton(text="→", callback_data=f"tui:{token}:right"),
+            ],
+            [
+                InlineKeyboardButton(text="↓", callback_data=f"tui:{token}:down"),
+                InlineKeyboardButton(text="Tab", callback_data=f"tui:{token}:tab"),
+                InlineKeyboardButton(text="Space", callback_data=f"tui:{token}:space"),
+            ],
+            [
+                InlineKeyboardButton(text="⎋", callback_data=f"tui:{token}:esc"),
+                InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
+            ],
+        ]
+        markup = InlineKeyboardMarkup(inline_keyboard=rows)
+        return await self._tg_call(
+            lambda: self.bot.send_message(
+                chat_id, html_text, message_thread_id=thread_id, reply_markup=markup
+            )
+        )
 
     # ────────── ACL ──────────
     def _acl_ok(self, m: Message) -> bool:
@@ -774,6 +805,37 @@ class TelegramFrontend(Frontend):
                 await cq.message.edit_text((cq.message.html_text or "") + f"\n\n{mark}")
             except Exception:
                 pass
+
+        # ─── generic TUI interaction callback ─────────
+        @dp.callback_query(F.data.startswith("tui:"))
+        async def on_tui_callback(cq: CallbackQuery):
+            if S.setup_mode:
+                await cq.answer("⚠️ setup 中")
+                return
+            if cq.from_user and cq.from_user.id != S.boss_user_id:
+                await cq.answer("⚠️ 无权限")
+                return
+            if cq.message:
+                cq_tid = getattr(cq.message, "message_thread_id", None)
+                if F_.find_binding(cq.message.chat.id, cq_tid) is None:
+                    await cq.answer()
+                    return
+            parts = (cq.data or "").split(":", 2)
+            if len(parts) != 3:
+                await cq.answer("⚠️ 格式错误")
+                return
+            _, token, action = parts
+            b = binding_by_token(F_.bindings, token)
+            if not b:
+                await cq.answer("⚠️ binding 未找到")
+                return
+            if cq.message is None:
+                await cq.answer("⚠️ 消息不存在")
+                return
+            await handle_tui_action(
+                F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+            )
+            await cq.answer("✓")
 
         # ─── 成员变更: 非白名单群自动 leave / 已绑定群被移除→拆除会话 ───
         @dp.my_chat_member()

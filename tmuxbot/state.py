@@ -65,6 +65,8 @@ class State:
         self.tool_aggregator: dict[str, dict] = {}
         # ensure_running 串行锁: 避免消息入口和后台巡检同时拉起同一个 pane
         self.ensure_locks: dict[str, asyncio.Lock] = {}
+        # slash command transactions: binding.name -> CommandTransaction
+        self.command_transactions: dict[str, object] = {}
 
     def fire(self, coro):
         """create_task + 强引用保存 + 完成时自动清理 + 异常自动 log"""

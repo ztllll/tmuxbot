@@ -80,6 +80,9 @@ without reimplementing each upstream TUI command.
 
 - Add a backend command registry that describes each slash command by behavior:
   capture, state transition, workflow, interactive TUI, or blocked/dangerous.
+- Add the first command adapter layer: slash parsing, command classification,
+  interactive command transactions, blocked dangerous commands, unknown command
+  probes, and remote TUI key controls.
 - Add command transactions that record the injected command, starting JSONL
   offset/session, pane snapshot, expected result source, timeout, and current
   interaction state.
