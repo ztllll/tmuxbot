@@ -34,7 +34,13 @@ from aiogram.types import (
     ReactionTypeEmoji,
 )
 
-from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
+from tmuxbot.command_adapter import (
+    binding_by_token,
+    binding_token,
+    handle_semantic_action,
+    handle_tui_action,
+    semantic_actions_from_body,
+)
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key
@@ -259,7 +265,19 @@ class TelegramFrontend(Frontend):
         self, chat_id: int, thread_id: int | None, html_text: str, binding_name: str
     ) -> Any:
         token = binding_token(binding_name)
-        rows = [
+        rows: list[list[InlineKeyboardButton]] = []
+        semantic_actions = semantic_actions_from_body(html_text)
+        if semantic_actions:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=action.label,
+                        callback_data=f"tui:{token}:sem:{action.action}",
+                    )
+                    for action in semantic_actions[:3]
+                ]
+            )
+        rows.extend([
             [
                 InlineKeyboardButton(text="↑", callback_data=f"tui:{token}:up"),
             ],
@@ -277,7 +295,7 @@ class TelegramFrontend(Frontend):
                 InlineKeyboardButton(text="⎋", callback_data=f"tui:{token}:esc"),
                 InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
             ],
-        ]
+        ])
         markup = InlineKeyboardMarkup(inline_keyboard=rows)
         return await self._tg_call(
             lambda: self.bot.send_message(
@@ -820,11 +838,20 @@ class TelegramFrontend(Frontend):
                 if F_.find_binding(cq.message.chat.id, cq_tid) is None:
                     await cq.answer()
                     return
-            parts = (cq.data or "").split(":", 2)
-            if len(parts) != 3:
+            parts = (cq.data or "").split(":")
+            if len(parts) < 3:
                 await cq.answer("⚠️ 格式错误")
                 return
-            _, token, action = parts
+            _, token, *action_parts = parts
+            if action_parts[0] == "sem" and len(action_parts) == 2:
+                action = action_parts[1]
+                is_semantic = True
+            elif len(action_parts) == 1:
+                action = action_parts[0]
+                is_semantic = False
+            else:
+                await cq.answer("⚠️ 格式错误")
+                return
             b = binding_by_token(F_.bindings, token)
             if not b:
                 await cq.answer("⚠️ binding 未找到")
@@ -832,9 +859,14 @@ class TelegramFrontend(Frontend):
             if cq.message is None:
                 await cq.answer("⚠️ 消息不存在")
                 return
-            await handle_tui_action(
-                F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
-            )
+            if is_semantic:
+                await handle_semantic_action(
+                    F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                )
+            else:
+                await handle_tui_action(
+                    F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                )
             await cq.answer("✓")
 
         # ─── 成员变更: 非白名单群自动 leave / 已绑定群被移除→拆除会话 ───

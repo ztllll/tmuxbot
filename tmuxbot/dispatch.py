@@ -26,8 +26,10 @@ from tmuxbot.command_adapter import (
     classify_command,
     handle_interactive_command,
     handle_passthrough_command,
+    handle_semantic_action,
     handle_tui_action,
     parse_slash_text,
+    semantic_action_from_command,
     CommandKind,
 )
 from tmuxbot.lifecycle import ensure_binding_running
@@ -107,6 +109,11 @@ async def dispatch_incoming_text(
         action = action_from_command(parsed.command, parsed.args)
         if action:
             await handle_tui_action(frontend, b, chat_id, thread_id, action)
+            return
+
+        semantic_action = semantic_action_from_command(parsed.command)
+        if semantic_action:
+            await handle_semantic_action(frontend, b, chat_id, thread_id, semantic_action)
             return
 
         if spec.kind == CommandKind.BLOCKED:

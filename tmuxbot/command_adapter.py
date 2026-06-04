@@ -65,6 +65,22 @@ class CommandTransaction:
     status: str = "started"
 
 
+@dataclass(frozen=True)
+class SemanticAction:
+    action: str
+    label: str
+    keys: tuple[str, ...]
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class InteractionState:
+    kind: str
+    title: str
+    hint: str
+    actions: tuple[SemanticAction, ...] = ()
+
+
 _LOCAL_COMMANDS = {"/screen", "/info", "/restart", "/esc", "/cc", "/eof"}
 
 _BLOCKED_COMMANDS = {
@@ -144,6 +160,26 @@ _TUI_ACTIONS: dict[str, tuple[str | None, str]] = {
     "refresh": (None, "Refresh"),
 }
 
+_SEMANTIC_ACTIONS: dict[str, SemanticAction] = {
+    "approve-plan": SemanticAction(
+        "approve-plan", "批准计划", ("Enter",), "选择当前高亮的批准/继续选项。"
+    ),
+    "revise-plan": SemanticAction(
+        "revise-plan", "继续修改", ("Down", "Enter"), "选择反馈/继续计划选项。"
+    ),
+    "reject-plan": SemanticAction(
+        "reject-plan", "退出计划", ("Escape",), "取消当前计划审批界面。"
+    ),
+    "approve-once": SemanticAction(
+        "approve-once", "批准一次", ("Enter",), "批准当前高亮的权限请求。"
+    ),
+    "deny": SemanticAction("deny", "拒绝", ("Escape",), "拒绝或关闭当前确认界面。"),
+    "select-current": SemanticAction(
+        "select-current", "选择当前项", ("Enter",), "选择当前高亮项。"
+    ),
+    "cancel": SemanticAction("cancel", "取消", ("Escape",), "取消当前 TUI 交互。"),
+}
+
 _TUI_COMMANDS = {
     "/up": "up",
     "/down": "down",
@@ -153,6 +189,16 @@ _TUI_COMMANDS = {
     "/tab": "tab",
     "/space": "space",
     "/refresh": "refresh",
+}
+
+_SEMANTIC_COMMANDS = {
+    "/approve-plan": "approve-plan",
+    "/revise-plan": "revise-plan",
+    "/reject-plan": "reject-plan",
+    "/approve-once": "approve-once",
+    "/deny": "deny",
+    "/select": "select-current",
+    "/cancel": "cancel",
 }
 
 _UNKNOWN_FAILURE_RE = re.compile(
@@ -194,7 +240,12 @@ def parse_slash_text(
 def classify_command(backend: "Backend", command: str) -> CommandSpec:
     if command in _BLOCKED_COMMANDS:
         return CommandSpec(command, CommandKind.BLOCKED, notice=_BLOCKED_COMMANDS[command])
-    if command in _LOCAL_COMMANDS or command in _TUI_COMMANDS or command == "/key":
+    if (
+        command in _LOCAL_COMMANDS
+        or command in _TUI_COMMANDS
+        or command in _SEMANTIC_COMMANDS
+        or command == "/key"
+    ):
         return CommandSpec(command, CommandKind.LOCAL)
     if command in backend.command_opts():
         return CommandSpec(command, CommandKind.CAPTURE)
@@ -225,6 +276,10 @@ def action_from_command(command: str, args: str) -> str | None:
     return None
 
 
+def semantic_action_from_command(command: str) -> str | None:
+    return _SEMANTIC_COMMANDS.get(command)
+
+
 def binding_token(binding_name: str) -> str:
     return hashlib.blake2s(binding_name.encode("utf-8"), digest_size=5).hexdigest()
 
@@ -242,6 +297,56 @@ def tui_action_label(action: str) -> str:
 
 def available_tui_actions() -> dict[str, str]:
     return {k: v[1] for k, v in _TUI_ACTIONS.items()}
+
+
+def semantic_actions_from_body(html_text: str) -> tuple[SemanticAction, ...]:
+    actions: list[SemanticAction] = []
+    for action in _SEMANTIC_ACTIONS.values():
+        if f"/{action.action}" in html_text:
+            actions.append(action)
+    return tuple(actions)
+
+
+def detect_interaction_state(raw: str) -> InteractionState:
+    clean = strip_decorations(raw)
+    low = clean.lower()
+
+    if _looks_like_plan_approval(low):
+        return InteractionState(
+            kind="plan_approval",
+            title="计划审批",
+            hint="检测到计划审批界面。确认高亮项后可批准, 或继续给反馈。",
+            actions=(
+                _SEMANTIC_ACTIONS["approve-plan"],
+                _SEMANTIC_ACTIONS["revise-plan"],
+                _SEMANTIC_ACTIONS["reject-plan"],
+            ),
+        )
+    if _looks_like_picker(low):
+        return InteractionState(
+            kind="picker",
+            title="选择器",
+            hint="检测到 TUI 选择器。可移动高亮项后选择。",
+            actions=(
+                _SEMANTIC_ACTIONS["select-current"],
+                _SEMANTIC_ACTIONS["cancel"],
+            ),
+        )
+    if _looks_like_permission_prompt(low):
+        return InteractionState(
+            kind="permission_prompt",
+            title="权限确认",
+            hint="检测到权限/审批提示。确认当前高亮项后再批准。",
+            actions=(
+                _SEMANTIC_ACTIONS["approve-once"],
+                _SEMANTIC_ACTIONS["deny"],
+            ),
+        )
+    return InteractionState(
+        kind="generic",
+        title="TUI 控制",
+        hint="未识别到特定工作流, 使用通用按键操作。",
+    )
 
 
 def record_transaction(
@@ -288,6 +393,36 @@ async def handle_tui_action(
         tmux_send_key(b.tmux_target, key)
         await asyncio.sleep(0.45)
     body = build_interaction_body(b, title=f"🎛 TUI 控制 · {html.escape(label)}", lines=lines)
+    await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
+
+
+async def handle_semantic_action(
+    frontend: "Frontend",
+    b: "Binding",
+    chat_id: int | str,
+    thread_id: int | None,
+    action: str,
+    *,
+    lines: int = 90,
+) -> None:
+    semantic = _SEMANTIC_ACTIONS.get(action)
+    if semantic is None:
+        await frontend.send_html(
+            chat_id,
+            thread_id,
+            "⚠️ <b>未知语义操作</b>\n"
+            "可用: <code>/approve-plan /revise-plan /reject-plan /approve-once /deny</code>",
+        )
+        return
+    for key in semantic.keys:
+        tmux_send_key(b.tmux_target, key)
+        await asyncio.sleep(0.08)
+    await asyncio.sleep(0.45)
+    body = build_interaction_body(
+        b,
+        title=f"🎛 语义操作 · {html.escape(semantic.label)}",
+        lines=lines,
+    )
     await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
 
 
@@ -369,13 +504,22 @@ def build_interaction_body(
     note: str = "",
     lines: int = 90,
 ) -> str:
-    out = strip_decorations(tmux_capture(b.tmux_target, lines))
+    raw = tmux_capture(b.tmux_target, lines)
+    state = detect_interaction_state(raw)
+    out = strip_decorations(raw)
     parts = [
         title,
         f"· binding <code>{html.escape(b.name)}</code>",
+        f"· 状态 <b>{html.escape(state.title)}</b>: {html.escape(state.hint)}",
     ]
     if note:
         parts.append(f"· {html.escape(note)}")
+    if state.actions:
+        action_text = " / ".join(
+            f"<code>/{html.escape(action.action)}</code> {html.escape(action.label)}"
+            for action in state.actions
+        )
+        parts.append(f"· 语义操作: {action_text}")
     parts.extend(
         [
             "· 文字控制: <code>/up /down /left /right /tab /space /enter /refresh</code>",
@@ -398,3 +542,44 @@ def _tail(text: str, lines: int) -> str:
         return "(empty screen)"
     rows = text.splitlines()
     return "\n".join(rows[-lines:])
+
+
+def _looks_like_plan_approval(low: str) -> bool:
+    return (
+        ("plan" in low or "计划" in low)
+        and (
+            "approve" in low
+            or "approval" in low
+            or "start coding" in low
+            or "accept edits" in low
+            or "keep planning" in low
+            or "批准" in low
+            or "继续计划" in low
+        )
+    )
+
+
+def _looks_like_permission_prompt(low: str) -> bool:
+    return (
+        "approve once" in low
+        or "requires approval" in low
+        or "permission required" in low
+        or "requesting permission" in low
+        or "approval required" in low
+        or (
+            "allow" in low
+            and "deny" in low
+            and ("command" in low or "tool" in low or "permission" in low)
+        )
+        or ("批准" in low and "拒绝" in low)
+        or "批准一次" in low
+    )
+
+
+def _looks_like_picker(low: str) -> bool:
+    return (
+        "enter to select" in low
+        or "esc to cancel" in low
+        or "to navigate" in low
+        or "↑/↓" in low
+    )
