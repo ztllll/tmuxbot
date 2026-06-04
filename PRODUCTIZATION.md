@@ -78,6 +78,26 @@ Exit criteria:
 Goal: make Claude Code and Codex slash commands reliable from IM frontends
 without reimplementing each upstream TUI command.
 
+Status as of 2026-06-04:
+
+- Done: first shared command adapter layer in `tmuxbot/command_adapter.py`,
+  including slash parsing, command classification, blocked dangerous commands,
+  interactive/passthrough command transactions, generic remote key commands,
+  and unknown-command pane probes.
+- Done: frontend-neutral interaction card contract. Telegram renders inline
+  key buttons; Feishu degrades to text instructions over the same shared
+  dispatch path.
+- Done: first semantic TUI action layer for plan approval, permission prompts,
+  and generic pickers. Supported text commands include `/approve-plan`,
+  `/revise-plan`, `/reject-plan`, `/approve-once`, `/deny`, `/select`, and
+  `/cancel`.
+- Done: state detection for plan approval, picker screens, and permission
+  prompts, with picker detection taking precedence over broad permissions-menu
+  text to avoid false approval buttons.
+- Remaining: persist interaction state per binding instead of deriving it only
+  from the current pane capture, add provider-specific prompt fixtures, and add
+  Codex busy/queued slash-command behavior.
+
 - Add a backend command registry that describes each slash command by behavior:
   capture, state transition, workflow, interactive TUI, or blocked/dangerous.
 - Add the first command adapter layer: slash parsing, command classification,
@@ -195,12 +215,18 @@ Exit criteria:
 5. Split `FeishuFrontend` REST card operations from message dispatch.
 6. Add a non-network `tmuxbot validate-config` path.
 7. Reword README policy section to separate official facts from project design.
-8. Introduce `CommandSpec`/command registry for Claude and Codex built-ins.
-9. Add `CommandTransaction` tracking around slash command injection.
-10. Replace picker-only fallback with generic TUI interaction detection.
-11. Add frontend-neutral interaction cards and callback routing.
-12. Add `/plan` approval handling as the first semantic workflow adapter.
-13. Add unknown slash-command failure probes from JSONL and pane deltas.
+8. Done initial: introduce `CommandSpec` and Claude/Codex command metadata in
+   the shared adapter. Follow-up: move provider-specific metadata behind backend
+   registry methods once parser coverage is stronger.
+9. Done initial: add `CommandTransaction` tracking around interactive and
+   passthrough slash command injection.
+10. Done initial: replace picker-only fallback with generic TUI interaction
+    detection for plan approval, pickers, and permission prompts.
+11. Done initial: add frontend-neutral interaction cards and callback routing.
+12. Done initial: add `/plan` approval handling as the first semantic workflow
+    adapter.
+13. Partial: add unknown slash-command pane failure probes. Follow-up: include
+    JSONL-based provider rejection signals where available.
 14. Replace `ensure_running` with lifecycle-aware recovery for exited or
     unhealthy Claude/Codex panes.
 15. Add resume-id validation and boot readiness checks before message injection.
