@@ -332,7 +332,7 @@ async def handle_passthrough_command(
         "· 若 TUI 弹出选择/确认, 可用 <code>/refresh</code> 查看, "
         "再用 <code>/up /down /left /right /tab /space /enter</code> 操作。",
     )
-    asyncio.create_task(
+    state.fire(
         probe_passthrough_result(frontend, b, chat_id, thread_id, spec.command, before_hash)
     )
 
@@ -348,7 +348,8 @@ async def probe_passthrough_result(
     delay: float = 1.4,
 ) -> None:
     await asyncio.sleep(delay)
-    out = strip_decorations(tmux_capture(b.tmux_target, 90))
+    raw = tmux_capture(b.tmux_target, 90)
+    out = strip_decorations(raw)
     if _UNKNOWN_FAILURE_RE.search(out):
         await frontend.send_html(
             chat_id,
@@ -357,7 +358,7 @@ async def probe_passthrough_result(
             f"<pre>{html.escape(_tail(out, 18))}</pre>",
         )
         return
-    if str(hash(out)) == before_hash:
+    if str(hash(raw)) == before_hash:
         log.info("[%s] passthrough command produced no visible pane delta: %s", b.name, command)
 
 
