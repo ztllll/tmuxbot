@@ -59,6 +59,25 @@ MAX_FILE_MB = 19
 ACK_REACTION = "👀"
 
 
+def should_leave_unknown_chat(
+    *,
+    setup_mode: bool,
+    boss_user_id: int,
+    actor_user_id: int | None,
+    bound_count: int,
+    removed: bool,
+) -> bool:
+    """Whether Telegram should auto-leave an unbound chat.
+
+    Bound chats are managed elsewhere. Unknown chats invited by Boss are allowed
+    to stay so Boss can run /init; unknown chats invited by anyone else are
+    treated as unauthorized and left immediately.
+    """
+    if setup_mode or removed or bound_count > 0:
+        return False
+    return actor_user_id != boss_user_id
+
+
 # ────────── 工具函数 (TG-specific) ──────────
 def split_for_tg(text: str, limit: int = TG_SPLIT) -> list[str]:
     if utf16_len(text) <= limit:
@@ -882,9 +901,17 @@ class TelegramFrontend(Frontend):
                 getattr(ev, "new_chat_member", None), "status", None
             )
             removed = new_status in ("left", "kicked")
+            actor_user_id = getattr(getattr(ev, "from_user", None), "id", None)
 
             # 该 chat 在本 frontend 是否有 binding (含 forum topic 的 thread)
             bound = [b for b in F_.bindings if b.chat_id == chat_id]
+            leave_unknown = should_leave_unknown_chat(
+                setup_mode=S.setup_mode,
+                boss_user_id=S.boss_user_id,
+                actor_user_id=actor_user_id,
+                bound_count=len(bound),
+                removed=removed,
+            )
 
             if removed and bound:
                 # 已绑定群被移除 → 拆除该 chat 下所有 binding (group 可能有多个 topic)
@@ -898,9 +925,29 @@ class TelegramFrontend(Frontend):
                         log.exception(f"deprovision {b.name} err")
                 return
 
-            # 未绑定且 bot 仍在群里 → 非白名单, 主动退群
-            if not bound:
-                log.warning(f"left non-whitelisted chat {chat_id}")
+            # 未绑定且 bot 仍在群里: Boss 拉入时保留给 /init; 其他人拉入仍自动退群。
+            if not bound and not leave_unknown:
+                log.info(
+                    "stayed in unbound chat %s invited by boss %s; waiting for /init",
+                    chat_id,
+                    actor_user_id,
+                )
+                try:
+                    await ev.bot.send_message(
+                        chat_id,
+                        "已进入群组。请发送 /init 开通 tmux 会话; "
+                        "如果群/话题名含中文, 用 /init <英文目录名>。",
+                    )
+                except Exception as e:
+                    log.debug(f"send unknown chat init hint err: {e}")
+                return
+
+            if leave_unknown:
+                log.warning(
+                    "left non-whitelisted chat %s invited by user %s",
+                    chat_id,
+                    actor_user_id,
+                )
                 try:
                     await ev.bot.leave_chat(chat_id)
                 except Exception:
