@@ -57,25 +57,23 @@ TG_SPLIT = 3800
 TG_DOC_THRESHOLD = 8000
 MAX_FILE_MB = 19
 ACK_REACTION = "👀"
+UNKNOWN_CHAT_INIT_GRACE_SECONDS = 60.0
 
 
-def should_leave_unknown_chat(
+def should_grace_unknown_chat(
     *,
     setup_mode: bool,
-    boss_user_id: int,
-    actor_user_id: int | None,
     bound_count: int,
     removed: bool,
 ) -> bool:
-    """Whether Telegram should auto-leave an unbound chat.
+    """Whether Telegram should keep an unbound chat briefly for /init.
 
-    Bound chats are managed elsewhere. Unknown chats invited by Boss are allowed
-    to stay so Boss can run /init; unknown chats invited by anyone else are
-    treated as unauthorized and left immediately.
+    Bound chats and removal events are handled elsewhere. Unknown chats get a
+    short grace window; normal message ACL still only lets Boss run /init.
     """
     if setup_mode or removed or bound_count > 0:
         return False
-    return actor_user_id != boss_user_id
+    return True
 
 
 # ────────── 工具函数 (TG-specific) ──────────
@@ -147,6 +145,7 @@ class TelegramFrontend(Frontend):
         # 话题名只在 forum_topic_created / _edited 服务消息里, 普通 message 拿不到 →
         # 服务消息进来时缓存, /init 时按 (chat_id, thread_id) 命中, 取代群名。
         self._topic_names: dict[tuple[int, int], str] = {}
+        self._unknown_chat_leave_tasks: dict[int, asyncio.Task] = {}
         self._register_handlers()
 
     def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
@@ -155,6 +154,11 @@ class TelegramFrontend(Frontend):
             if b.chat_id == chat_id and b.thread_id == thread_id:
                 return b
         return None
+
+    def _cancel_unknown_chat_leave(self, chat_id: int) -> None:
+        task = self._unknown_chat_leave_tasks.pop(chat_id, None)
+        if task is not None:
+            task.cancel()
 
     def _list_projects(self) -> str:
         """列 project_base 下的直接子目录, 返回 HTML 文本 (供 /projects 用)"""
@@ -715,6 +719,7 @@ class TelegramFrontend(Frontend):
                     "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml"
                 )
                 return
+            F_._cancel_unknown_chat_leave(m.chat.id)
             _tip = ""
             if _topic_missing and not _arg:
                 _tip = (
@@ -902,13 +907,13 @@ class TelegramFrontend(Frontend):
             )
             removed = new_status in ("left", "kicked")
             actor_user_id = getattr(getattr(ev, "from_user", None), "id", None)
+            if removed:
+                F_._cancel_unknown_chat_leave(chat_id)
 
             # 该 chat 在本 frontend 是否有 binding (含 forum topic 的 thread)
             bound = [b for b in F_.bindings if b.chat_id == chat_id]
-            leave_unknown = should_leave_unknown_chat(
+            grace_unknown = should_grace_unknown_chat(
                 setup_mode=S.setup_mode,
-                boss_user_id=S.boss_user_id,
-                actor_user_id=actor_user_id,
                 bound_count=len(bound),
                 removed=removed,
             )
@@ -925,33 +930,48 @@ class TelegramFrontend(Frontend):
                         log.exception(f"deprovision {b.name} err")
                 return
 
-            # 未绑定且 bot 仍在群里: Boss 拉入时保留给 /init; 其他人拉入仍自动退群。
-            if not bound and not leave_unknown:
+            # 未绑定且 bot 仍在群里: 给 Boss 60s 发送 /init; 到期仍未绑定才自动退群。
+            if grace_unknown:
+                F_._cancel_unknown_chat_leave(chat_id)
                 log.info(
-                    "stayed in unbound chat %s invited by boss %s; waiting for /init",
+                    "stayed in unbound chat %s invited by user %s; waiting %.0fs for /init",
                     chat_id,
                     actor_user_id,
+                    UNKNOWN_CHAT_INIT_GRACE_SECONDS,
                 )
                 try:
                     await ev.bot.send_message(
                         chat_id,
-                        "已进入群组。请发送 /init 开通 tmux 会话; "
-                        "如果群/话题名含中文, 用 /init <英文目录名>。",
+                        "已进入群组。请在 60 秒内发送 /init 开通 tmux 会话; "
+                        "如果群/话题名含中文, 用 /init <英文目录名>。"
+                        "超时未开通会自动退出。",
                     )
                 except Exception as e:
                     log.debug(f"send unknown chat init hint err: {e}")
-                return
 
-            if leave_unknown:
-                log.warning(
-                    "left non-whitelisted chat %s invited by user %s",
-                    chat_id,
-                    actor_user_id,
+                async def _leave_if_still_unbound() -> None:
+                    try:
+                        await asyncio.sleep(UNKNOWN_CHAT_INIT_GRACE_SECONDS)
+                        if any(b.chat_id == chat_id for b in F_.bindings):
+                            return
+                        log.warning(
+                            "left unbound chat %s after %.0fs init grace",
+                            chat_id,
+                            UNKNOWN_CHAT_INIT_GRACE_SECONDS,
+                        )
+                        try:
+                            await ev.bot.leave_chat(chat_id)
+                        except Exception as e:
+                            log.debug(f"delayed leave unknown chat err: {e}")
+                    except asyncio.CancelledError:
+                        raise
+                    finally:
+                        F_._unknown_chat_leave_tasks.pop(chat_id, None)
+
+                F_._unknown_chat_leave_tasks[chat_id] = asyncio.create_task(
+                    _leave_if_still_unbound()
                 )
-                try:
-                    await ev.bot.leave_chat(chat_id)
-                except Exception:
-                    pass
+                return
 
     # ────────── 启动 / 停止 ──────────
     async def start_polling(self) -> None:
@@ -969,5 +989,7 @@ class TelegramFrontend(Frontend):
         await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
 
     async def stop(self) -> None:
+        for chat_id in list(self._unknown_chat_leave_tasks):
+            self._cancel_unknown_chat_leave(chat_id)
         await self.dp.stop_polling()
         await self.bot.session.close()
