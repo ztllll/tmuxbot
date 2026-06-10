@@ -80,6 +80,15 @@ bash bin/stop.sh
 
 ### 生产部署(systemd,推荐)
 
+推荐先用 Claude Code native installer 安装 `claude`,并在 `.env` 里写绝对路径:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
+```
+
+`CLAUDE_BIN` 会在拉起 Claude 时读取,避免 systemd/tmux 的非交互 shell `PATH` 找不到 `claude`,也避免命中坏掉的 npm 全局安装。`CODEX_BIN` 同理可指向 codex 绝对路径。
+
 ```bash
 mkdir -p ~/.config/systemd/user
 ln -sf "$(pwd)/deploy/systemd/tmuxbot.service" ~/.config/systemd/user/tmuxbot.service

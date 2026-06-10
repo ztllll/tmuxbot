@@ -241,6 +241,15 @@ bash bin/stop.sh            # 优雅停
 
 ### 生产部署 (systemd user service, 推荐)
 
+推荐先用 Claude Code native installer 安装 `claude`,并在 `.env` 中配置绝对路径:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
+```
+
+`CLAUDE_BIN` 在 `ensure_running()` 运行时读取,不会依赖 systemd/tmux 的非交互 shell `PATH`。这也避开 npm 全局安装缺少 native optional dependency 时的 `claude native binary not installed` 故障。`CODEX_BIN` 同理可配置 codex 绝对路径。
+
 ```bash
 mkdir -p ~/.config/systemd/user
 ln -sf "$(pwd)/deploy/systemd/tmuxbot.service" ~/.config/systemd/user/tmuxbot.service
@@ -278,7 +287,7 @@ RestartSec=5s
 
 1. 检查 tmux session 是否存在,不存在则新建
 2. 检查 pane 当前命令是否为 claude,已在跑则跳过
-3. `claude --dangerously-skip-permissions --model 'claude-opus-4-8[1m]' --resume <session_id>` 重启(上下文不丢)
+3. `${CLAUDE_BIN:-claude} --dangerously-skip-permissions --resume <session_id>` 重启(上下文不丢)
 
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
 
@@ -329,6 +338,8 @@ RestartSec=5s
 ## 9. 部署红线
 
 - ❌ 不能 root/sudo 跑 claude
+- ❌ 不要依赖 systemd/tmux 的 shell PATH 找 `claude`;生产环境配置 `CLAUDE_BIN` 绝对路径
+- ❌ 不推荐用 npm 全局安装 Claude Code;若 npm optional dependency/postinstall 坏了会出现 `claude native binary not installed`
 - ❌ 项目里不要配 `PreToolUse` hook
 - ❌ `tmux_send_text` 不前置 Escape(中断要用 `/esc`)
 - ❌ pkill 用 -TERM 杀不死 zombie(jsonl_poll_loop 不响应 SIGTERM) → 用 -KILL

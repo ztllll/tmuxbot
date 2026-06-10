@@ -12,6 +12,7 @@ import asyncio
 import html
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime
@@ -30,7 +31,13 @@ log = logging.getLogger("tmuxbot")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 TASKS_DIR = Path.home() / ".claude" / "tasks"
-START_CMD = "claude --dangerously-skip-permissions"  # 干净启动: 只带最高权限免审批; 最新版 CLI 默认模型即 opus-4.8 1M, 无需 --model(Boss 实测确认)
+# 保留 start_cmd 属性给状态/调试代码读取;真正启动时用 _start_cmd() 运行时读 CLAUDE_BIN。
+START_CMD = f'{os.getenv("CLAUDE_BIN", "claude")} --dangerously-skip-permissions'
+
+
+def _start_cmd() -> str:
+    # CLAUDE_BIN 可配绝对路径, 防 systemd/tmux shell PATH 不含 ~/.local/bin 或命中旧 npm 入口。
+    return f'{os.getenv("CLAUDE_BIN", "claude")} --dangerously-skip-permissions'
 
 
 # ────────── tool 中文化 + 关键参数提取 ──────────
@@ -598,7 +605,7 @@ class ClaudeCodeBackend(Backend):
             await asyncio.sleep(0.5)
         cmd = tmux_pane_command(b.tmux_target)
         if cmd != self.pane_command_name:
-            start = self.start_cmd
+            start = _start_cmd()
             if b.last_session_id:
                 start += f" --resume {b.last_session_id}"
             await tmux_send_text(b.tmux_target, start)

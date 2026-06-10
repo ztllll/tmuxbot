@@ -4,6 +4,19 @@
 
 ---
 
+## [2026-06-10] Claude 启动支持 CLAUDE_BIN 绝对路径
+
+### Fixed
+
+- **hbhy 新建 Claude 会话失败: npm 全局安装缺 native binary**。远端 `@anthropic-ai/claude-code` 缺少平台 optional dependency,新建 pane 报 `Error: claude native binary not installed`。项目启动链路新增 `CLAUDE_BIN` 运行时读取,生产可固定到 native installer 产物 `~/.local/bin/claude`,不再依赖 systemd/tmux 的 `PATH` 或坏掉的 npm 入口。
+- **测试覆盖**:`tests/test_claude_code_backend.py` 验证 `CLAUDE_BIN` 在运行时生效,避免 `.env` 加载顺序回归。
+
+### Docs
+
+- README / DEVELOPMENT / `.env.example` 同步记录 Claude Code native install 推荐路径、`CLAUDE_BIN` 配置和 npm 安装故障红线。
+
+---
+
 ## [2026-06-01] 修 tailer 切新会话丢首条回复(/clear /new 可靠化)
 
 ### Fixed
