@@ -20,6 +20,17 @@ The product should stay conservative:
 
 ## Current Assessment
 
+Latest sync as of 2026-06-19:
+
+- `productization-prep` is the active maintenance branch.
+- M1-M4 are shipped: package split, Claude/Codex backends, Telegram/Feishu
+  frontends, hbhy deployment, and the first slash/TUI command adapter layer.
+- Deployment hardening now includes runtime `CLAUDE_BIN` support so production
+  can pin Claude Code to the native binary instead of a fragile npm wrapper.
+- Active productization work remains focused on validation, parser fixtures,
+  interaction-state persistence, lifecycle observability, and install/operator
+  polish.
+
 Strengths:
 
 - The domain model is real: one IM endpoint maps to one tmux pane and cwd.
