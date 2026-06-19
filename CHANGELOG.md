@@ -4,6 +4,19 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- 项目版本与发布治理基础:版本策略、发布流程、GitHub issue/PR 模板、CI/Dependabot 工作流、贡献/安全/支持文档。
+- 元数据一致性测试,防止 `pyproject.toml` 与 `tmuxbot.__version__` 漂移。
+
+### Changed
+
+- `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
+
+---
+
 ## [2026-06-10] Claude 启动支持 CLAUDE_BIN 绝对路径
 
 ### Fixed

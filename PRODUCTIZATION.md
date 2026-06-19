@@ -27,6 +27,8 @@ Latest sync as of 2026-06-19:
   frontends, hbhy deployment, and the first slash/TUI command adapter layer.
 - Deployment hardening now includes runtime `CLAUDE_BIN` support so production
   can pin Claude Code to the native binary instead of a fragile npm wrapper.
+- Product metadata now has a `0.2.0` package version, console entry point,
+  release/versioning docs, CI, and GitHub issue/PR support templates.
 - Active productization work remains focused on validation, parser fixtures,
   interaction-state persistence, lifecycle observability, and install/operator
   polish.

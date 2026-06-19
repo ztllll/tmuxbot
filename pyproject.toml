@@ -1,8 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
 [project]
 name = "tmuxbot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Telegram/Feishu <-> tmux AI CLI TUI bridge"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {file = "LICENSE"}
+authors = [
+    {name = "ztllll", email = "33171642+ztllll@users.noreply.github.com"},
+]
 dependencies = [
     "aiogram>=3.13",
     "pyyaml>=6.0",
@@ -16,6 +25,7 @@ feishu = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [tool.pytest.ini_options]
@@ -29,6 +39,11 @@ line-length = 100
 [tool.ruff.lint]
 select = ["F"]
 
-[project.authors]
-name = "ztllll"
-email = "33171642+ztllll@users.noreply.github.com"
+[project.urls]
+Homepage = "https://github.com/ztllll/tmuxbot"
+Repository = "https://github.com/ztllll/tmuxbot"
+Issues = "https://github.com/ztllll/tmuxbot/issues"
+Changelog = "https://github.com/ztllll/tmuxbot/blob/main/CHANGELOG.md"
+
+[project.scripts]
+tmuxbot = "tmuxbot.__main__:run"

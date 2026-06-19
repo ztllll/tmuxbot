@@ -1,0 +1,60 @@
+name: Bug report
+description: Report incorrect tmuxbot behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: frontend
+    attributes:
+      label: Frontend
+      options:
+        - Telegram
+        - Feishu
+        - Both
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - Claude Code
+        - Codex
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start tmuxbot with ...
+        2. Send ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, tmux version, deployment mode, CLI binary paths.
+      placeholder: |
+        Python:
+        tmux:
+        deployment:
+        CLAUDE_BIN/CODEX_BIN:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens, chat IDs, open IDs, credentials, and private content.
+      render: text

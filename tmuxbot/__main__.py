@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import fcntl
 import logging
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot import __version__
 from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
 from tmuxbot.heartbeat import HEARTBEAT_INTERVAL, heartbeat_typing_loop
@@ -276,5 +278,19 @@ async def main() -> None:
         log.info("bye")
 
 
-if __name__ == "__main__":
+def run(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="tmuxbot",
+        description="Telegram/Feishu <-> tmux AI CLI TUI bridge",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"tmuxbot {__version__}",
+    )
+    parser.parse_args(argv)
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()

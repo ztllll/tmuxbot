@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](./VERSIONING.md)
 
 > Telegram + 飞书 ↔ tmux 内 AI CLI(Claude Code / Codex)双向桥 —— 远程在 IM 发消息推动本地 tmux pane 里的 cli,cli 输出实时回推同端点。
 >
@@ -161,7 +162,15 @@ make install-dev
 make check
 ```
 
-长期产品化路线看 [PRODUCTIZATION.md](./PRODUCTIZATION.md)。
+持续迭代入口:
+
+- [CHANGELOG.md](./CHANGELOG.md):变更记录
+- [VERSIONING.md](./VERSIONING.md):版本号与发布标签策略
+- [RELEASE.md](./RELEASE.md):发布检查清单
+- [CONTRIBUTING.md](./CONTRIBUTING.md):贡献与 PR 要求
+- [SECURITY.md](./SECURITY.md):安全边界与敏感文件规则
+- [SUPPORT.md](./SUPPORT.md):issue/support 信息收集指南
+- [PRODUCTIZATION.md](./PRODUCTIZATION.md):长期产品化路线
 
 ---
 

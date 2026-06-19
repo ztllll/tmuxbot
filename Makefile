@@ -1,4 +1,4 @@
-.PHONY: install-dev test lint check py_compile
+.PHONY: install-dev test lint check py_compile version
 
 UV ?= uv
 
@@ -13,5 +13,8 @@ lint:
 
 py_compile:
 	$(UV) run python -m compileall -q tmuxbot tests
+
+version:
+	$(UV) run python -c "import tmuxbot; print(tmuxbot.__version__)"
 
 check: py_compile test lint

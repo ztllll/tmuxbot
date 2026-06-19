@@ -1,7 +1,7 @@
 # tmuxbot — 开发文档
 
 > Telegram + 飞书 ↔ tmux AI CLI (Claude Code / Codex) 双向桥。可插拔多前端/多后端架构。
-> 决策依据见 `RESEARCH.md`, 代码审查见 `CODE_REVIEW.md`, 变更历史见 `CHANGELOG.md`, 项目宪法见 `CLAUDE.md`。
+> 决策依据见 `RESEARCH.md`, 代码审查见 `CODE_REVIEW.md`, 变更历史见 `CHANGELOG.md`, 版本策略见 `VERSIONING.md`, 发布流程见 `RELEASE.md`, 项目宪法见 `CLAUDE.md`。
 
 ---
 
@@ -51,6 +51,11 @@ tmuxbot/                       ← 仓库根
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml             ← aiogram>=3.13, pyyaml>=6.0, python-dotenv>=1.0; lark-oapi>=1.4 optional
+├── VERSIONING.md              ← 版本号/分支/tag 策略
+├── RELEASE.md                 ← 发布检查清单
+├── CONTRIBUTING.md            ← 贡献与 PR 约定
+├── SECURITY.md                ← 安全边界与敏感文件规则
+├── SUPPORT.md                 ← issue/support 信息收集指南
 ├── data/                      ← gitignored
 │   ├── offsets.json           ← jsonl byte offset 持久化 (debounced 5s)
 │   ├── tmuxbot.log
@@ -323,7 +328,7 @@ RestartSec=5s
 
 参见 `CLAUDE.md` 第 2 节。摘要:
 
-- `cwd` 编码: `/` 和 `.` 都替换为 `-`
+- `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
 - `paste-buffer -p` 后必须等 TUI idle 再 send Enter(idle 轮询, 超时 10s 强发)
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
 - TG 4096 限 UTF-16 单位
@@ -374,3 +379,21 @@ grep "starting\|heartbeat\|polling\|EXCEPTION\|WARNING" data/tmuxbot.log
 - **M2** (✅ 2026-05-27): 地毯代码审查 → 可插拔重构 (`backends/` + `frontends/` + `dispatch.py`)
 - **M3** (✅ 2026-05-27): 接入 Codex CLI + 双 bot 共存 + systemd 部署
 - **M4** (✅ 2026-05-29): 接入飞书前端 (lark-oapi WebSocket + interactive card) + 多实例
+
+---
+
+## 12. 版本与发布
+
+- 当前版本源: `pyproject.toml` 的 `[project].version` 与
+  `tmuxbot/__init__.py` 的 `__version__`
+- 版本一致性由 `tests/test_project_metadata.py` 检查
+- 版本策略见 `VERSIONING.md`
+- 发布检查清单见 `RELEASE.md`
+- 每个用户可见或运维相关变更先写入 `CHANGELOG.md` 的 `Unreleased`
+
+发布前至少运行:
+
+```bash
+make check
+make version
+```
