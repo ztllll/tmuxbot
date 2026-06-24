@@ -20,13 +20,16 @@ The product should stay conservative:
 
 ## Current Assessment
 
-Latest sync as of 2026-06-19:
+Latest sync as of 2026-06-24:
 
 - `productization-prep` is the active maintenance branch.
 - M1-M4 are shipped: package split, Claude/Codex backends, Telegram/Feishu
   frontends, hbhy deployment, and the first slash/TUI command adapter layer.
 - Deployment hardening now includes runtime `CLAUDE_BIN` support so production
   can pin Claude Code to the native binary instead of a fragile npm wrapper.
+- Codex rollout selection is now guarded by `session_meta.payload.cwd`; a
+  binding without a matching cwd no longer falls back to the newest global
+  rollout and cannot tail another chat's Codex transcript by default.
 - Product metadata now has a `0.2.0` package version, console entry point,
   release/versioning docs, CI, and GitHub issue/PR support templates.
 - Active productization work remains focused on validation, parser fixtures,
@@ -43,8 +46,8 @@ Strengths:
 
 Main risks:
 
-- Configuration mistakes can still enter runtime and cause cross-chat or cross-cwd
-  confusion.
+- Configuration mistakes can still enter runtime, especially stale resume IDs or
+  manually respawned tmux panes that point at the wrong cwd.
 - Parser behavior is high value but mostly untested.
 - `TelegramFrontend` and `FeishuFrontend` still contain mixed concerns: ACL,
   transport, provisioning commands, formatting, and callbacks.

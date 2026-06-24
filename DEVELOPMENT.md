@@ -232,6 +232,8 @@ FEISHU_BOSS_OPEN_IDS=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # 逗号分隔多个
 
 **校验红线**: `(chat_id, thread_id)` 全局唯一; `cwd` 全局唯一 (同 cwd 起两个 claude 会撞 jsonl); `tmux_session` 全局唯一。
 
+Codex 的 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 路径不编码 cwd,backend 必须读取首行 `session_meta.payload.cwd` 和 binding `cwd` 比对。找不到 cwd 匹配的 rollout 时返回 `None`,不能兜底到全局最新文件,否则多 binding 会跨 chat tail 同一个 Codex 会话。
+
 ---
 
 ## 6. 部署

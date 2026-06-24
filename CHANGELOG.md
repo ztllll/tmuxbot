@@ -10,10 +10,15 @@
 
 - 项目版本与发布治理基础:版本策略、发布流程、GitHub issue/PR 模板、CI/Dependabot 工作流、贡献/安全/支持文档。
 - 元数据一致性测试,防止 `pyproject.toml` 与 `tmuxbot.__version__` 漂移。
+- Codex backend 回归测试,覆盖按 binding `cwd` 选择 rollout jsonl 以及无匹配时不兜底到全局最新文件。
 
 ### Changed
 
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
+
+### Fixed
+
+- Codex 多 binding 串线风险:Codex rollout 路径不含 cwd,旧逻辑在找不到当前 binding 的 `session_meta.payload.cwd` 时会返回全局最新 `rollout-*.jsonl`,导致多个 chat 可能同时 tail 同一个 Codex 会话。现在只接受 cwd 匹配的 rollout,找不到就返回 `None`。
 
 ---
 

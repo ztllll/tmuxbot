@@ -174,7 +174,8 @@ class CodexBackend(Backend):
         if not all_files:
             return None
         target_cwd = str(b.cwd.resolve())
-        # 按 mtime 倒序, 找第一个 cwd 匹配的
+        # 按 mtime 倒序, 找第一个 cwd 匹配的。找不到就返回 None, 不能兜底到全局最新,
+        # 否则多个 binding 会同时 tail 同一个 Codex rollout, 导致跨 chat 推送。
         for jl in sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 with open(jl, "r", encoding="utf-8", errors="replace") as f:
@@ -184,12 +185,12 @@ class CodexBackend(Backend):
                 j = json.loads(first)
                 if j.get("type") == "session_meta":
                     p = j.get("payload", {}) or {}
-                    if p.get("cwd") == target_cwd:
+                    cwd = p.get("cwd")
+                    if isinstance(cwd, str) and str(Path(cwd).resolve()) == target_cwd:
                         return jl
             except Exception:
                 continue
-        # 兜底: 返回 mtime 最新, 不强求 cwd 匹配
-        return max(all_files, key=lambda p: p.stat().st_mtime)
+        return None
 
     def parse_event(self, line: str) -> list[tuple[str, str]]:
         """codex jsonl 一行 → events 列表。
