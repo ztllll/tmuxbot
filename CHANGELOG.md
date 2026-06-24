@@ -15,6 +15,7 @@
 ### Changed
 
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
+- `.gitignore` 覆盖多实例部署文件:忽略 `bindings*.yaml` 和 `data*/`,同时保留已跟踪的 `bindings.example.yaml`。
 
 ### Fixed
 

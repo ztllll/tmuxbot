@@ -46,7 +46,7 @@ tmuxbot/                       ← 仓库根
 │       ├── base.py            ← Frontend ABC (send_html/edit_html/send_pre/send_chat_action)
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + ack middleware + handlers
 │       └── feishu.py          ← FeishuFrontend: lark-oapi WebSocket + interactive card
-├── bindings.yaml              ← 绑定配置 (gitignored)
+├── bindings.yaml              ← 绑定配置 (gitignored; 多实例 bindings*.yaml 也忽略)
 ├── .env                       ← TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN / BOSS_USER_ID 等 (gitignored)
 ├── .env.example
 ├── .gitignore
@@ -56,7 +56,7 @@ tmuxbot/                       ← 仓库根
 ├── CONTRIBUTING.md            ← 贡献与 PR 约定
 ├── SECURITY.md                ← 安全边界与敏感文件规则
 ├── SUPPORT.md                 ← issue/support 信息收集指南
-├── data/                      ← gitignored
+├── data/                      ← gitignored; 多实例 data*/ 也忽略
 │   ├── offsets.json           ← jsonl byte offset 持久化 (debounced 5s)
 │   ├── tmuxbot.log
 │   └── tmuxbot.lock
@@ -353,7 +353,7 @@ RestartSec=5s
 - ✅ `~/.claude/settings.json` 必含 `"skipDangerousModePermissionPrompt": true`
 - ✅ TG bot 在群里设管理员或 BotFather 关 privacy mode
 - ✅ ACL **双重门禁** (TG 和飞书均适用): 用户白名单 + source 必须配置,未配置的 source 一律静默
-- ✅ `.gitignore` 必含 `.env` / `bindings.yaml` / `data/`
+- ✅ `.gitignore` 必含 `.env` / `bindings*.yaml` / `data*/`
 
 ---
 

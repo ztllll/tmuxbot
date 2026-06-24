@@ -1,7 +1,8 @@
 .env
 .env.local
-bindings.yaml
-data/
+bindings*.yaml
+!bindings.example.yaml
+data*/
 __pycache__/
 *.pyc
 *.pyo
