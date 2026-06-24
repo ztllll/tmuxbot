@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from tmuxbot.attachments import attachment_path, attachment_prompt
 from tmuxbot.lifecycle import ensure_binding_running
 
 if TYPE_CHECKING:
@@ -352,12 +353,17 @@ class FeishuFrontend:
                 data = (json.loads(resp.read().decode("utf-8")) or {}).get("data") or {}
             return data.get("name") or None
 
-    def _download_image_sync(self, message_id: str, file_key: str) -> str | None:
-        """同步下载消息里的图片资源 (在 asyncio.to_thread 里调)。失败返回 None + log。
+    def _download_resource_sync(
+        self,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        filename: str | None,
+    ) -> str | None:
+        """同步下载消息资源 (在 asyncio.to_thread 里调)。失败返回 None + log。
 
-        GET /im/v1/messages/{message_id}/resources/{file_key}?type=image
+        GET /im/v1/messages/{message_id}/resources/{file_key}?type=<resource_type>
           header Authorization: Bearer <tenant_access_token>
-        响应是二进制 → 存 /tmp/tb_{message_id}_{file_key前8}.jpg, 返回路径。
         优先用 requests, 没装则降级 urllib (纯 stdlib)。
 
         ⚠️ 需飞书 app 开通 im:resource 权限, 否则 403。
@@ -368,9 +374,9 @@ class FeishuFrontend:
 
         url = (
             f"https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
-            f"/resources/{file_key}?type=image"
+            f"/resources/{file_key}?type={resource_type}"
         )
-        save_path = str(Path("/tmp") / f"tb_{message_id}_{file_key[:8]}.jpg")
+        save_path = attachment_path("feishu", message_id, file_key[:16], filename)
 
         try:
             import requests  # type: ignore
@@ -384,7 +390,7 @@ class FeishuFrontend:
                 )
                 if r.status_code != 200:
                     log.warning(
-                        f"feishu download_image err: status={r.status_code} "
+                        f"feishu download_{resource_type} err: status={r.status_code} "
                         f"body={r.text[:200]} mid={message_id} key={file_key[:12]}"
                     )
                     return None
@@ -398,12 +404,27 @@ class FeishuFrontend:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     with open(save_path, "wb") as f:
                         f.write(resp.read())
-            return save_path
+            return str(save_path)
         except Exception as e:
             log.warning(
-                f"feishu download_image err: {e} mid={message_id} key={file_key[:12]}"
+                f"feishu download_{resource_type} err: {e} "
+                f"mid={message_id} key={file_key[:12]}"
             )
             return None
+
+    def _download_image_sync(self, message_id: str, file_key: str) -> str | None:
+        """同步下载消息里的图片资源。"""
+        return self._download_resource_sync(
+            message_id, file_key, "image", f"{file_key[:8]}.jpg"
+        )
+
+    def _download_file_sync(
+        self, message_id: str, file_key: str, filename: str | None
+    ) -> str | None:
+        """同步下载消息里的文件资源。"""
+        return self._download_resource_sync(
+            message_id, file_key, "file", filename or f"{file_key[:8]}.bin"
+        )
 
     def _list_projects(self) -> str:
         """列 project_base 下的直接子目录, 返回飞书 HTML 文本 (供 /projects 用)"""
@@ -683,9 +704,59 @@ class FeishuFrontend:
                     )
                     return
 
-                inject = (caption or "请处理") + "\n\n" + "\n".join(f"@{p}" for p in paths)
+                inject = attachment_prompt(
+                    caption, paths, default_caption="请处理这个图片"
+                )
                 await ensure_binding_running(
                     self.backend, b, self.state, reason="feishu-image", wait=True
+                )
+                await tmux_send_text(b.tmux_target, inject)
+                return
+
+            # ── file: 下载文件 → @路径 注入 tmux ──
+            if msg_type == "file":
+                from tmuxbot.tmux import tmux_send_text
+
+                try:
+                    content_obj = json.loads(msg.content)
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    content_obj = {}
+
+                file_key = (
+                    (content_obj or {}).get("file_key")
+                    or (content_obj or {}).get("fileKey")
+                )
+                filename = (
+                    (content_obj or {}).get("file_name")
+                    or (content_obj or {}).get("fileName")
+                    or (content_obj or {}).get("name")
+                )
+                if not file_key:
+                    log.debug("feishu: file msg 无 file_key, 忽略")
+                    return
+
+                self.state.last_active[b.name] = time.time()
+                try:
+                    await asyncio.to_thread(self._add_reaction_sync, msg.message_id, "OnIt")
+                except Exception as e:
+                    log.debug(f"feishu reaction err: {e}")
+
+                path = await asyncio.to_thread(
+                    self._download_file_sync, msg.message_id, file_key, filename
+                )
+                if not path:
+                    await self.send_html(
+                        chat_id, None,
+                        "❌ <b>文件下载失败</b>\n"
+                        "请检查飞书 app 是否开通 <code>im:resource</code> 权限",
+                    )
+                    return
+
+                inject = attachment_prompt(
+                    filename, [path], default_caption="请处理这个文件"
+                )
+                await ensure_binding_running(
+                    self.backend, b, self.state, reason="feishu-file", wait=True
                 )
                 await tmux_send_text(b.tmux_target, inject)
                 return

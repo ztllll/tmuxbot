@@ -30,6 +30,7 @@ tmuxbot/                       ← 仓库根
 │   ├── state.py               ← Binding + State + fire()
 │   ├── config.py              ← .env + bindings.yaml + offsets.json → State
 │   ├── utils.py               ← encode_cwd / cwidth / render_table / offsets debounced
+│   ├── attachments.py         ← IM 附件落盘、文件名清洗、@path 注入 prompt
 │   ├── tmux.py                ← tmux_send_text (async) / send_key / capture / pane_command
 │   ├── picker.py              ← PICKER_BOTTOMBAR_RE / detect_idle_picker
 │   ├── jsonl.py               ← jsonl_poll_loop + on_tmux_event (含 tool_aggregator + 积压保护)
@@ -174,6 +175,10 @@ TMUXBOT_DATA_DIR=/data/codex-feishu TMUXBOT_BINDINGS=/etc/tmuxbot/codex-feishu.y
 ```
 
 对应 systemd service 用不同的 unit 文件,各自覆盖 `TMUXBOT_DATA_DIR` 和 `TMUXBOT_BINDINGS` 环境变量。
+
+### 附件注入
+
+Telegram 图片/文档/视频/动图/音频/语音与飞书图片/图文/文件会先下载到本机,再以 `@path` 注入对应 tmux TUI。默认附件目录为 `/tmp/tmuxbot-attachments`,可用 `TMUXBOT_ATTACHMENT_DIR` 覆盖。飞书下载图片/文件资源需要 app 开通 `im:resource` 权限。
 
 ---
 

@@ -41,6 +41,7 @@ from tmuxbot.command_adapter import (
     handle_tui_action,
     semantic_actions_from_body,
 )
+from tmuxbot.attachments import attachment_path, attachment_prompt
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key
@@ -108,6 +109,28 @@ def thread_id_of(m: Message) -> int | None:
         return None
     if getattr(m, "is_topic_message", False):
         return m.message_thread_id
+    return None
+
+
+def _message_attachment(m: Message) -> tuple[str, str, int | None, str] | None:
+    """Return (file_id, filename, file_size, kind) for Telegram file-like messages."""
+    if m.photo:
+        photo = m.photo[-1]
+        return photo.file_id, f"photo_{m.message_id}.jpg", photo.file_size, "photo"
+
+    for attr, fallback in (
+        ("document", "document.bin"),
+        ("video", "video.mp4"),
+        ("animation", "animation.gif"),
+        ("audio", "audio.mp3"),
+        ("voice", "voice.ogg"),
+    ):
+        obj = getattr(m, attr, None)
+        if obj is None:
+            continue
+        filename = getattr(obj, "file_name", None) or fallback
+        return obj.file_id, filename, getattr(obj, "file_size", None), attr
+
     return None
 
 
@@ -603,7 +626,7 @@ class TelegramFrontend(Frontend):
             await m.reply(f"🔄 已 restart {backend.name}")
 
         # ─── 文件 / 图片 ─────────
-        @dp.message(F.photo | F.document)
+        @dp.message(F.photo | F.document | F.video | F.animation | F.audio | F.voice)
         async def on_file(m: Message):
             from tmuxbot.tmux import tmux_send_text
 
@@ -613,30 +636,31 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
-            if m.photo:
-                photo = m.photo[-1]
-                fname = f"tb_{m.message_id}.jpg"
-                file_id = photo.file_id
-            else:
-                d = m.document
-                if d.file_size and d.file_size > MAX_FILE_MB * 1024 * 1024:
-                    await m.reply(f"文件超过 {MAX_FILE_MB}MB")
-                    return
-                fname = d.file_name or f"tb_{m.message_id}.bin"
-                file_id = d.file_id
-            save_path = Path("/tmp") / fname
+            attachment = _message_attachment(m)
+            if attachment is None:
+                return
+            file_id, fname, file_size, kind = attachment
+            if file_size and file_size > MAX_FILE_MB * 1024 * 1024:
+                await m.reply(f"文件超过 {MAX_FILE_MB}MB")
+                return
+            save_path = attachment_path(
+                "telegram", m.message_id, file_id[-16:], fname
+            )
             try:
                 f = await m.bot.get_file(file_id)
                 await m.bot.download_file(f.file_path, destination=save_path)
             except Exception as e:
                 await m.reply(f"❌ 下载失败: {html.escape(str(e))}")
                 return
-            caption = m.caption or "请处理这个文件"
+            default_caption = "请处理这个图片" if kind == "photo" else "请处理这个文件"
+            inject = attachment_prompt(
+                m.caption, [save_path], default_caption=default_caption
+            )
             backend = F_.backend
             await ensure_binding_running(
                 backend, b, self.state, reason="telegram-file", wait=True
             )
-            await tmux_send_text(b.tmux_target, f"{caption}\n\n@{save_path}")
+            await tmux_send_text(b.tmux_target, inject)
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 
         # ─── forum topic 名缓存 (服务消息, 只缓存不干别的) ─────────
