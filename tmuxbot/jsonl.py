@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
 
@@ -192,7 +193,11 @@ async def on_tmux_event(
     now = time.time()
 
     if kind == "attachment":
-        await frontend.send_html(b.chat_id, b.thread_id, body)
+        await _send_html_with_outbound_attachments(frontend, b, body)
+        return
+
+    if kind == "assistant_plan":
+        await _send_or_edit_plan(frontend, b, state, body)
         return
 
     if kind == "assistant_text":
@@ -202,15 +207,20 @@ async def on_tmux_event(
         footer = render_task_footer(backend.read_tasks(b))
         out = f"{text}\n\n{footer}" if footer else text
         if out.strip():
-            await frontend.send_html(b.chat_id, b.thread_id, out)
+            await _send_html_with_outbound_attachments(frontend, b, out)
         return
 
     if kind != "assistant_tools":
         # 未知 kind, 兜底直发
-        await frontend.send_html(b.chat_id, b.thread_id, body)
+        await _send_html_with_outbound_attachments(frontend, b, body)
         return
 
     # 走到这: kind == "assistant_tools", 进 aggregator
+    body, attachments = split_outbound_attachments(body)
+    if not body.strip():
+        await _send_outbound_attachments(frontend, b, attachments)
+        return
+
     agg = state.tool_aggregator.get(b.name)
     if agg and sum(len(s) for s in agg["content"]) > AGGREGATOR_MAX_CHARS:
         # 累计超长 → 主动 close 开新
@@ -222,17 +232,65 @@ async def on_tmux_event(
         header = "💭 <b>工作中…</b>"
         initial_html = header + "\n" + body
         msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
-        if msg is None or not hasattr(msg, "message_id"):
-            return
-        state.tool_aggregator[b.name] = {
-            "msg_id": msg.message_id,
-            "chat_id": b.chat_id,
-            "content": [header, body],
-            "last_ts": now,
-        }
-        state.fire(_aggregator_idle_watcher(b, state, frontend))
+        if msg is not None and hasattr(msg, "message_id"):
+            state.tool_aggregator[b.name] = {
+                "msg_id": msg.message_id,
+                "chat_id": b.chat_id,
+                "content": [header, body],
+                "last_ts": now,
+            }
+            state.fire(_aggregator_idle_watcher(b, state, frontend))
     else:
         agg["content"].append(body)
         agg["last_ts"] = now
         new_html = "\n".join(agg["content"])
         await frontend.edit_html(agg["chat_id"], agg["msg_id"], new_html)
+    await _send_outbound_attachments(frontend, b, attachments)
+
+
+async def _send_html_with_outbound_attachments(
+    frontend: "Frontend", b: "Binding", html_text: str,
+) -> None:
+    clean_text, attachments = split_outbound_attachments(html_text)
+    if clean_text.strip():
+        await frontend.send_html(b.chat_id, b.thread_id, clean_text)
+    await _send_outbound_attachments(frontend, b, attachments)
+
+
+async def _send_or_edit_plan(
+    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+) -> None:
+    plan_messages = getattr(state, "plan_messages", None)
+    if plan_messages is None:
+        plan_messages = {}
+        setattr(state, "plan_messages", plan_messages)
+
+    current = plan_messages.get(b.name)
+    if current and current.get("content") == html_text:
+        return
+
+    if current and current.get("msg_id") is not None:
+        try:
+            await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
+            current["content"] = html_text
+            return
+        except Exception:
+            log.exception(f"[{b.name}] edit plan err; sending a new plan card")
+
+    msg = await frontend.send_html(b.chat_id, b.thread_id, html_text)
+    if msg is not None and hasattr(msg, "message_id"):
+        plan_messages[b.name] = {
+            "msg_id": msg.message_id,
+            "chat_id": b.chat_id,
+            "content": html_text,
+        }
+
+
+async def _send_outbound_attachments(
+    frontend: "Frontend", b: "Binding", attachments,
+) -> None:
+    for attachment in attachments:
+        if attachment.kind == "image":
+            await frontend.send_image(b.chat_id, b.thread_id, attachment.path)
+        else:
+            await frontend.send_file(b.chat_id, b.thread_id, attachment.path)

@@ -24,7 +24,11 @@ import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from tmuxbot.attachments import attachment_path, attachment_prompt
+from tmuxbot.attachments import (
+    attachment_path,
+    attachment_prompt,
+    split_outbound_attachments,
+)
 from tmuxbot.lifecycle import ensure_binding_running
 
 if TYPE_CHECKING:
@@ -55,6 +59,22 @@ _HTML_ENTITIES = {
     "&quot;": '"',
     "&#39;": "'",
 }
+
+_FEISHU_FILE_TYPES = {
+    ".opus": "opus",
+    ".mp4": "mp4",
+    ".pdf": "pdf",
+    ".doc": "doc",
+    ".docx": "doc",
+    ".xls": "xls",
+    ".xlsx": "xls",
+    ".ppt": "ppt",
+    ".pptx": "ppt",
+}
+
+
+def _feishu_file_type(path: Path) -> str:
+    return _FEISHU_FILE_TYPES.get(path.suffix.lower(), "stream")
 
 
 def _html_to_feishu_md(s: str) -> str:
@@ -200,6 +220,35 @@ class FeishuFrontend:
             return None
         return resp.data.message_id
 
+    def _send_resource_message_sync(
+        self, chat_id: str, msg_type: str, content: dict[str, str]
+    ) -> str | None:
+        """同步发送 image/file 等资源消息, 返回 message_id。"""
+        lark = self._lark
+        import lark_oapi.api.im.v1 as im_v1
+
+        client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+        body = (
+            im_v1.CreateMessageRequestBody.builder()
+            .receive_id(chat_id)
+            .msg_type(msg_type)
+            .content(json.dumps(content, ensure_ascii=False))
+            .build()
+        )
+        req = (
+            im_v1.CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(body)
+            .build()
+        )
+        resp = client.im.v1.message.create(req)
+        if not resp.success():
+            log.warning(
+                f"feishu send_{msg_type} err: code={resp.code} msg={resp.msg}"
+            )
+            return None
+        return resp.data.message_id
+
     def _patch_card_sync(self, message_id: str, md_text: str) -> bool:
         """同步 PATCH interactive card, 返回是否成功"""
         lark = self._lark
@@ -271,8 +320,49 @@ class FeishuFrontend:
         """raw_text 用代码块包裹后发 card"""
         if not raw_text.strip():
             return
-        md = "```\n" + raw_text + "\n```"
-        await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+        clean_text, attachments = split_outbound_attachments(raw_text)
+        if clean_text.strip():
+            md = "```\n" + clean_text + "\n```"
+            await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+        for attachment in attachments:
+            if attachment.kind == "image":
+                await self.send_image(chat_id, thread_id, attachment.path)
+            else:
+                await self.send_file(chat_id, thread_id, attachment.path)
+
+    async def send_image(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        """上传本地图片并以飞书 image 消息发送。"""
+        image_key = await asyncio.to_thread(self._upload_image_sync, path)
+        if not image_key:
+            if caption:
+                await self.send_html(chat_id, thread_id, caption)
+            return None
+        message_id = await asyncio.to_thread(
+            self._send_resource_message_sync, str(chat_id), "image", {"image_key": image_key}
+        )
+        if message_id is None:
+            return None
+        return _make_fake_msg(message_id)
+
+    async def send_file(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        """上传本地文件并以飞书 file 消息发送。"""
+        file_key = await asyncio.to_thread(self._upload_file_sync, path)
+        if not file_key:
+            if caption:
+                await self.send_html(chat_id, thread_id, caption)
+            return None
+        message_id = await asyncio.to_thread(
+            self._send_resource_message_sync, str(chat_id), "file", {"file_key": file_key}
+        )
+        if message_id is None:
+            return None
+        return _make_fake_msg(message_id)
 
     async def send_chat_action(self, chat_id: int | str, thread_id: int | None, action: str) -> None:
         """飞书无 typing 状态 API → no-op"""
@@ -425,6 +515,72 @@ class FeishuFrontend:
         return self._download_resource_sync(
             message_id, file_key, "file", filename or f"{file_key[:8]}.bin"
         )
+
+    def _upload_image_sync(self, path: str | Path) -> str | None:
+        """上传本地图片到飞书, 返回 image_key。"""
+        tok = self._get_tenant_token_sync()
+        if not tok:
+            return None
+        try:
+            import requests  # type: ignore
+        except ImportError:
+            log.warning("feishu upload_image requires requests")
+            return None
+
+        p = Path(path)
+        try:
+            with p.open("rb") as f:
+                r = requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/images",
+                    headers={"Authorization": f"Bearer {tok}"},
+                    data={"image_type": "message"},
+                    files={"image": (p.name, f)},
+                    timeout=30,
+                )
+            data = r.json() or {}
+            if r.status_code != 200 or data.get("code", 0) != 0:
+                log.warning(
+                    f"feishu upload_image err: status={r.status_code} "
+                    f"body={r.text[:200]} path={p}"
+                )
+                return None
+            return ((data.get("data") or {}).get("image_key")) or None
+        except Exception as e:
+            log.warning(f"feishu upload_image err: {e} path={p}")
+            return None
+
+    def _upload_file_sync(self, path: str | Path) -> str | None:
+        """上传本地文件到飞书, 返回 file_key。"""
+        tok = self._get_tenant_token_sync()
+        if not tok:
+            return None
+        try:
+            import requests  # type: ignore
+        except ImportError:
+            log.warning("feishu upload_file requires requests")
+            return None
+
+        p = Path(path)
+        try:
+            with p.open("rb") as f:
+                r = requests.post(
+                    "https://open.feishu.cn/open-apis/im/v1/files",
+                    headers={"Authorization": f"Bearer {tok}"},
+                    data={"file_type": _feishu_file_type(p), "file_name": p.name},
+                    files={"file": (p.name, f)},
+                    timeout=60,
+                )
+            data = r.json() or {}
+            if r.status_code != 200 or data.get("code", 0) != 0:
+                log.warning(
+                    f"feishu upload_file err: status={r.status_code} "
+                    f"body={r.text[:200]} path={p}"
+                )
+                return None
+            return ((data.get("data") or {}).get("file_key")) or None
+        except Exception as e:
+            log.warning(f"feishu upload_file err: {e} path={p}")
+            return None
 
     def _list_projects(self) -> str:
         """列 project_base 下的直接子目录, 返回飞书 HTML 文本 (供 /projects 用)"""
@@ -705,7 +861,10 @@ class FeishuFrontend:
                     return
 
                 inject = attachment_prompt(
-                    caption, paths, default_caption="请处理这个图片"
+                    caption,
+                    paths,
+                    default_caption="请处理这个图片",
+                    backend_name=self.backend.name,
                 )
                 await ensure_binding_running(
                     self.backend, b, self.state, reason="feishu-image", wait=True
@@ -753,7 +912,10 @@ class FeishuFrontend:
                     return
 
                 inject = attachment_prompt(
-                    filename, [path], default_caption="请处理这个文件"
+                    filename,
+                    [path],
+                    default_caption="请处理这个文件",
+                    backend_name=self.backend.name,
                 )
                 await ensure_binding_running(
                     self.backend, b, self.state, reason="feishu-file", wait=True

@@ -11,18 +11,23 @@
 - 项目版本与发布治理基础:版本策略、发布流程、GitHub issue/PR 模板、CI/Dependabot 工作流、贡献/安全/支持文档。
 - 元数据一致性测试,防止 `pyproject.toml` 与 `tmuxbot.__version__` 漂移。
 - Codex backend 回归测试,覆盖按 binding `cwd` 选择 rollout jsonl 以及无匹配时不兜底到全局最新文件。
+- Codex `update_plan` 跟随消息:计划更新不再只显示 `📋 更新计划`,而是维护一条可编辑的当前计划消息,持续展示完整 step/status。
+- Codex custom tool 可见摘要:补齐 `apply_patch` 调用和 `patch_apply_end` 成功/失败摘要,让 tmux TUI 里的改文件动作同步回 TG/飞书。
 - 共享附件注入 helper,统一 IM 附件落盘路径、文件名清洗和 `@path` prompt 生成。
+- Telegram/飞书出站附件发送:AI 回复里的本地图片/文件路径会转成原生 IM 图片/文件消息,不再只把路径贴给用户。
 
 ### Changed
 
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
 - `.gitignore` 覆盖多实例部署文件:忽略 `bindings*.yaml` 和 `data*/`,同时保留已跟踪的 `bindings.example.yaml`。
 - Telegram 附件处理从仅支持图片/文档扩展到图片、文档、视频、动图、音频、语音。
+- Codex `update_plan` 从普通 tool aggregator 拆到独立 `assistant_plan` 事件,后续计划更新编辑同一条 IM 消息,避免被工具日志刷走。
 
 ### Fixed
 
 - Codex 多 binding 串线风险:Codex rollout 路径不含 cwd,旧逻辑在找不到当前 binding 的 `session_meta.payload.cwd` 时会返回全局最新 `rollout-*.jsonl`,导致多个 chat 可能同时 tail 同一个 Codex 会话。现在只接受 cwd 匹配的 rollout,找不到就返回 `None`。
 - 飞书通道补齐普通文件消息下载与注入,不再只支持图片和图文里的图片。
+- Codex `update_plan` 内容回传不完整:旧逻辑只取 `in_progress` 第一项,甚至全完成时只显示标题。现在完整回传 explanation、最多 12 条计划项及状态。
 
 ---
 

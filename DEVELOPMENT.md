@@ -30,10 +30,10 @@ tmuxbot/                       ← 仓库根
 │   ├── state.py               ← Binding + State + fire()
 │   ├── config.py              ← .env + bindings.yaml + offsets.json → State
 │   ├── utils.py               ← encode_cwd / cwidth / render_table / offsets debounced
-│   ├── attachments.py         ← IM 附件落盘、文件名清洗、@path 注入 prompt
+│   ├── attachments.py         ← IM 附件落盘、文件名清洗、@path 注入 prompt、出站路径识别
 │   ├── tmux.py                ← tmux_send_text (async) / send_key / capture / pane_command
 │   ├── picker.py              ← PICKER_BOTTOMBAR_RE / detect_idle_picker
-│   ├── jsonl.py               ← jsonl_poll_loop + on_tmux_event (含 tool_aggregator + 积压保护)
+│   ├── jsonl.py               ← jsonl_poll_loop + on_tmux_event (含 tool_aggregator / plan_messages / 积压保护)
 │   ├── heartbeat.py           ← heartbeat_typing_loop (TUI 指纹判活跃)
 │   ├── commands.py            ← capture_and_push (slash 注入 + 屏幕等待 + 结构化反馈)
 │   ├── dispatch.py            ← 共享命令分发层 (TG/飞书共用 stop/capture/text 逻辑)
@@ -44,7 +44,7 @@ tmuxbot/                       ← 仓库根
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
 │   │   └── codex.py           ← CodexBackend
 │   └── frontends/
-│       ├── base.py            ← Frontend ABC (send_html/edit_html/send_pre/send_chat_action)
+│       ├── base.py            ← Frontend ABC (send_html/edit_html/send_pre/send_image/send_file/send_chat_action)
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + ack middleware + handlers
 │       └── feishu.py          ← FeishuFrontend: lark-oapi WebSocket + interactive card
 ├── bindings.yaml              ← 绑定配置 (gitignored; 多实例 bindings*.yaml 也忽略)
@@ -176,9 +176,27 @@ TMUXBOT_DATA_DIR=/data/codex-feishu TMUXBOT_BINDINGS=/etc/tmuxbot/codex-feishu.y
 
 对应 systemd service 用不同的 unit 文件,各自覆盖 `TMUXBOT_DATA_DIR` 和 `TMUXBOT_BINDINGS` 环境变量。
 
-### 附件注入
+### 双向附件
 
 Telegram 图片/文档/视频/动图/音频/语音与飞书图片/图文/文件会先下载到本机,再以 `@path` 注入对应 tmux TUI。默认附件目录为 `/tmp/tmuxbot-attachments`,可用 `TMUXBOT_ATTACHMENT_DIR` 覆盖。飞书下载图片/文件资源需要 app 开通 `im:resource` 权限。
+
+AI CLI 回复中若出现独立一行的本地文件路径 (`@/abs/path`、`/abs/path`、`file:///abs/path`),jsonl 回推会移除该路径行并调用 frontend 原生附件接口发送:Telegram 使用 `send_photo`/`send_document`;飞书先上传 `/im/v1/images` 或 `/im/v1/files`,再以 `msg_type=image/file` 发送消息。路径识别也兼容 tmux 屏幕边框/提示符前缀,例如 `│ @/tmp/a.jpg`。飞书出站上传同样需要 `im:resource` / `im:resource:upload`,并需要消息发送权限。
+
+### Codex 计划与可见工具事件
+
+Codex `update_plan` 在 rollout jsonl 中表现为 `response_item.payload.type=function_call,name=update_plan`,完整计划在 `arguments.plan`。该事件不能只进普通 `assistant_tools` 聚合器,否则 IM 端只能看到工具日志里一闪而过的片段。当前路由:
+
+- `CodexBackend.parse_event(update_plan)` → `("assistant_plan", rendered_plan)`
+- `jsonl.on_tmux_event("assistant_plan")` → `state.plan_messages[binding.name]`
+- 第一次计划更新发送一条“当前计划”消息;后续更新用 `edit_html` 编辑同一条消息
+
+计划渲染包含 explanation、最多 12 条 step 和原始 status (`completed` / `in_progress` / `pending`)。这样 TG/飞书端始终能看到最新任务状态,用于判断当前是否仍在执行。
+
+Codex 的 FREEFORM 工具不会总是走 `function_call`。例如 `apply_patch` 会落为 `response_item.payload.type=custom_tool_call,name=apply_patch`,补丁结果另有 `event_msg.payload.type=patch_apply_end`。这些事件需要给 IM 端短摘要:
+
+- `custom_tool_call apply_patch` → `✂️ 改文件 <file>`
+- `patch_apply_end success=true` → `✓ 改文件成功 <file>`
+- `custom_tool_call_output` / 普通 `function_call_output` 默认不全文回推,避免大段命令输出刷屏;失败时才发短摘要
 
 ---
 

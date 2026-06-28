@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 
@@ -39,6 +40,20 @@ class Frontend(ABC):
         self, chat_id: int, thread_id: int | None, raw_text: str
     ) -> None:
         """发 <pre> 包裹的 raw 文本 (屏幕快照等)"""
+
+    @abstractmethod
+    async def send_image(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        """发送本地图片文件为 IM 原生图片消息。"""
+
+    @abstractmethod
+    async def send_file(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        """发送本地文件为 IM 原生文件消息。"""
 
     @abstractmethod
     async def send_chat_action(

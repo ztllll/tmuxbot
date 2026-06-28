@@ -28,6 +28,7 @@ from aiogram.types import (
     BotCommand,
     BufferedInputFile,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -41,7 +42,11 @@ from tmuxbot.command_adapter import (
     handle_tui_action,
     semantic_actions_from_body,
 )
-from tmuxbot.attachments import attachment_path, attachment_prompt
+from tmuxbot.attachments import (
+    attachment_path,
+    attachment_prompt,
+    split_outbound_attachments,
+)
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_send_key
@@ -255,9 +260,10 @@ class TelegramFrontend(Frontend):
     async def send_pre(self, chat_id: int, thread_id: int | None, raw_text: str) -> None:
         if not raw_text.strip():
             return
-        if utf16_len(raw_text) > TG_DOC_THRESHOLD:
+        clean_text, attachments = split_outbound_attachments(raw_text)
+        if clean_text.strip() and utf16_len(clean_text) > TG_DOC_THRESHOLD:
             try:
-                file = BufferedInputFile(raw_text.encode("utf-8"), filename="capture.txt")
+                file = BufferedInputFile(clean_text.encode("utf-8"), filename="capture.txt")
                 await self._tg_call(
                     lambda: self.bot.send_document(
                         chat_id, file, caption="📷 capture (long)",
@@ -267,14 +273,42 @@ class TelegramFrontend(Frontend):
                 return
             except Exception as e:
                 log.exception(f"send_document fallback: {e}")
-        escaped = html.escape(raw_text)
-        for chunk in split_for_tg(escaped, limit=TG_SPLIT - 12):
-            wrapped = f"<pre>{chunk}</pre>"
-            await self._tg_call(
-                lambda c=wrapped: self.bot.send_message(
-                    chat_id, c, message_thread_id=thread_id
+        if clean_text.strip():
+            escaped = html.escape(clean_text)
+            for chunk in split_for_tg(escaped, limit=TG_SPLIT - 12):
+                wrapped = f"<pre>{chunk}</pre>"
+                await self._tg_call(
+                    lambda c=wrapped: self.bot.send_message(
+                        chat_id, c, message_thread_id=thread_id
+                    )
                 )
+        for attachment in attachments:
+            if attachment.kind == "image":
+                await self.send_image(chat_id, thread_id, attachment.path)
+            else:
+                await self.send_file(chat_id, thread_id, attachment.path)
+
+    async def send_image(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        file = FSInputFile(path)
+        return await self._tg_call(
+            lambda: self.bot.send_photo(
+                int(chat_id), file, caption=caption, message_thread_id=thread_id
             )
+        )
+
+    async def send_file(
+        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        caption: str | None = None,
+    ) -> Any:
+        file = FSInputFile(path)
+        return await self._tg_call(
+            lambda: self.bot.send_document(
+                int(chat_id), file, caption=caption, message_thread_id=thread_id
+            )
+        )
 
     async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:
         try:
@@ -654,7 +688,10 @@ class TelegramFrontend(Frontend):
                 return
             default_caption = "请处理这个图片" if kind == "photo" else "请处理这个文件"
             inject = attachment_prompt(
-                m.caption, [save_path], default_caption=default_caption
+                m.caption,
+                [save_path],
+                default_caption=default_caption,
+                backend_name=F_.backend.name,
             )
             backend = F_.backend
             await ensure_binding_running(

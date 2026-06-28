@@ -82,9 +82,29 @@ def _format_codex_tool(name: str, args_json: str) -> str:
     if name == "update_plan":
         plan = args.get("plan") or []
         if isinstance(plan, list) and plan:
-            top = next((p.get("step", "") for p in plan if p.get("status") == "in_progress"), "")
-            if top:
-                return f"{zh} <i>{html.escape(str(top)[:80])}</i>"
+            lines = [zh]
+            explanation = str(args.get("explanation") or "").strip()
+            if explanation:
+                lines.append(f"<i>{html.escape(explanation[:300])}</i>")
+            status_label = {
+                "completed": "✓",
+                "in_progress": "→",
+                "pending": "·",
+            }
+            for item in plan[:12]:
+                if not isinstance(item, dict):
+                    continue
+                step = str(item.get("step") or "").strip()
+                status = str(item.get("status") or "").strip()
+                if not step:
+                    continue
+                mark = status_label.get(status, "·")
+                status_text = f" <code>{html.escape(status)}</code>" if status else ""
+                lines.append(f"{mark} {html.escape(step[:180])}{status_text}")
+            if len(plan) > 12:
+                lines.append(f"… 还有 {len(plan) - 12} 项")
+            if len(lines) > 1:
+                return "\n".join(lines)
         return zh
     if name in ("search", "web_search"):
         q = str(args.get("query") or args.get("q", ""))[:120]
@@ -93,6 +113,66 @@ def _format_codex_tool(name: str, args_json: str) -> str:
     k = next(iter(args))
     v = str(args[k])[:120]
     return f"{zh} <i>{html.escape(k)}={html.escape(v)}</i>"
+
+
+def _format_codex_custom_tool(name: str, input_text: str) -> str:
+    zh = CODEX_TOOL_ZH.get(name, f"🛠 {name}")
+    if name == "apply_patch":
+        files = _patch_file_names(input_text)
+        if files:
+            shown = ", ".join(html.escape(f) for f in files[:4])
+            suffix = f" +{len(files) - 4}" if len(files) > 4 else ""
+            return f"{zh} <code>{shown}{suffix}</code>"
+    first = input_text.strip().splitlines()[0] if input_text.strip() else ""
+    return f"{zh} <code>{html.escape(first[:160])}</code>" if first else zh
+
+
+def _format_patch_apply_end(payload: dict) -> str:
+    success = bool(payload.get("success"))
+    text = "\n".join(
+        str(payload.get(k) or "").strip()
+        for k in ("stdout", "stderr")
+        if payload.get(k)
+    )
+    files = _patch_result_file_names(text)
+    if files:
+        shown = ", ".join(html.escape(f) for f in files[:4])
+        suffix = f" +{len(files) - 4}" if len(files) > 4 else ""
+        target = f" <code>{shown}{suffix}</code>"
+    else:
+        target = ""
+    if success:
+        return f"✓ 改文件成功{target}"
+    detail = text.strip().splitlines()[0] if text.strip() else "apply_patch failed"
+    return f"⚠️ 改文件失败{target}\n<code>{html.escape(detail[:220])}</code>"
+
+
+def _patch_file_names(patch: str) -> list[str]:
+    names: list[str] = []
+    for line in patch.splitlines():
+        m = re.match(r"\*\*\* (?:Add|Update|Delete) File: (.+)", line.strip())
+        if m:
+            names.append(m.group(1).strip())
+    return _unique(names)
+
+
+def _patch_result_file_names(text: str) -> list[str]:
+    names: list[str] = []
+    for line in text.splitlines():
+        m = re.match(r"\s*(?:M|A|D)\s+(.+)", line)
+        if m:
+            names.append(m.group(1).strip())
+    return _unique(names)
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
 
 
 # ────────── codex TUI 活跃指纹 ──────────
@@ -216,6 +296,8 @@ class CodexBackend(Backend):
             return []
         if t == "event_msg":
             pt = p.get("type")
+            if pt == "patch_apply_end":
+                return [("assistant_tools", _format_patch_apply_end(p))]
             # 这些都跟 response_item 重复或纯 metadata, 跳过
             if pt in ("task_started", "task_complete", "token_count",
                       "user_message", "agent_message", "agent_message_delta",
@@ -262,7 +344,23 @@ class CodexBackend(Backend):
             if pt == "function_call":
                 name = p.get("name", "?")
                 args_json = p.get("arguments", "")
-                return [("assistant_tools", _format_codex_tool(name, args_json))]
+                kind = "assistant_plan" if name == "update_plan" else "assistant_tools"
+                return [(kind, _format_codex_tool(name, args_json))]
+            if pt == "custom_tool_call":
+                name = p.get("name", "?")
+                input_text = str(p.get("input") or "")
+                return [("assistant_tools", _format_codex_custom_tool(name, input_text))]
+            if pt == "custom_tool_call_output":
+                output = str(p.get("output") or "")
+                if re.search(r"failed|error|traceback", output, re.I):
+                    detail = output.strip().splitlines()[0] if output.strip() else "tool failed"
+                    return [
+                        (
+                            "assistant_tools",
+                            f"⚠️ 工具失败 <code>{html.escape(detail[:220])}</code>",
+                        )
+                    ]
+                return []
             if pt == "function_call_output":
                 return []
             return []

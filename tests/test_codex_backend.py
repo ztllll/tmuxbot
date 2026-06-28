@@ -57,3 +57,76 @@ def test_codex_find_active_jsonl_does_not_fallback_to_global_latest(tmp_path, mo
     monkeypatch.setattr("tmuxbot.backends.codex.CODEX_SESSIONS_DIR", sessions)
 
     assert CodexBackend().find_active_jsonl(_binding(tmp_path)) is None
+
+
+def test_codex_update_plan_function_call_forwards_full_plan():
+    line = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "update_plan",
+                "arguments": json.dumps(
+                    {
+                        "explanation": "先复现，再修复。",
+                        "plan": [
+                            {"step": "复现 TG/飞书漏消息", "status": "completed"},
+                            {"step": "补 Codex 计划解析", "status": "in_progress"},
+                            {"step": "部署验证", "status": "pending"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = CodexBackend().parse_event(line)
+
+    assert len(events) == 1
+    kind, body = events[0]
+    assert kind == "assistant_plan"
+    assert "先复现，再修复。" in body
+    assert "复现 TG/飞书漏消息" in body
+    assert "补 Codex 计划解析" in body
+    assert "部署验证" in body
+    assert "completed" in body
+    assert "in_progress" in body
+    assert "pending" in body
+
+
+def test_codex_custom_apply_patch_call_is_forwarded():
+    line = json.dumps(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** Update File: app.py\n@@\n-x\n+y\n*** End Patch",
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = CodexBackend().parse_event(line)
+
+    assert events == [("assistant_tools", "✂️ 改文件 <code>app.py</code>")]
+
+
+def test_codex_patch_apply_end_event_is_forwarded():
+    line = json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "patch_apply_end",
+                "success": True,
+                "stdout": "Success. Updated the following files:\nM app.py\n",
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = CodexBackend().parse_event(line)
+
+    assert events == [("assistant_tools", "✓ 改文件成功 <code>app.py</code>")]

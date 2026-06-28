@@ -63,6 +63,9 @@ class State:
         # 工具调用聚合器: binding.name → {msg_id, content_lines: list[str], last_ts, target}
         # tool_use/thinking 类事件累计到一条可编辑消息, text 事件触发"封闭"并发新消息
         self.tool_aggregator: dict[str, dict] = {}
+        # 最新计划消息: binding.name → {msg_id, chat_id, content}
+        # Codex update_plan 更新时编辑同一条消息, 方便 IM 端持续观察任务状态。
+        self.plan_messages: dict[str, dict] = {}
         # ensure_running 串行锁: 避免消息入口和后台巡检同时拉起同一个 pane
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction
