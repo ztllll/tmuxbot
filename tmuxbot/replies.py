@@ -36,7 +36,7 @@ def render_assistant_reply(
     body = format_markdownish_html(body)
 
     header = f"💬 <b>回复</b> · <code>{html.escape(b.name)}</code>"
-    footer = f"<i>屏幕底部: {html.escape(screen_footer)}</i>" if screen_footer else ""
+    footer = f"<i>{html.escape(screen_footer)}</i>" if screen_footer else ""
     if not footer:
         return AssistantReply(chat_html=f"{header}\n\n{body}", full_text=full_text)
     return AssistantReply(chat_html=f"{header}\n\n{body}\n\n{footer}", full_text=full_text)

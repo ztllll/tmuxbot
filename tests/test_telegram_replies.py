@@ -32,6 +32,7 @@ def test_render_assistant_reply_adds_context_header_and_footer(tmp_path):
     assert '<pre><code class="language-python">print(1)</code></pre>' in result.chat_html
     assert "```python" not in result.chat_html
     assert "• Working (9s • esc to interrupt)" in result.chat_html
+    assert "屏幕底部:" not in result.chat_html
     assert "backend=codex" not in result.chat_html
     assert "tmux=codex-tmuxbot:0.0" not in result.chat_html
     assert result.full_text is None
