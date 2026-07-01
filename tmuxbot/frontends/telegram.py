@@ -49,6 +49,7 @@ from tmuxbot.attachments import (
 )
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
+from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
 from tmuxbot.tmux import tmux_capture, tmux_send_key
 from tmuxbot.utils import render_table, utf16_len
 
@@ -61,6 +62,7 @@ log = logging.getLogger("tmuxbot")
 # ────────── 常量 ──────────
 TG_SPLIT = 3800
 TG_DOC_THRESHOLD = 8000
+TG_REPLY_FULL_OUTPUT_THRESHOLD = 5000
 MAX_FILE_MB = 19
 ACK_REACTION = "👀"
 UNKNOWN_CHAT_INIT_GRACE_SECONDS = 60.0
@@ -139,6 +141,11 @@ def _message_attachment(m: Message) -> tuple[str, str, int | None, str] | None:
     return None
 
 
+def safe_filename_fragment(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
+    return cleaned or "reply"
+
+
 # ────────── TelegramFrontend ──────────
 class TelegramFrontend(Frontend):
     """Telegram bot 前端。装配 aiogram Bot + Dispatcher, 注册命令/handlers。"""
@@ -204,6 +211,71 @@ class TelegramFrontend(Frontend):
             f"{body}\n\n"
             "用法: <code>/init &lt;目录名&gt;</code> 绑定; <code>/init</code> 自动用群名新建"
         )
+
+    async def send_status_summary(
+        self, b: "Binding", chat_id: int | str, thread_id: int | None
+    ) -> None:
+        from tmuxbot.commands import inject_slash_and_capture
+        from tmuxbot.tmux import tmux_has_session, tmux_pane_command
+
+        backend = self.backend
+        alive = tmux_has_session(b.tmux_session)
+        pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
+        screen_footer = screen_footer_from_capture(tmux_capture(b.tmux_target, 12)) or "-"
+        conn_rows = [
+            ["tmux", "✅ 正常" if alive else "❌ 断开", b.tmux_target],
+            ["cwd", "✅", str(b.cwd)],
+            ["session", "✅ 活跃" if b.last_session_id else "—", b.last_session_id or "-"],
+            ["backend", "🔌", b.backend],
+            ["pane cmd", "·", pane_cmd],
+            ["屏幕底部", "·", screen_footer],
+        ]
+        conn_table = render_table(["项目", "状态", "详情"], conn_rows)
+
+        ctx_summary: str | None = None
+        try:
+            ctx_raw = await inject_slash_and_capture(b, "/context")
+            from tmuxbot.backends.claude_code import parse_context as _pc
+            ctx_summary = _pc(ctx_raw) if b.backend == "claude_code" else None
+        except Exception:
+            log.exception("inject /context err")
+
+        usage_summary: str | None = None
+        try:
+            usage_raw = await inject_slash_and_capture(b, "/usage")
+            from tmuxbot.backends.claude_code import parse_cost as _pcost
+            usage_summary = _pcost(usage_raw) if b.backend == "claude_code" else None
+        except Exception:
+            log.exception("inject /usage err")
+
+        jl = backend.find_active_jsonl(b)
+        stats = backend.aggregate_usage(jl, last_n=500) if jl else None
+
+        parts = [
+            f"ℹ️ <b>综合状态</b>  · <code>{html.escape(b.name)}</code>",
+            "",
+            "🔌 <b>一、连接状态</b>",
+            f"<pre>{html.escape(conn_table)}</pre>",
+        ]
+        if ctx_summary:
+            parts += ["", "📊 <b>二、上下文用量</b>", ctx_summary]
+        if usage_summary:
+            parts += ["", "💰 <b>三、用量与花费</b>", usage_summary]
+        if stats:
+            sess_rows = [
+                ["📥 输入 token", f"{stats['input']:,}"],
+                ["📤 输出 token", f"{stats['output']:,}"],
+                ["📦 缓存创建", f"{stats['cache_create']:,}"],
+                ["📦 缓存命中", f"{stats['cache_read']:,}"],
+                ["🎯 缓存命中率", f"{stats['cache_hit_rate']*100:.1f}%"],
+                ["💬 助手回复", f"{stats['count']} 条"],
+            ]
+            parts += [
+                "", "📈 <b>四、本会话累计 (jsonl)</b>",
+                f"<pre>{html.escape(render_table(['项目', '值'], sess_rows))}</pre>",
+            ]
+
+        await self.send_html(chat_id, thread_id, "\n".join(parts))
 
     # ────────── retry / 出站 ──────────
     async def _tg_call(self, fn: Callable, max_retries: int = 4) -> Any:
@@ -309,6 +381,59 @@ class TelegramFrontend(Frontend):
                 int(chat_id), file, caption=caption, message_thread_id=thread_id
             )
         )
+
+    async def send_assistant_reply(self, b: "Binding", html_text: str, attachments=None) -> Any:
+        screen_footer = screen_footer_from_capture(tmux_capture(b.tmux_target, 12))
+        rendered = render_assistant_reply(
+            b,
+            html_text,
+            full_output_threshold=TG_REPLY_FULL_OUTPUT_THRESHOLD,
+            screen_footer=screen_footer,
+        )
+        token = binding_token(b.name)
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="屏幕", callback_data=f"tui:{token}:refresh"),
+                    InlineKeyboardButton(text="状态", callback_data=f"tui:{token}:status"),
+                    InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:esc"),
+                    InlineKeyboardButton(text="强制中断", callback_data=f"tui:{token}:ctrl_c"),
+                ]
+            ]
+        )
+        first_msg = None
+        for chunk in split_for_tg(rendered.chat_html):
+            msg = await self._tg_call(
+                lambda c=chunk: self.bot.send_message(
+                    int(b.chat_id),
+                    c,
+                    message_thread_id=b.thread_id,
+                    reply_markup=markup if first_msg is None else None,
+                )
+            )
+            if first_msg is None:
+                first_msg = msg
+
+        if rendered.full_text:
+            file = BufferedInputFile(
+                rendered.full_text.encode("utf-8"),
+                filename=f"assistant-{safe_filename_fragment(b.name)}.txt",
+            )
+            await self._tg_call(
+                lambda: self.bot.send_document(
+                    int(b.chat_id),
+                    file,
+                    caption="完整输出",
+                    message_thread_id=b.thread_id,
+                )
+            )
+
+        for attachment in attachments or []:
+            if attachment.kind == "image":
+                await self.send_image(b.chat_id, b.thread_id, attachment.path)
+            else:
+                await self.send_file(b.chat_id, b.thread_id, attachment.path)
+        return first_msg
 
     async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:
         try:
@@ -500,75 +625,13 @@ class TelegramFrontend(Frontend):
         # ─── /status (跟 backend 紧耦合, 走 inject_slash_and_capture) ─────────
         @dp.message(Command("status"))
         async def cmd_status(m: Message):
-            from tmuxbot.commands import inject_slash_and_capture
-
             if not F_._acl_ok(m):
                 return
             b = F_.find_binding(*source_key(m))
             # ACL 已保证 b 非 None (未配置 source 在 _acl_ok 就已拒)
             assert b is not None
-            backend = F_.backend
             notice = await m.reply("⏳ 抓综合状态…(注入 /context + /usage,可能短暂中断生成)")
-
-            # § 1 连接
-            from tmuxbot.tmux import tmux_has_session, tmux_pane_command
-            alive = tmux_has_session(b.tmux_session)
-            pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
-            conn_rows = [
-                ["tmux", "✅ 正常" if alive else "❌ 断开", b.tmux_target],
-                ["cwd", "✅", str(b.cwd)],
-                ["session", "✅ 活跃" if b.last_session_id else "—", b.last_session_id or "-"],
-                ["backend", "🔌", b.backend],
-                ["pane cmd", "·", pane_cmd],
-            ]
-            conn_table = render_table(["项目", "状态", "详情"], conn_rows)
-
-            # § 2 + § 3 注入 /context + /usage 抓屏
-            ctx_summary: str | None = None
-            try:
-                ctx_raw = await inject_slash_and_capture(b, "/context")
-                from tmuxbot.backends.claude_code import parse_context as _pc
-                ctx_summary = _pc(ctx_raw) if b.backend == "claude_code" else None
-            except Exception:
-                log.exception("inject /context err")
-
-            usage_summary: str | None = None
-            try:
-                usage_raw = await inject_slash_and_capture(b, "/usage")
-                from tmuxbot.backends.claude_code import parse_cost as _pcost
-                usage_summary = _pcost(usage_raw) if b.backend == "claude_code" else None
-            except Exception:
-                log.exception("inject /usage err")
-
-            # § 4 jsonl 累计
-            jl = backend.find_active_jsonl(b)
-            stats = backend.aggregate_usage(jl, last_n=500) if jl else None
-
-            parts = [
-                f"ℹ️ <b>综合状态</b>  · <code>{html.escape(b.name)}</code>",
-                "",
-                "🔌 <b>一、连接状态</b>",
-                f"<pre>{html.escape(conn_table)}</pre>",
-            ]
-            if ctx_summary:
-                parts += ["", "📊 <b>二、上下文用量</b>", ctx_summary]
-            if usage_summary:
-                parts += ["", "💰 <b>三、用量与花费</b>", usage_summary]
-            if stats:
-                sess_rows = [
-                    ["📥 输入 token", f"{stats['input']:,}"],
-                    ["📤 输出 token", f"{stats['output']:,}"],
-                    ["📦 缓存创建", f"{stats['cache_create']:,}"],
-                    ["📦 缓存命中", f"{stats['cache_read']:,}"],
-                    ["🎯 缓存命中率", f"{stats['cache_hit_rate']*100:.1f}%"],
-                    ["💬 助手回复", f"{stats['count']} 条"],
-                ]
-                parts += [
-                    "", "📈 <b>四、本会话累计 (jsonl)</b>",
-                    f"<pre>{html.escape(render_table(['项目', '值'], sess_rows))}</pre>",
-                ]
-
-            await m.reply("\n".join(parts))
+            await F_.send_status_summary(b, m.chat.id, thread_id_of(m))
             try:
                 await notice.delete()
             except Exception:
@@ -947,6 +1010,10 @@ class TelegramFrontend(Frontend):
             if is_semantic:
                 await handle_semantic_action(
                     F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                )
+            elif action == "status":
+                await F_.send_status_summary(
+                    b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
                 )
             else:
                 await handle_tui_action(

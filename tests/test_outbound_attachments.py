@@ -31,6 +31,19 @@ class FakeFrontend:
         self.sent.append(("edit", chat_id, message_id, html_text))
 
 
+class EnhancedFakeFrontend(FakeFrontend):
+    async def send_assistant_reply(self, binding, html_text, attachments=None):
+        self.sent.append(
+            (
+                "assistant_reply",
+                binding.chat_id,
+                binding.thread_id,
+                html_text,
+                tuple(Path(a.path) for a in attachments or []),
+            )
+        )
+
+
 class FakeBackend:
     def read_tasks(self, binding):
         return []
@@ -72,6 +85,31 @@ def test_assistant_text_sends_local_paths_as_real_attachments(tmp_path):
             ("html", 123, None, "结果如下"),
             ("image", 123, None, image, None),
             ("file", 123, None, data, None),
+        ]
+
+    asyncio.run(run())
+
+
+def test_assistant_text_uses_enhanced_reply_sender_when_available(tmp_path):
+    async def run():
+        image = tmp_path / "result.jpg"
+        image.write_bytes(b"jpg")
+
+        frontend = EnhancedFakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+
+        await on_tmux_event(
+            b,
+            "assistant_text",
+            f"结果如下\n@{image}",
+            frontend,
+            state,
+            FakeBackend(),
+        )
+
+        assert frontend.sent == [
+            ("assistant_reply", 123, None, "结果如下", (image,)),
         ]
 
     asyncio.run(run())
@@ -134,6 +172,57 @@ def test_assistant_plan_edits_latest_plan_message(tmp_path):
                 101,
                 "📋 当前计划\n✓ 第一步 <code>completed</code>\n→ 第二步 <code>in_progress</code>",
             ),
+        ]
+
+    asyncio.run(run())
+
+
+def test_live_text_sends_early_and_final_duplicate_is_skipped(tmp_path):
+    async def run():
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(
+            b,
+            "assistant_live_text",
+            "我先检查配置，再给结论。",
+            frontend,
+            state,
+            backend,
+        )
+        await on_tmux_event(
+            b,
+            "assistant_text",
+            "我先检查配置，再给结论。",
+            frontend,
+            state,
+            backend,
+        )
+
+        assert frontend.sent == [
+            ("html", 123, None, "我先检查配置，再给结论。"),
+        ]
+
+    asyncio.run(run())
+
+
+def test_text_delta_stream_edits_one_reply_and_finalizes(tmp_path):
+    async def run():
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_text_delta", "正在", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text_delta", "检查", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "正在检查配置。", frontend, state, backend)
+
+        assert frontend.sent == [
+            ("html", 123, None, "正在"),
+            ("edit", 123, 101, "正在检查"),
+            ("edit", 123, 101, "正在检查配置。"),
         ]
 
     asyncio.run(run())

@@ -72,3 +72,15 @@ def test_split_outbound_attachments_recognizes_tmux_guttered_path_lines(tmp_path
 
     assert text == "screen:\n› done"
     assert [(a.path, a.kind) for a in attachments] == [(image, "image")]
+
+
+def test_split_outbound_attachments_recognizes_markdown_file_link(tmp_path):
+    final = tmp_path / "终稿.md"
+    final.write_text("# done\n", encoding="utf-8")
+
+    text, attachments = split_outbound_attachments(
+        f"这是终稿文件路径:\n\n[终稿.md](<{final}>)"
+    )
+
+    assert text == "这是终稿文件路径:"
+    assert [(a.path, a.kind) for a in attachments] == [(final, "file")]

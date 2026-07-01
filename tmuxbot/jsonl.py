@@ -200,14 +200,29 @@ async def on_tmux_event(
         await _send_or_edit_plan(frontend, b, state, body)
         return
 
+    if kind == "assistant_live_text":
+        log.info(f"[{b.name}] assistant live text len={len(body)}")
+        await _send_live_text(frontend, b, state, body)
+        return
+
+    if kind == "assistant_text_delta":
+        log.info(f"[{b.name}] assistant text delta len={len(body)}")
+        await _append_reply_stream(frontend, b, state, body)
+        return
+
     if kind == "assistant_text":
+        log.info(f"[{b.name}] assistant final text len={len(body)}")
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
         # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
         footer = render_task_footer(backend.read_tasks(b))
         out = f"{text}\n\n{footer}" if footer else text
         if out.strip():
-            await _send_html_with_outbound_attachments(frontend, b, out)
+            if await _finalize_reply_stream(frontend, b, state, out):
+                return
+            if _consume_recent_live_text(state, b, out):
+                return
+            await _send_assistant_reply(frontend, b, out)
         return
 
     if kind != "assistant_tools":
@@ -255,6 +270,96 @@ async def _send_html_with_outbound_attachments(
     if clean_text.strip():
         await frontend.send_html(b.chat_id, b.thread_id, clean_text)
     await _send_outbound_attachments(frontend, b, attachments)
+
+
+async def _send_assistant_reply(
+    frontend: "Frontend", b: "Binding", html_text: str,
+) -> None:
+    clean_text, attachments = split_outbound_attachments(html_text)
+    send_enhanced = getattr(frontend, "send_assistant_reply", None)
+    if callable(send_enhanced):
+        await send_enhanced(b, clean_text, attachments)
+        return
+    if clean_text.strip():
+        await frontend.send_html(b.chat_id, b.thread_id, clean_text)
+    await _send_outbound_attachments(frontend, b, attachments)
+
+
+async def _send_live_text(
+    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+) -> None:
+    await _send_assistant_reply(frontend, b, html_text)
+    _remember_live_text(state, b, html_text)
+
+
+async def _append_reply_stream(
+    frontend: "Frontend", b: "Binding", state: "State", delta_html: str,
+) -> None:
+    streams = getattr(state, "reply_streams", None)
+    if streams is None:
+        streams = {}
+        setattr(state, "reply_streams", streams)
+
+    current = streams.get(b.name)
+    if current is None:
+        msg = await frontend.send_html(b.chat_id, b.thread_id, delta_html)
+        if msg is not None and hasattr(msg, "message_id"):
+            streams[b.name] = {
+                "msg_id": msg.message_id,
+                "chat_id": b.chat_id,
+                "content": delta_html,
+            }
+        return
+
+    current["content"] = current.get("content", "") + delta_html
+    await frontend.edit_html(current["chat_id"], current["msg_id"], current["content"])
+
+
+async def _finalize_reply_stream(
+    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+) -> bool:
+    streams = getattr(state, "reply_streams", None)
+    if not streams:
+        return False
+    current = streams.pop(b.name, None)
+    if not current:
+        return False
+    try:
+        if current.get("content") != html_text:
+            await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
+        _remember_live_text(state, b, html_text)
+        return True
+    except Exception:
+        log.exception(f"[{b.name}] finalize reply stream err; sending final text")
+        return False
+
+
+def _remember_live_text(state: "State", b: "Binding", html_text: str) -> None:
+    recent = getattr(state, "live_text_recent", None)
+    if recent is None:
+        recent = {}
+        setattr(state, "live_text_recent", recent)
+    items = recent.setdefault(b.name, [])
+    normalized = _normalize_live_text(html_text)
+    if normalized and normalized not in items:
+        items.append(normalized)
+        del items[:-20]
+
+
+def _consume_recent_live_text(state: "State", b: "Binding", html_text: str) -> bool:
+    recent = getattr(state, "live_text_recent", None)
+    if not recent:
+        return False
+    items = recent.get(b.name) or []
+    normalized = _normalize_live_text(html_text)
+    if normalized not in items:
+        return False
+    items.remove(normalized)
+    return True
+
+
+def _normalize_live_text(html_text: str) -> str:
+    return "\n".join(line.rstrip() for line in html_text.strip().splitlines())
 
 
 async def _send_or_edit_plan(

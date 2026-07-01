@@ -66,6 +66,10 @@ class State:
         # 最新计划消息: binding.name → {msg_id, chat_id, content}
         # Codex update_plan 更新时编辑同一条消息, 方便 IM 端持续观察任务状态。
         self.plan_messages: dict[str, dict] = {}
+        # 正文准流式消息: binding.name → {msg_id, chat_id, content}
+        self.reply_streams: dict[str, dict] = {}
+        # 已提前推送的 Codex live 文本,用于跳过随后重复落盘的最终 message。
+        self.live_text_recent: dict[str, list[str]] = {}
         # ensure_running 串行锁: 避免消息入口和后台巡检同时拉起同一个 pane
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction

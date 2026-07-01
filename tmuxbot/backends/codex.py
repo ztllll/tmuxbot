@@ -298,9 +298,24 @@ class CodexBackend(Backend):
             pt = p.get("type")
             if pt == "patch_apply_end":
                 return [("assistant_tools", _format_patch_apply_end(p))]
+            if pt == "agent_message":
+                message = str(p.get("message") or "").strip()
+                if message:
+                    return [("assistant_live_text", html.escape(message))]
+                return []
+            if pt == "agent_message_delta":
+                delta = str(
+                    p.get("delta")
+                    or p.get("message")
+                    or p.get("text")
+                    or ""
+                )
+                if delta:
+                    return [("assistant_text_delta", html.escape(delta))]
+                return []
             # 这些都跟 response_item 重复或纯 metadata, 跳过
             if pt in ("task_started", "task_complete", "token_count",
-                      "user_message", "agent_message", "agent_message_delta",
+                      "user_message",
                       "agent_reasoning_delta", "agent_reasoning"):
                 return []
             return []

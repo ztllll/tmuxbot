@@ -157,6 +157,7 @@ _TUI_ACTIONS: dict[str, tuple[str | None, str]] = {
     "tab": ("Tab", "Tab"),
     "space": ("Space", "Space"),
     "esc": ("Escape", "Escape"),
+    "ctrl_c": ("C-c", "Ctrl-C"),
     "refresh": (None, "Refresh"),
 }
 

@@ -130,3 +130,38 @@ def test_codex_patch_apply_end_event_is_forwarded():
     events = CodexBackend().parse_event(line)
 
     assert events == [("assistant_tools", "✓ 改文件成功 <code>app.py</code>")]
+
+
+def test_codex_agent_message_is_forwarded_as_live_text():
+    line = json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": "我先检查配置，再给结论。",
+                "phase": "commentary",
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = CodexBackend().parse_event(line)
+
+    assert events == [("assistant_live_text", "我先检查配置，再给结论。")]
+
+
+def test_codex_agent_message_delta_is_forwarded_as_text_delta():
+    line = json.dumps(
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message_delta",
+                "delta": "正在读取",
+            },
+        },
+        ensure_ascii=False,
+    )
+
+    events = CodexBackend().parse_event(line)
+
+    assert events == [("assistant_text_delta", "正在读取")]

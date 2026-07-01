@@ -152,6 +152,9 @@ def _candidate_path(text: str) -> str | None:
     s = re.sub(r"^[\s│┃║▌▐▏▕┆┊|>›»]+", "", s).strip()
     s = re.sub(r"^(?:[-*]\s+|\d+[.)]\s+)", "", s)
     s = s.strip().strip("`'\"")
+    markdown_link = re.fullmatch(r"\[[^\]]+\]\(\s*<?([^<>\s][^<>]*?)>?\s*\)", s)
+    if markdown_link:
+        s = markdown_link.group(1).strip()
     if s.startswith("@file://"):
         s = s[1:]
     if s.startswith("file://"):
