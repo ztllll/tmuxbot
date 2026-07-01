@@ -46,9 +46,20 @@ def screen_footer_from_capture(raw: str) -> str | None:
     clean = strip_decorations(raw)
     for line in reversed(clean.splitlines()):
         line = line.strip()
-        if line:
+        if line and not _is_uninformative_footer_line(line):
             return line[:240]
     return None
+
+
+def _is_uninformative_footer_line(line: str) -> bool:
+    compact = line.strip()
+    if not compact:
+        return True
+    if re.fullmatch(r"[›>❯»]\s*", compact):
+        return True
+    if re.fullmatch(r"[│┃┆┊╎╏╭╮╰╯─━═╱╲╳+|\-\s]+", compact):
+        return True
+    return False
 
 
 def html_to_plain_text(html_text: str) -> str:

@@ -277,6 +277,49 @@ class TelegramFrontend(Frontend):
 
         await self.send_html(chat_id, thread_id, "\n".join(parts))
 
+    async def send_light_status_summary(
+        self, b: "Binding", chat_id: int | str, thread_id: int | None
+    ) -> None:
+        from tmuxbot.tmux import _is_tui_busy, tmux_has_session, tmux_pane_command
+
+        alive = tmux_has_session(b.tmux_session)
+        raw = tmux_capture(b.tmux_target, 12) if alive else ""
+        pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
+        screen_footer = screen_footer_from_capture(raw) or "-"
+        rows = [
+            ["tmux", "正常" if alive else "断开", b.tmux_target],
+            ["状态", "工作中" if alive and _is_tui_busy(raw) else "空闲", screen_footer],
+            ["pane", pane_cmd, str(b.cwd)],
+        ]
+        body = "\n".join(
+            [
+                f"ℹ️ <b>轻状态</b> · <code>{html.escape(b.name)}</code>",
+                f"<pre>{html.escape(render_table(['项目', '状态', '详情'], rows))}</pre>",
+            ]
+        )
+        await self.send_html(chat_id, thread_id, body)
+
+    async def send_interrupt_confirmation(
+        self, b: "Binding", chat_id: int | str, thread_id: int | None
+    ) -> Any:
+        token = binding_token(b.name)
+        markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="确认中断", callback_data=f"tui:{token}:ctrl_c"),
+                    InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:refresh"),
+                ]
+            ]
+        )
+        return await self._tg_call(
+            lambda: self.bot.send_message(
+                int(chat_id),
+                "确认发送 Ctrl-C 强制中断当前 TUI？",
+                message_thread_id=thread_id,
+                reply_markup=markup,
+            )
+        )
+
     # ────────── retry / 出站 ──────────
     async def _tg_call(self, fn: Callable, max_retries: int = 4) -> Any:
         for i in range(max_retries):
@@ -397,7 +440,7 @@ class TelegramFrontend(Frontend):
                     InlineKeyboardButton(text="屏幕", callback_data=f"tui:{token}:refresh"),
                     InlineKeyboardButton(text="状态", callback_data=f"tui:{token}:status"),
                     InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:esc"),
-                    InlineKeyboardButton(text="强制中断", callback_data=f"tui:{token}:ctrl_c"),
+                    InlineKeyboardButton(text="强制中断", callback_data=f"tui:{token}:confirm_ctrl_c"),
                 ]
             ]
         )
@@ -1012,7 +1055,11 @@ class TelegramFrontend(Frontend):
                     F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
                 )
             elif action == "status":
-                await F_.send_status_summary(
+                await F_.send_light_status_summary(
+                    b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
+                )
+            elif action == "confirm_ctrl_c":
+                await F_.send_interrupt_confirmation(
                     b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
                 )
             else:
