@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -27,10 +28,15 @@ from typing import Any, TYPE_CHECKING
 from tmuxbot.attachments import (
     attachment_path,
     attachment_prompt,
+    is_image_file,
     split_outbound_attachments,
 )
 from tmuxbot.addressing import message_is_addressed_to_bot
+from tmuxbot.core.capabilities import ChannelCapabilities
+from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
+from tmuxbot.replies import render_assistant_reply
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -162,10 +168,22 @@ def feishu_message_addresses_bot(
 
 # ────────── FeishuFrontend ──────────
 
-class FeishuFrontend:
+class FeishuFrontend(Frontend):
     """飞书 bot 前端。通过 lark-oapi WebSocket 长连接收发消息。"""
 
     name = "feishu"
+    capabilities = ChannelCapabilities(
+        name="feishu",
+        supports_edit=True,
+        supports_actions=False,
+        supports_threads=False,
+        supports_cards=True,
+        supports_images=True,
+        supports_files=True,
+        supports_typing=False,
+        supports_replies=True,
+        max_text_length=30_000,
+    )
 
     def __init__(
         self,
@@ -409,6 +427,49 @@ class FeishuFrontend:
             return None
         self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
+
+    async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:
+        footer_text = self.backend.format_status_footer(envelope.footer)
+        rendered = render_assistant_reply(
+            b,
+            envelope,
+            full_output_threshold=self.capabilities.max_text_length,
+            footer_text=footer_text,
+        )
+        md = _html_to_feishu_md(rendered.chat_html)
+        if envelope.actions:
+            command_labels = {
+                "screen": "/screen",
+                "status": "/status",
+                "cancel": "/esc",
+                "interrupt": "/cc",
+            }
+            commands = [command_labels[a] for a in envelope.actions if a in command_labels]
+            if commands:
+                md += "\n\n操作: " + " · ".join(commands)
+        message_id = await asyncio.to_thread(self._send_card_sync, str(b.chat_id), md)
+        if message_id is None:
+            return None
+        self._remember_outbound_message(message_id)
+        first_msg = _make_fake_msg(message_id)
+
+        if rendered.full_text:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".txt", delete=False
+            ) as handle:
+                handle.write(rendered.full_text)
+                full_path = Path(handle.name)
+            try:
+                await self.send_file(b.chat_id, b.thread_id, full_path, caption="完整输出")
+            finally:
+                full_path.unlink(missing_ok=True)
+
+        for attachment in envelope.attachments:
+            if is_image_file(attachment):
+                await self.send_image(b.chat_id, b.thread_id, attachment)
+            else:
+                await self.send_file(b.chat_id, b.thread_id, attachment)
+        return first_msg
 
     async def send_chat_action(self, chat_id: int | str, thread_id: int | None, action: str) -> None:
         """飞书无 typing 状态 API → no-op"""

@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot.jsonl import on_tmux_event
+from tmuxbot.attachments import is_image_file
 from tmuxbot.state import Binding
 
 
@@ -30,16 +31,25 @@ class FakeFrontend:
     async def edit_html(self, chat_id, message_id, html_text):
         self.sent.append(("edit", chat_id, message_id, html_text))
 
+    async def send_assistant_reply(self, binding, envelope):
+        if envelope.body.strip():
+            await self.send_html(binding.chat_id, binding.thread_id, envelope.body)
+        for path in envelope.attachments:
+            if is_image_file(path):
+                await self.send_image(binding.chat_id, binding.thread_id, path)
+            else:
+                await self.send_file(binding.chat_id, binding.thread_id, path)
+
 
 class EnhancedFakeFrontend(FakeFrontend):
-    async def send_assistant_reply(self, binding, html_text, attachments=None):
+    async def send_assistant_reply(self, binding, envelope):
         self.sent.append(
             (
                 "assistant_reply",
                 binding.chat_id,
                 binding.thread_id,
-                html_text,
-                tuple(Path(a.path) for a in attachments or []),
+                envelope.body,
+                tuple(Path(path) for path in envelope.attachments),
             )
         )
 
@@ -47,6 +57,9 @@ class EnhancedFakeFrontend(FakeFrontend):
 class FakeBackend:
     def read_tasks(self, binding):
         return []
+
+    def parse_terminal_status(self, pane):
+        return None
 
 
 def binding(tmp_path):

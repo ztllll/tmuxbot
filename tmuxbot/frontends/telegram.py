@@ -45,9 +45,12 @@ from tmuxbot.command_adapter import (
 from tmuxbot.attachments import (
     attachment_path,
     attachment_prompt,
+    is_image_file,
     split_outbound_attachments,
 )
 from tmuxbot.addressing import message_is_addressed_to_bot
+from tmuxbot.core.capabilities import ChannelCapabilities
+from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
@@ -189,6 +192,18 @@ class TelegramFrontend(Frontend):
     """Telegram bot 前端。装配 aiogram Bot + Dispatcher, 注册命令/handlers。"""
 
     name = "telegram"
+    capabilities = ChannelCapabilities(
+        name="telegram",
+        supports_edit=True,
+        supports_actions=True,
+        supports_threads=True,
+        supports_cards=True,
+        supports_images=True,
+        supports_files=True,
+        supports_typing=True,
+        supports_replies=True,
+        max_text_length=4096,
+    )
 
     def __init__(
         self,
@@ -466,25 +481,25 @@ class TelegramFrontend(Frontend):
             )
         )
 
-    async def send_assistant_reply(self, b: "Binding", html_text: str, attachments=None) -> Any:
-        screen_footer = screen_footer_from_capture(tmux_capture(b.tmux_target, 12))
+    async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:
+        footer_text = self.backend.format_status_footer(envelope.footer)
         rendered = render_assistant_reply(
             b,
-            html_text,
+            envelope,
             full_output_threshold=TG_REPLY_FULL_OUTPUT_THRESHOLD,
-            screen_footer=screen_footer,
+            footer_text=footer_text,
         )
         token = binding_token(b.name)
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="屏幕", callback_data=f"tui:{token}:refresh"),
-                    InlineKeyboardButton(text="状态", callback_data=f"tui:{token}:status"),
-                    InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:esc"),
-                    InlineKeyboardButton(text="强制中断", callback_data=f"tui:{token}:confirm_ctrl_c"),
-                ]
-            ]
-        )
+        action_buttons = {
+            "screen": InlineKeyboardButton(text="屏幕", callback_data=f"tui:{token}:refresh"),
+            "status": InlineKeyboardButton(text="状态", callback_data=f"tui:{token}:status"),
+            "cancel": InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:esc"),
+            "interrupt": InlineKeyboardButton(
+                text="强制中断", callback_data=f"tui:{token}:confirm_ctrl_c"
+            ),
+        }
+        buttons = [action_buttons[action] for action in envelope.actions if action in action_buttons]
+        markup = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
         first_msg = None
         for chunk in split_for_tg(rendered.chat_html):
             msg = await self._tg_call(
@@ -512,11 +527,11 @@ class TelegramFrontend(Frontend):
                 )
             )
 
-        for attachment in attachments or []:
-            if attachment.kind == "image":
-                await self.send_image(b.chat_id, b.thread_id, attachment.path)
+        for attachment in envelope.attachments:
+            if is_image_file(attachment):
+                await self.send_image(b.chat_id, b.thread_id, attachment)
             else:
-                await self.send_file(b.chat_id, b.thread_id, attachment.path)
+                await self.send_file(b.chat_id, b.thread_id, attachment)
         return first_msg
 
     async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:

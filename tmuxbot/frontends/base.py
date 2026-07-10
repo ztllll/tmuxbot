@@ -7,13 +7,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+from tmuxbot.core.capabilities import ChannelCapabilities
+
+if TYPE_CHECKING:
+    from tmuxbot.core.replies import ReplyEnvelope
+    from tmuxbot.state import Binding
 
 
 class Frontend(ABC):
     """所有 IM 前端 (Telegram / 飞书 / ...) 的统一接口"""
 
     name: str = "base"
+    capabilities = ChannelCapabilities(name="base")
 
     @abstractmethod
     async def start_polling(self) -> None:
@@ -54,6 +61,12 @@ class Frontend(ABC):
         caption: str | None = None,
     ) -> Any:
         """发送本地文件为 IM 原生文件消息。"""
+
+    @abstractmethod
+    async def send_assistant_reply(
+        self, binding: "Binding", envelope: "ReplyEnvelope"
+    ) -> Any:
+        """发送渠道无关的 assistant reply，并返回可供后续编辑的消息对象。"""
 
     @abstractmethod
     async def send_chat_action(

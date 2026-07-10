@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
 from tmuxbot.core.event_reducer import reduce_provider_event
+from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.picker import detect_idle_picker
+from tmuxbot.tmux import tmux_capture
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
 
 if TYPE_CHECKING:
@@ -224,7 +226,7 @@ async def on_tmux_event(
 
     if kind == "assistant_live_text":
         log.info(f"[{b.name}] assistant live text len={len(body)}")
-        await _send_live_text(frontend, b, state, body)
+        await _send_live_text(frontend, b, state, body, backend)
         return
 
     if kind == "assistant_text_delta":
@@ -244,7 +246,7 @@ async def on_tmux_event(
                 return
             if _consume_recent_live_text(state, b, out):
                 return
-            await _send_assistant_reply(frontend, b, out)
+            await _send_assistant_reply(frontend, b, out, backend)
         return
 
     if kind != "assistant_tools":
@@ -295,22 +297,30 @@ async def _send_html_with_outbound_attachments(
 
 
 async def _send_assistant_reply(
-    frontend: "Frontend", b: "Binding", html_text: str,
+    frontend: "Frontend", b: "Binding", html_text: str, backend: "Backend",
 ) -> None:
     clean_text, attachments = split_outbound_attachments(html_text)
-    send_enhanced = getattr(frontend, "send_assistant_reply", None)
-    if callable(send_enhanced):
-        await send_enhanced(b, clean_text, attachments)
-        return
-    if clean_text.strip():
-        await frontend.send_html(b.chat_id, b.thread_id, clean_text)
-    await _send_outbound_attachments(frontend, b, attachments)
+    try:
+        pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
+        status = backend.parse_terminal_status(pane)
+    except Exception:
+        log.exception("[%s] provider status capture failed", b.name)
+        status = None
+    envelope = ReplyEnvelope(
+        title="回复",
+        body=clean_text,
+        footer=status,
+        attachments=tuple(str(a.path) for a in attachments),
+        actions=("screen", "status", "cancel", "interrupt"),
+    )
+    await frontend.send_assistant_reply(b, envelope)
 
 
 async def _send_live_text(
     frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+    backend: "Backend",
 ) -> None:
-    await _send_assistant_reply(frontend, b, html_text)
+    await _send_assistant_reply(frontend, b, html_text, backend)
     _remember_live_text(state, b, html_text)
 
 

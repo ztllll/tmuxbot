@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
 from tmuxbot.command_adapter import binding_token
+from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.telegram import TelegramFrontend
 from tmuxbot.replies import html_to_plain_text, render_assistant_reply, screen_footer_from_capture
 from tmuxbot.state import Binding
@@ -22,9 +25,13 @@ def binding(tmp_path):
 def test_render_assistant_reply_adds_context_header_and_footer(tmp_path):
     result = render_assistant_reply(
         binding(tmp_path),
-        "## 结论\n\n```python\nprint(1)\n```",
+        ReplyEnvelope(
+            title="回复",
+            body="## 结论\n\n```python\nprint(1)\n```",
+            footer=TerminalStatus(state=TerminalState.WORKING),
+        ),
         full_output_threshold=8000,
-        screen_footer="• Working (9s • esc to interrupt)",
+        footer_text="• Working (9s • esc to interrupt)",
     )
 
     assert result.chat_html.startswith("💬 <b>回复</b> · <code>alpha</code>")
@@ -43,7 +50,7 @@ def test_render_assistant_reply_summarizes_long_output_and_keeps_full_text(tmp_p
 
     result = render_assistant_reply(
         binding(tmp_path),
-        body,
+        ReplyEnvelope(title="回复", body=body),
         full_output_threshold=200,
     )
 
@@ -84,11 +91,15 @@ def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
 
         frontend._tg_call = tg_call
         frontend.bot_token_env = "TG_TEST_TOKEN"
+        frontend.backend = CodexBackend()
 
         await frontend.send_assistant_reply(
             binding(tmp_path),
-            "长内容\n" * 2000,
-            attachments=[],
+            ReplyEnvelope(
+                title="回复",
+                body="长内容\n" * 2000,
+                actions=("screen", "status", "cancel", "interrupt"),
+            ),
         )
 
     import asyncio

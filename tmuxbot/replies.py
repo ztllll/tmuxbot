@@ -5,6 +5,7 @@ import html
 import re
 from dataclasses import dataclass
 
+from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.state import Binding
 from tmuxbot.utils import strip_decorations, utf16_len
 
@@ -17,26 +18,27 @@ class AssistantReply:
 
 def render_assistant_reply(
     b: Binding,
-    html_text: str,
+    envelope: ReplyEnvelope,
     *,
     full_output_threshold: int,
-    screen_footer: str | None = None,
+    footer_text: str | None = None,
 ) -> AssistantReply:
     """Build the readable in-chat assistant reply.
 
-    ``html_text`` is already escaped by backend parsers, so this function only
+    ``envelope.body`` is already escaped by backend parsers, so this function only
     wraps it with metadata and optionally creates a plain full-output payload.
     """
-    body = html_text.strip()
+    body = envelope.body.strip()
     full_text = None
     if utf16_len(body) > full_output_threshold:
-        full_text = html_to_plain_text(html_text)
+        full_text = html_to_plain_text(envelope.body)
         body = _truncate_by_lines(body, full_output_threshold // 2)
         body = f"{body}\n\n<i>完整输出已附为文件。</i>"
     body = format_markdownish_html(body)
 
-    header = f"💬 <b>回复</b> · <code>{html.escape(b.name)}</code>"
-    footer = f"<i>{html.escape(screen_footer)}</i>" if screen_footer else ""
+    title = html.escape(envelope.title or "回复")
+    header = f"💬 <b>{title}</b> · <code>{html.escape(b.name)}</code>"
+    footer = f"<i>{html.escape(footer_text)}</i>" if footer_text else ""
     if not footer:
         return AssistantReply(chat_html=f"{header}\n\n{body}", full_text=full_text)
     return AssistantReply(chat_html=f"{header}\n\n{body}\n\n{footer}", full_text=full_text)
