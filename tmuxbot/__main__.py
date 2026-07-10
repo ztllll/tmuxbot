@@ -54,6 +54,20 @@ logging.basicConfig(
 )
 log = logging.getLogger("tmuxbot")
 
+TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _env_flag(*names: str) -> bool:
+    return any(os.getenv(name, "").strip().lower() in TRUE_ENV_VALUES for name in names)
+
+
+def _telegram_group_mention_only(token_env: str) -> bool:
+    names = ["TELEGRAM_GROUP_MENTION_ONLY", f"{token_env}_GROUP_MENTION_ONLY"]
+    suffix = "_BOT_TOKEN"
+    if token_env.endswith(suffix):
+        names.append(f"{token_env[:-len(suffix)]}_GROUP_MENTION_ONLY")
+    return _env_flag(*names)
+
 
 def acquire_lock() -> int:
     DATA_DIR.mkdir(exist_ok=True)
@@ -119,6 +133,7 @@ async def main() -> None:
             offsets_file=OFFSETS_FILE,
             project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
             bot_token_env=token_env,
+            group_only_when_mentioned=_telegram_group_mention_only(token_env),
         )
         frontends.append(fe)
 

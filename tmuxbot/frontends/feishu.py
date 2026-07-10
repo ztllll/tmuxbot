@@ -29,6 +29,7 @@ from tmuxbot.attachments import (
     attachment_prompt,
     split_outbound_attachments,
 )
+from tmuxbot.addressing import message_is_addressed_to_bot
 from tmuxbot.lifecycle import ensure_binding_running
 
 if TYPE_CHECKING:
@@ -132,6 +133,33 @@ def _make_fake_msg(message_id: str) -> Any:
     return obj
 
 
+def feishu_message_mentions_bot(msg: Any, bot_open_id: str | None) -> bool:
+    if not bot_open_id:
+        return False
+    mentions = getattr(msg, "mentions", None) or []
+    return any(
+        getattr(getattr(m, "id", None), "open_id", None) == bot_open_id
+        for m in mentions
+    )
+
+
+def feishu_message_replies_to_bot(msg: Any, outbound_message_ids: set[str]) -> bool:
+    candidate_ids = (
+        getattr(msg, "parent_id", None),
+        getattr(msg, "root_id", None),
+        getattr(msg, "reply_to_message_id", None),
+    )
+    return any(mid in outbound_message_ids for mid in candidate_ids if mid)
+
+
+def feishu_message_addresses_bot(
+    msg: Any, bot_open_id: str | None, outbound_message_ids: set[str]
+) -> bool:
+    return feishu_message_mentions_bot(msg, bot_open_id) or feishu_message_replies_to_bot(
+        msg, outbound_message_ids
+    )
+
+
 # ────────── FeishuFrontend ──────────
 
 class FeishuFrontend:
@@ -167,6 +195,8 @@ class FeishuFrontend:
         self.bindings_file = bindings_file
         self.bot_token_env = bot_token_env
         self.project_base = project_base
+        self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
+        self._outbound_message_ids: set[str] = set()
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_client = None   # lark.ws.Client 实例
@@ -191,6 +221,18 @@ class FeishuFrontend:
         if not open_id or open_id not in self.boss_open_ids:
             return False
         return self.find_binding(chat_id) is not None
+
+    def _remember_outbound_message(self, message_id: str | None) -> None:
+        if message_id:
+            self._outbound_message_ids.add(message_id)
+
+    def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
+        return message_is_addressed_to_bot(
+            require_addressing=self.group_only_when_mentioned,
+            direct_chat=chat_type == "p2p",
+            mentioned=feishu_message_mentions_bot(msg, self.bot_open_id),
+            replied_to_bot=feishu_message_replies_to_bot(msg, self._outbound_message_ids),
+        )
 
     # ────────── 飞书 REST 发送 (同步, 在 asyncio.to_thread 里调) ──────────
 
@@ -309,6 +351,7 @@ class FeishuFrontend:
         message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
         if message_id is None:
             return None
+        self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
 
     async def edit_html(self, chat_id: int | str, message_id: str, html_text: str) -> None:
@@ -323,7 +366,8 @@ class FeishuFrontend:
         clean_text, attachments = split_outbound_attachments(raw_text)
         if clean_text.strip():
             md = "```\n" + clean_text + "\n```"
-            await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+            message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+            self._remember_outbound_message(message_id)
         for attachment in attachments:
             if attachment.kind == "image":
                 await self.send_image(chat_id, thread_id, attachment.path)
@@ -345,6 +389,7 @@ class FeishuFrontend:
         )
         if message_id is None:
             return None
+        self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
 
     async def send_file(
@@ -362,6 +407,7 @@ class FeishuFrontend:
         )
         if message_id is None:
             return None
+        self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
 
     async def send_chat_action(self, chat_id: int | str, thread_id: int | None, action: str) -> None:
@@ -722,6 +768,8 @@ class FeishuFrontend:
             # 非 Boss 白名单 → 静默
             if not open_id or open_id not in self.boss_open_ids:
                 return
+            if not self._message_allowed_by_addressing(chat_type, msg):
+                return
             # Boss 发来但 source 未配置 binding:
             #   - text == /projects → 列 base 下现有目录 (未绑定群也能用)
             #   - text 以 /init 开头 → 自动开通会话 (建目录 + tmux + binding + 起 claude)
@@ -777,17 +825,6 @@ class FeishuFrontend:
                     f"(来自 Boss open_id={open_id[:10]}…, /init 可自动开通, 或在 bindings.yaml 手配)"
                 )
                 return
-
-            # ── 群消息: group_only_when_mentioned 过滤 ──
-            if chat_type == "group" and self.group_only_when_mentioned:
-                # mentions 里找有没有 @bot (open_id = bot 自己)
-                mentions = getattr(msg, "mentions", None) or []
-                bot_mentioned = any(
-                    getattr(getattr(m, "id", None), "open_id", None) == self.app_id
-                    for m in mentions
-                )
-                if not bot_mentioned:
-                    return
 
             # ── image / post 图文: 下载图片 → 拼 caption + @路径 注入 tmux ──
             # 对齐 TG on_file: claude TUI 用 @路径 引用本地文件。

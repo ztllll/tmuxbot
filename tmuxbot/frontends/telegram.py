@@ -47,6 +47,7 @@ from tmuxbot.attachments import (
     attachment_prompt,
     split_outbound_attachments,
 )
+from tmuxbot.addressing import message_is_addressed_to_bot
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
@@ -119,6 +120,43 @@ def thread_id_of(m: Message) -> int | None:
     return None
 
 
+def telegram_message_mentions_bot(m: Message, bot_username: str | None) -> bool:
+    """Return whether a Telegram message text/caption explicitly @mentions this bot."""
+    if not bot_username:
+        return False
+    username = bot_username.lstrip("@")
+    if not username:
+        return False
+    pattern = re.compile(rf"@{re.escape(username)}(?![A-Za-z0-9_])", re.IGNORECASE)
+    return any(
+        pattern.search(value or "")
+        for value in (getattr(m, "text", None), getattr(m, "caption", None))
+    )
+
+
+def telegram_message_replies_to_bot(
+    m: Message, bot_username: str | None, bot_id: int | None
+) -> bool:
+    reply = getattr(m, "reply_to_message", None)
+    user = getattr(reply, "from_user", None)
+    if user is None:
+        return False
+    if bot_id is not None and getattr(user, "id", None) == bot_id:
+        return True
+    if bot_username:
+        username = str(getattr(user, "username", "") or "").lstrip("@").lower()
+        return username == bot_username.lstrip("@").lower()
+    return False
+
+
+def telegram_message_addresses_bot(
+    m: Message, bot_username: str | None, bot_id: int | None
+) -> bool:
+    return telegram_message_mentions_bot(m, bot_username) or telegram_message_replies_to_bot(
+        m, bot_username, bot_id
+    )
+
+
 def _message_attachment(m: Message) -> tuple[str, str, int | None, str] | None:
     """Return (file_id, filename, file_size, kind) for Telegram file-like messages."""
     if m.photo:
@@ -163,6 +201,7 @@ class TelegramFrontend(Frontend):
         offsets_file: Path | None = None,   # /init 起 tailer 用
         project_base: str = os.path.expanduser("~/projects"),  # /init 新项目目录的父目录
         bot_token_env: str = "TG_BOT_TOKEN",  # 本 frontend 的 token env key (/init 持久化用)
+        group_only_when_mentioned: bool = False,
     ) -> None:
         self.token = token
         self.state = state
@@ -173,9 +212,11 @@ class TelegramFrontend(Frontend):
         self.offsets_file = offsets_file
         self.project_base = project_base
         self.bot_token_env = bot_token_env
+        self.group_only_when_mentioned = group_only_when_mentioned
         self.bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         self.dp = Dispatcher()
         self._bot_username: str | None = None  # 懒加载, start_polling 时填入
+        self._bot_id: int | None = None
         # forum topic 名缓存: key=(chat_id, thread_id) → topic name。
         # 话题名只在 forum_topic_created / _edited 服务消息里, 普通 message 拿不到 →
         # 服务消息进来时缓存, /init 时按 (chat_id, thread_id) 命中, 取代群名。
@@ -559,7 +600,19 @@ class TelegramFrontend(Frontend):
             return True
         if not m.from_user or m.from_user.id != self.state.boss_user_id:
             return False
+        if not self._message_allowed_by_mention(m):
+            return False
         return self.find_binding(*source_key(m)) is not None
+
+    def _message_allowed_by_mention(self, m: Message) -> bool:
+        return message_is_addressed_to_bot(
+            require_addressing=self.group_only_when_mentioned,
+            direct_chat=getattr(m.chat, "type", None) == "private",
+            mentioned=telegram_message_mentions_bot(m, self._bot_username),
+            replied_to_bot=telegram_message_replies_to_bot(
+                m, self._bot_username, self._bot_id
+            ),
+        )
 
     async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
         if not self._acl_ok(m):
@@ -632,6 +685,7 @@ class TelegramFrontend(Frontend):
                 not S.setup_mode
                 and event.from_user
                 and event.from_user.id == S.boss_user_id
+                and F_._message_allowed_by_mention(event)
             ):
                 tid = thread_id_of(event)
                 b = F_.find_binding(event.chat.id, tid)
@@ -839,6 +893,8 @@ class TelegramFrontend(Frontend):
                 return
             if not m.from_user or m.from_user.id != S.boss_user_id:
                 return  # 非 Boss → 静默
+            if not F_._message_allowed_by_mention(m):
+                return
             tid = thread_id_of(m)
             if F_.find_binding(m.chat.id, tid) is not None:
                 return  # 已绑定 → 交给普通文本流, 这里静默 (避免重复开通)
@@ -911,6 +967,8 @@ class TelegramFrontend(Frontend):
                 return
             if not m.from_user or m.from_user.id != S.boss_user_id:
                 return  # 非 Boss → 静默
+            if not F_._message_allowed_by_mention(m):
+                return
             b = F_.find_binding(*source_key(m))
             if b is None:
                 await m.reply("本群/话题未绑定,无需拆除")
@@ -930,6 +988,8 @@ class TelegramFrontend(Frontend):
                 return
             if not m.from_user or m.from_user.id != S.boss_user_id:
                 return  # 非 Boss → 静默
+            if not F_._message_allowed_by_mention(m):
+                return
             await m.reply(F_._list_projects())
 
         # ─── 文本 ─────────
@@ -1153,6 +1213,7 @@ class TelegramFrontend(Frontend):
         try:
             me = await self.bot.get_me()
             self._bot_username = me.username
+            self._bot_id = me.id
         except Exception as e:
             log.warning(f"get_me err: {e}")
         try:

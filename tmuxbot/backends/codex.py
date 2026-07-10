@@ -227,9 +227,10 @@ def parse_compact_codex(raw: str) -> str | None:
 # ────────── CodexBackend ──────────
 class CodexBackend(Backend):
     name = "codex"
-    # ★ codex v0.124.0 是 node CLI, tmux pane_current_command 显示 "node" 不是 "codex"
-    # (pane 专用: 非 bash 即 codex-as-node, 用 "node" 判活)
+    # npm wrapper 的 pane_current_command 是 node, standalone 包则是 codex。
     pane_command_name = "node"
+    pane_command_names = frozenset({"node", "codex"})
+    shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
     start_cmd = START_CMD
 
     bot_commands = [
@@ -395,31 +396,42 @@ class CodexBackend(Backend):
             tmux_new_session(b.tmux_session, b.cwd)
             await asyncio.sleep(0.5)
         cmd = tmux_pane_command(b.tmux_target)
-        if cmd != self.pane_command_name:
-            # codex 没有 --resume <session_id> 直传方式 (只能通过 /resume 命令)
-            await tmux_send_text(b.tmux_target, self.start_cmd)
-            # codex 冷启动慢 + 可能弹 trust/update picker。轮询处理直到真就绪:
-            #  - update picker: 绝不选 "Update now"(会 npm install 后退出回 bash 无法自愈),
-            #    发 Esc 取消/跳过
-            #  - trust picker: 新 /init 目录首次进会弹, 选信任 (Yes 默认高亮第一项, Enter)
-            #  - 真就绪: pane=node 且出现输入符 '›' / 状态行 'gpt-' 且无 picker
-            #  否则盲发消息会落进 picker 丢失 (旧实现只看 pane=node 会被 picker 骗)
-            for _ in range(40):  # 最多 ~20s
-                await asyncio.sleep(0.5)
-                try:
-                    scr = tmux_capture(b.tmux_target, 25)
-                except Exception:
-                    continue
-                low = scr.lower()
-                if "update" in low and ("update now" in low or "skip" in low):
-                    tmux_send_key(b.tmux_target, "Escape")   # 取消更新, 绝不 Update now
-                    continue
-                if ("trust" in low or "信任" in low) and ("yes" in low or "no" in low or "1." in scr):
-                    tmux_send_key(b.tmux_target, "Enter")    # 选信任 (默认 Yes)
-                    continue
-                if tmux_pane_command(b.tmux_target) == self.pane_command_name and ("›" in scr or "gpt-" in low):
-                    break
-            await asyncio.sleep(1.0)  # prompt 渲染余量
+        if cmd in self.pane_command_names:
+            return
+        if cmd not in self.shell_command_names:
+            log.warning(
+                "[%s] refusing to start codex in pane with foreground command %r",
+                b.name,
+                cmd,
+            )
+            return
+        # codex 没有 --resume <session_id> 直传方式 (只能通过 /resume 命令)
+        await tmux_send_text(b.tmux_target, self.start_cmd)
+        # codex 冷启动慢 + 可能弹 trust/update picker。轮询处理直到真就绪:
+        #  - update picker: 绝不选 "Update now"(会 npm install 后退出回 bash 无法自愈),
+        #    发 Esc 取消/跳过
+        #  - trust picker: 新 /init 目录首次进会弹, 选信任 (Yes 默认高亮第一项, Enter)
+        #  - 真就绪: pane=node/codex 且出现输入符 '›' / 状态行 'gpt-' 且无 picker
+        #  否则盲发消息会落进 picker 丢失
+        for _ in range(40):  # 最多 ~20s
+            await asyncio.sleep(0.5)
+            try:
+                scr = tmux_capture(b.tmux_target, 25)
+            except Exception:
+                continue
+            low = scr.lower()
+            if "update" in low and ("update now" in low or "skip" in low):
+                tmux_send_key(b.tmux_target, "Escape")   # 取消更新, 绝不 Update now
+                continue
+            if ("trust" in low or "信任" in low) and ("yes" in low or "no" in low or "1." in scr):
+                tmux_send_key(b.tmux_target, "Enter")    # 选信任 (默认 Yes)
+                continue
+            if (
+                tmux_pane_command(b.tmux_target) in self.pane_command_names
+                and ("›" in scr or "gpt-" in low)
+            ):
+                break
+        await asyncio.sleep(1.0)  # prompt 渲染余量
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {

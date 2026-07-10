@@ -241,6 +241,17 @@ bindings:
     cwd: /home/you/projects/gamma
 ```
 
+**对应 `.env` Telegram 唤醒变量**:
+
+```bash
+# 可选: 群/话题消息是否仅 @bot 才进入 tmux; DM 不受影响
+TELEGRAM_GROUP_MENTION_ONLY=true
+
+# 可选: 按 token 分别控制
+TG_GROUP_MENTION_ONLY=true
+TG_CODEX_GROUP_MENTION_ONLY=true
+```
+
 **对应 `.env` 飞书相关变量**:
 
 ```bash
@@ -248,6 +259,7 @@ bindings:
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
 FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FEISHU_BOSS_OPEN_IDS=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # 逗号分隔多个
+FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     # 可选: bot 自己 open_id, 用于 @ 唤醒
 
 # 可选: 群消息是否仅 @bot 才响应 (默认 false,即不需要 @)
 # FEISHU_GROUP_MENTION_ONLY=false

@@ -21,6 +21,8 @@
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
 - `.gitignore` 覆盖多实例部署文件:忽略 `bindings*.yaml` 和 `data*/`,同时保留已跟踪的 `bindings.example.yaml`。
 - Telegram 附件处理从仅支持图片/文档扩展到图片、文档、视频、动图、音频、语音。
+- Telegram 增加 `TELEGRAM_GROUP_MENTION_ONLY` / per-token 唤醒开关,群和话题可要求显式 @bot 后才注入 tmux。
+- Telegram/飞书唤醒判断统一为“私聊、@bot、回复 bot 消息”三类触发;群里回复 bot 历史消息也可进入 tmux。
 - Codex `update_plan` 从普通 tool aggregator 拆到独立 `assistant_plan` 事件,后续计划更新编辑同一条 IM 消息,避免被工具日志刷走。
 
 ### Fixed

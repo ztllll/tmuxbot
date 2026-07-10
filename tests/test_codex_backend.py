@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -25,6 +26,59 @@ def _binding(tmp_path: Path) -> Binding:
         backend="codex",
         bot_token_env="TG_CODEX_BOT_TOKEN",
     )
+
+
+def _run_ensure_running(monkeypatch, tmp_path: Path, pane_commands: list[str]) -> list[str]:
+    commands = iter(pane_commands)
+    current = pane_commands[-1]
+    sent: list[str] = []
+
+    def pane_command(_target: str) -> str:
+        nonlocal current
+        try:
+            current = next(commands)
+        except StopIteration:
+            pass
+        return current
+
+    async def send_text(_target: str, text: str) -> None:
+        sent.append(text)
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_pane_command", pane_command)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_capture", lambda _target, _lines: "›\ngpt-5")
+    monkeypatch.setattr("tmuxbot.backends.codex.asyncio.sleep", no_sleep)
+
+    asyncio.run(CodexBackend().ensure_running(_binding(tmp_path)))
+    return sent
+
+
+def test_codex_ensure_running_accepts_npm_node_wrapper(tmp_path, monkeypatch):
+    sent = _run_ensure_running(monkeypatch, tmp_path, ["node"])
+
+    assert sent == []
+
+
+def test_codex_ensure_running_accepts_standalone_binary(tmp_path, monkeypatch):
+    sent = _run_ensure_running(monkeypatch, tmp_path, ["codex"])
+
+    assert sent == []
+
+
+def test_codex_ensure_running_starts_from_shell_once(tmp_path, monkeypatch):
+    sent = _run_ensure_running(monkeypatch, tmp_path, ["bash", "node"])
+
+    assert sent == [CodexBackend.start_cmd]
+
+
+def test_codex_ensure_running_does_not_inject_into_unknown_process(tmp_path, monkeypatch):
+    sent = _run_ensure_running(monkeypatch, tmp_path, ["python3"])
+
+    assert sent == []
 
 
 def test_codex_find_active_jsonl_matches_binding_cwd(tmp_path, monkeypatch):

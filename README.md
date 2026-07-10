@@ -61,7 +61,7 @@ pip install -e ".[feishu]"
 
 # 2. 配凭证
 cp .env.example .env
-vim .env                    # 填 TG_BOT_TOKEN,BOSS_USER_ID;接 codex 再加 TG_CODEX_BOT_TOKEN;接飞书加 FEISHU_APP_ID/SECRET/BOSS_OPEN_IDS
+vim .env                    # 填 TG_BOT_TOKEN,BOSS_USER_ID;群里需 @ 再加 TELEGRAM_GROUP_MENTION_ONLY=true;接 codex 再加 TG_CODEX_BOT_TOKEN;接飞书加 FEISHU_APP_ID/SECRET/BOSS_OPEN_IDS
 
 # 3. 配 binding(IM 端点 ↔ tmux pane 映射)
 cp bindings.example.yaml bindings.yaml
