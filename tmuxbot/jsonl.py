@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.attachments import split_outbound_attachments
+from tmuxbot.config import save_binding_identity
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
 
@@ -74,7 +75,17 @@ async def jsonl_poll_loop(
                     state.offsets[key] = 0 if last_file is not None else jl.stat().st_size
                     save_offsets(offsets_file, state.offsets, force=True)
                 last_file = jl
-                b.last_session_id = jl.stem
+                identity = backend.session_identity(b, jl)
+                old_identity = (b.provider_session_id, b.transcript_path)
+                b.provider_session_id = identity.session_id
+                b.transcript_path = Path(identity.transcript_path) if identity.transcript_path else jl
+                b.last_session_id = identity.session_id
+                if old_identity != (b.provider_session_id, b.transcript_path):
+                    await asyncio.to_thread(
+                        save_binding_identity,
+                        getattr(frontend, "bindings_file", None),
+                        b,
+                    )
 
             sz = jl.stat().st_size
             if sz != last_sz_logged:

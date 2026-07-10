@@ -204,6 +204,8 @@ async def provision_chat(
             "tmux_window": 0,
             "tmux_pane": 0,
             "cwd": proj_dir,
+            "provider_session_id": None,
+            "transcript_path": None,
         }
         await asyncio.to_thread(_persist_binding_sync, bindings_file, entry)
 

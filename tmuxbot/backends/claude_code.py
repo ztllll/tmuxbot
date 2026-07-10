@@ -564,6 +564,21 @@ class ClaudeCodeBackend(Backend):
         d = CLAUDE_PROJECTS_DIR / encode_cwd(b.cwd)
         if not d.exists():
             return None
+        if b.transcript_path:
+            pinned = Path(b.transcript_path)
+            try:
+                in_project = pinned.parent.resolve() == d.resolve()
+            except OSError:
+                in_project = False
+            id_matches = (
+                not b.provider_session_id or pinned.stem == b.provider_session_id
+            )
+            if in_project and id_matches and pinned.is_file():
+                return pinned
+        if b.provider_session_id:
+            pinned = d / f"{b.provider_session_id}.jsonl"
+            if pinned.is_file():
+                return pinned
         files = list(d.glob("*.jsonl"))
         if not files:
             return None
@@ -694,8 +709,9 @@ class ClaudeCodeBackend(Backend):
             )
             return
         start = _start_cmd()
-        if b.last_session_id:
-            start += f" --resume {b.last_session_id}"
+        session_id = b.provider_session_id or b.last_session_id
+        if session_id:
+            start += f" --resume {session_id}"
         await tmux_send_text(b.tmux_target, start)
         await asyncio.sleep(2.0)
 

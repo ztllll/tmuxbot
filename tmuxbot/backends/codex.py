@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
     tmux_pane_command, tmux_send_key, tmux_send_text,
@@ -312,23 +313,67 @@ class CodexBackend(Backend):
         if not all_files:
             return None
         target_cwd = str(b.cwd.resolve())
+        if b.transcript_path:
+            pinned = Path(b.transcript_path)
+            metadata = self._session_metadata(pinned)
+            if metadata and self._metadata_matches(
+                metadata, target_cwd, b.provider_session_id
+            ):
+                return pinned
+        if b.provider_session_id:
+            for jl in all_files:
+                metadata = self._session_metadata(jl)
+                if metadata and self._metadata_matches(
+                    metadata, target_cwd, b.provider_session_id
+                ):
+                    return jl
         # 按 mtime 倒序, 找第一个 cwd 匹配的。找不到就返回 None, 不能兜底到全局最新,
         # 否则多个 binding 会同时 tail 同一个 Codex rollout, 导致跨 chat 推送。
         for jl in sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                with open(jl, "r", encoding="utf-8", errors="replace") as f:
-                    first = f.readline()
-                if not first.strip():
-                    continue
-                j = json.loads(first)
-                if j.get("type") == "session_meta":
-                    p = j.get("payload", {}) or {}
-                    cwd = p.get("cwd")
-                    if isinstance(cwd, str) and str(Path(cwd).resolve()) == target_cwd:
-                        return jl
-            except Exception:
-                continue
+            metadata = self._session_metadata(jl)
+            if metadata and self._metadata_matches(metadata, target_cwd, None):
+                return jl
         return None
+
+    @staticmethod
+    def _session_metadata(jl: Path) -> dict | None:
+        if not jl.is_file():
+            return None
+        try:
+            with open(jl, "r", encoding="utf-8", errors="replace") as f:
+                first = f.readline()
+            if not first.strip():
+                return None
+            row = json.loads(first)
+            if row.get("type") != "session_meta":
+                return None
+            payload = row.get("payload", {}) or {}
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _metadata_matches(
+        metadata: dict, target_cwd: str, session_id: str | None
+    ) -> bool:
+        cwd = metadata.get("cwd")
+        if not isinstance(cwd, str) or str(Path(cwd).resolve()) != target_cwd:
+            return False
+        if session_id is None:
+            return True
+        actual_id = metadata.get("id") or metadata.get("session_id")
+        return actual_id == session_id
+
+    def session_identity(self, b: "Binding", transcript_path: Path) -> SessionIdentity:
+        metadata = self._session_metadata(transcript_path) or {}
+        session_id = metadata.get("id") or metadata.get("session_id") or transcript_path.stem
+        return SessionIdentity(
+            provider=self.name,
+            session_id=str(session_id),
+            transcript_path=str(transcript_path),
+            tmux_target=b.tmux_target,
+            cwd=str(b.cwd),
+        )
 
     def parse_event(self, line: str) -> list[tuple[str, str]]:
         """codex jsonl 一行 → events 列表。

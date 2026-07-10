@@ -15,6 +15,7 @@ from typing import Callable, TYPE_CHECKING
 
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.sessions import SessionIdentity
 
 if TYPE_CHECKING:
     from tmuxbot.state import Binding
@@ -82,6 +83,16 @@ class Backend(ABC):
         if status.cwd:
             parts.append(status.cwd)
         return " · ".join(parts) or None
+
+    def session_identity(self, b: "Binding", transcript_path: Path) -> SessionIdentity:
+        """从已验证 transcript 构造稳定 provider 会话身份。"""
+        return SessionIdentity(
+            provider=self.name,
+            session_id=transcript_path.stem,
+            transcript_path=str(transcript_path),
+            tmux_target=b.tmux_target,
+            cwd=str(b.cwd),
+        )
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
