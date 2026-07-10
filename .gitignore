@@ -13,6 +13,7 @@ __pycache__/
 *.log
 .DS_Store
 .codex
+.worktrees/
 
 # AI 项目宪法 — 内部协作铁律, 不公开
 CLAUDE.md
