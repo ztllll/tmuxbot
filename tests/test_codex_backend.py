@@ -42,15 +42,16 @@ def _run_ensure_running(monkeypatch, tmp_path: Path, pane_commands: list[str]) -
             pass
         return current
 
-    async def send_text(_target: str, text: str) -> None:
+    async def safe_launch(_target: str, text: str, *, allowed_shells) -> bool:
         sent.append(text)
+        return True
 
     async def no_sleep(_delay: float) -> None:
         return None
 
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_pane_command", pane_command)
-    monkeypatch.setattr("tmuxbot.backends.codex.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_safe_launch", safe_launch)
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_capture", lambda _target, _lines: "›\ngpt-5")
     monkeypatch.setattr("tmuxbot.backends.codex.asyncio.sleep", no_sleep)
 

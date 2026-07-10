@@ -437,7 +437,11 @@ async def handle_interactive_command(
     injected_text: str,
 ) -> None:
     txn = record_transaction(state, b, spec, injected_text)
-    await tmux_send_text(b.tmux_target, injected_text)
+    await tmux_send_text(
+        b.tmux_target,
+        injected_text,
+        expected_commands=frontend.backend.running_command_names,
+    )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
     await asyncio.sleep(1.0)
     body = build_interaction_body(
@@ -460,7 +464,11 @@ async def handle_passthrough_command(
 ) -> None:
     txn = record_transaction(state, b, spec, injected_text)
     before_hash = txn.start_pane_hash
-    await tmux_send_text(b.tmux_target, injected_text)
+    await tmux_send_text(
+        b.tmux_target,
+        injected_text,
+        expected_commands=frontend.backend.running_command_names,
+    )
     await frontend.send_html(
         chat_id,
         thread_id,

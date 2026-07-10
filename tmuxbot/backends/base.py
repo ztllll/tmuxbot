@@ -58,6 +58,10 @@ class Backend(ABC):
     def is_running_command(self, command: str) -> bool:
         return command == self.pane_command_name
 
+    @property
+    def running_command_names(self) -> frozenset[str]:
+        return frozenset({self.pane_command_name}) if self.pane_command_name else frozenset()
+
     def can_start_from_command(self, command: str) -> bool:
         return command in self.shell_command_names
 

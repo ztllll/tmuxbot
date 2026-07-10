@@ -86,7 +86,11 @@ async def dispatch_incoming_text(
             tmux_send_key(b.tmux_target, "Escape")
             await frontend.send_html(chat_id, thread_id, "⎋ <b>已取消 rename</b>")
             return
-        await tmux_send_text(b.tmux_target, text)
+        await tmux_send_text(
+            b.tmux_target,
+            text,
+            expected_commands=backend.running_command_names,
+        )
         await frontend.send_html(
             chat_id, thread_id,
             f"✏️ <b>已提交新名字</b>: <code>{html.escape(text)}</code>",
@@ -198,7 +202,11 @@ async def dispatch_incoming_text(
 
     # ── capture 类 slash 命令: 注入 + background capture_and_push ──
     if cmd_for_feedback and cmd_for_feedback in backend.command_opts():
-        await tmux_send_text(b.tmux_target, raw_text)
+        await tmux_send_text(
+            b.tmux_target,
+            raw_text,
+            expected_commands=backend.running_command_names,
+        )
         if cmd_for_feedback == "/rename":
             state.pending_rename[b.name] = time.time()
         state.fire(
@@ -207,4 +215,8 @@ async def dispatch_incoming_text(
         return
 
     # ── 普通文本 (含未知命令): 直接注入, 不 capture ──
-    await tmux_send_text(b.tmux_target, raw_text)
+    await tmux_send_text(
+        b.tmux_target,
+        raw_text,
+        expected_commands=backend.running_command_names,
+    )

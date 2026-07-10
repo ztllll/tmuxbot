@@ -976,7 +976,11 @@ class FeishuFrontend(Frontend):
                 await ensure_binding_running(
                     self.backend, b, self.state, reason="feishu-image", wait=True
                 )
-                await tmux_send_text(b.tmux_target, inject)
+                await tmux_send_text(
+                    b.tmux_target,
+                    inject,
+                    expected_commands=self.backend.running_command_names,
+                )
                 return
 
             # ── file: 下载文件 → @路径 注入 tmux ──
@@ -1034,7 +1038,11 @@ class FeishuFrontend(Frontend):
                 await ensure_binding_running(
                     self.backend, b, self.state, reason="feishu-file", wait=True
                 )
-                await tmux_send_text(b.tmux_target, inject)
+                await tmux_send_text(
+                    b.tmux_target,
+                    inject,
+                    expected_commands=self.backend.running_command_names,
+                )
                 return
 
             # ── 只处理 text 类型 ──

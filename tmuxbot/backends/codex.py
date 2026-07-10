@@ -31,7 +31,7 @@ from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState,
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
-    tmux_pane_command, tmux_send_key, tmux_send_text,
+    tmux_pane_command, tmux_safe_launch, tmux_send_key,
 )
 from tmuxbot.utils import strip_decorations
 
@@ -255,6 +255,10 @@ class CodexBackend(Backend):
             supports_usage=True,
             supports_interactive_pickers=True,
         )
+
+    @property
+    def running_command_names(self) -> frozenset[str]:
+        return self.pane_command_names
 
     def is_running_command(self, command: str) -> bool:
         return command in self.pane_command_names
@@ -574,7 +578,14 @@ class CodexBackend(Backend):
             )
             return
         # codex 没有 --resume <session_id> 直传方式 (只能通过 /resume 命令)
-        await tmux_send_text(b.tmux_target, self.start_cmd)
+        launched = await tmux_safe_launch(
+            b.tmux_target,
+            self.start_cmd,
+            allowed_shells=self.shell_command_names,
+        )
+        if not launched:
+            log.warning("[%s] codex launch aborted after foreground revalidation", b.name)
+            return
         # codex 冷启动慢 + 可能弹 trust/update picker。轮询处理直到真就绪:
         #  - update picker: 绝不选 "Update now"(会 npm install 后退出回 bash 无法自愈),
         #    发 Esc 取消/跳过

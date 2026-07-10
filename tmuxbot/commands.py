@@ -24,10 +24,17 @@ log = logging.getLogger("tmuxbot")
 
 
 async def inject_slash_and_capture(
-    b: "Binding", cmd: str, *, settle_iters: int = 12, poll: float = 0.4,
+    b: "Binding", cmd: str, *, backend: "Backend | None" = None,
+    settle_iters: int = 12, poll: float = 0.4,
 ) -> str:
     """注入 slash 命令 → 等屏稳定 hash 2 次 → capture → Esc 退 modal → 返回 raw 屏"""
-    await tmux_send_text(b.tmux_target, cmd, with_enter=True)
+    expected = backend.running_command_names if backend is not None else None
+    await tmux_send_text(
+        b.tmux_target,
+        cmd,
+        with_enter=True,
+        expected_commands=expected,
+    )
     last_hash, stable, out = "", 0, ""
     for _ in range(settle_iters):
         await asyncio.sleep(poll)

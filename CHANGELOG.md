@@ -8,6 +8,8 @@
 
 ### Added
 
+- Tmux Runtime V2:provider/channel 归一化契约、精确 session/transcript 绑定、安全串行输入队列、Claude hooks 本地 spool、`off|shadow|on` 灰度路由。
+- Claude/Codex × Telegram/飞书 2×2 回复 envelope 与真实临时 tmux pane E2E 覆盖;tmux 继续是唯一执行面。
 - 项目版本与发布治理基础:版本策略、发布流程、GitHub issue/PR 模板、CI/Dependabot 工作流、贡献/安全/支持文档。
 - 元数据一致性测试,防止 `pyproject.toml` 与 `tmuxbot.__version__` 漂移。
 - Codex backend 回归测试,覆盖按 binding `cwd` 选择 rollout jsonl 以及无匹配时不兜底到全局最新文件。
@@ -18,6 +20,8 @@
 
 ### Changed
 
+- Telegram 与飞书统一使用 `IncomingMessage` / `ReplyEnvelope`;回复尾部由 Claude/Codex provider 解析 `TerminalStatus`,不再由渠道猜测屏幕最后一行。
+- Claude `Stop.last_assistant_message` 作为优先最终回复源,JSONL 保留工具、思考、用量与历史数据并对重复最终回复去重。
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
 - `.gitignore` 覆盖多实例部署文件:忽略 `bindings*.yaml` 和 `data*/`,同时保留已跟踪的 `bindings.example.yaml`。
 - Telegram 附件处理从仅支持图片/文档扩展到图片、文档、视频、动图、音频、语音。
@@ -27,6 +31,8 @@
 
 ### Fixed
 
+- 修复 Codex pane 前台命令为 standalone `codex` 时被 watchdog 误判并周期性注入启动命令的问题;未知前台进程不再注入 Claude/Codex 启动命令。
+- 修复输入在 pane busy 时先 paste 后等待导致多条命令堆积的问题;现在按 tmux target 排队并在粘贴前确认 idle 与前台进程。
 - Codex 多 binding 串线风险:Codex rollout 路径不含 cwd,旧逻辑在找不到当前 binding 的 `session_meta.payload.cwd` 时会返回全局最新 `rollout-*.jsonl`,导致多个 chat 可能同时 tail 同一个 Codex 会话。现在只接受 cwd 匹配的 rollout,找不到就返回 `None`。
 - 飞书通道补齐普通文件消息下载与注入,不再只支持图片和图文里的图片。
 - Codex `update_plan` 内容回传不完整:旧逻辑只取 `in_progress` 第一项,甚至全完成时只显示标题。现在完整回传 explanation、最多 12 条计划项及状态。

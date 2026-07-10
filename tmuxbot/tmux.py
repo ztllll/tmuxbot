@@ -67,9 +67,25 @@ def _is_tui_busy(pane: str) -> bool:
     return bool(_TUI_BUSY_RE.search(pane))
 
 
-async def tmux_send_text(target: str, text: str, *, with_enter: bool = True) -> None:
+async def tmux_send_text(
+    target: str,
+    text: str,
+    *,
+    with_enter: bool = True,
+    expected_commands=None,
+) -> None:
     """Queue input, wait for an idle pane, then paste and submit exactly once."""
-    await _RUNTIME.send_text(target, text, with_enter=with_enter)
+    await _RUNTIME.send_text(
+        target,
+        text,
+        with_enter=with_enter,
+        expected_commands=expected_commands,
+    )
+
+
+async def tmux_safe_launch(target: str, command: str, *, allowed_shells) -> bool:
+    """Launch only while the pane remains attached to an allowed shell."""
+    return await _RUNTIME.safe_launch(target, command, allowed_shells=allowed_shells)
 
 
 async def _paste_text(target: str, text: str) -> None:

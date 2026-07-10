@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
+import threading
 from pathlib import Path
 
 import yaml
@@ -13,6 +15,7 @@ from tmuxbot.utils import load_offsets
 from tmuxbot.validation import validate_bindings
 
 log = logging.getLogger("tmuxbot")
+_BINDINGS_WRITE_LOCK = threading.Lock()
 
 
 def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
@@ -20,24 +23,37 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
     if bindings_file is None:
         return
     try:
-        raw = yaml.safe_load(bindings_file.read_text(encoding="utf-8")) or {}
-        for entry in raw.get("bindings", []):
-            if entry.get("name") != binding.name:
-                continue
-            if binding.provider_session_id:
-                entry["provider_session_id"] = binding.provider_session_id
-            else:
-                entry.pop("provider_session_id", None)
-            if binding.transcript_path:
-                entry["transcript_path"] = str(binding.transcript_path)
-            else:
-                entry.pop("transcript_path", None)
-            bindings_file.write_text(
-                yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
+        with _BINDINGS_WRITE_LOCK:
+            raw = yaml.safe_load(bindings_file.read_text(encoding="utf-8")) or {}
+            for entry in raw.get("bindings", []):
+                if entry.get("name") != binding.name:
+                    continue
+                if binding.provider_session_id:
+                    entry["provider_session_id"] = binding.provider_session_id
+                else:
+                    entry.pop("provider_session_id", None)
+                if binding.transcript_path:
+                    entry["transcript_path"] = str(binding.transcript_path)
+                else:
+                    entry.pop("transcript_path", None)
+                rendered = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=bindings_file.parent,
+                    prefix=f".{bindings_file.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    handle.write(rendered)
+                    temp_path = Path(handle.name)
+                os.replace(temp_path, bindings_file)
+                return
+            log.warning(
+                "[%s] binding 不在 %s, 无法持久化会话身份",
+                binding.name,
+                bindings_file,
             )
-            return
-        log.warning("[%s] binding 不在 %s, 无法持久化会话身份", binding.name, bindings_file)
     except Exception:
         log.exception("[%s] 持久化 provider 会话身份失败", binding.name)
 

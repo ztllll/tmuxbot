@@ -286,7 +286,7 @@ class TelegramFrontend(Frontend):
 
         ctx_summary: str | None = None
         try:
-            ctx_raw = await inject_slash_and_capture(b, "/context")
+            ctx_raw = await inject_slash_and_capture(b, "/context", backend=backend)
             from tmuxbot.backends.claude_code import parse_context as _pc
             ctx_summary = _pc(ctx_raw) if b.backend == "claude_code" else None
         except Exception:
@@ -294,7 +294,7 @@ class TelegramFrontend(Frontend):
 
         usage_summary: str | None = None
         try:
-            usage_raw = await inject_slash_and_capture(b, "/usage")
+            usage_raw = await inject_slash_and_capture(b, "/usage", backend=backend)
             from tmuxbot.backends.claude_code import parse_cost as _pcost
             usage_summary = _pcost(usage_raw) if b.backend == "claude_code" else None
         except Exception:
@@ -870,7 +870,11 @@ class TelegramFrontend(Frontend):
             await ensure_binding_running(
                 backend, b, self.state, reason="telegram-file", wait=True
             )
-            await tmux_send_text(b.tmux_target, inject)
+            await tmux_send_text(
+                b.tmux_target,
+                inject,
+                expected_commands=backend.running_command_names,
+            )
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 
         # ─── forum topic 名缓存 (服务消息, 只缓存不干别的) ─────────
