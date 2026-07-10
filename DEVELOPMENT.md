@@ -292,6 +292,15 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 
 `CLAUDE_BIN` 在 `ensure_running()` 运行时读取,不会依赖 systemd/tmux 的非交互 shell `PATH`。这也避开 npm 全局安装缺少 native optional dependency 时的 `claude native binary not installed` 故障。`CODEX_BIN` 同理可配置 codex 绝对路径。
 
+### Runtime V2 灰度与 Claude hooks
+
+- `TMUXBOT_RUNTIME_V2=off`:兼容 reducer 发送。
+- `TMUXBOT_RUNTIME_V2=shadow`:仍发送兼容结果,同时计算 V2 结果;差异日志只含事件类型、路由类型和长度区间,不记录消息正文。
+- `TMUXBOT_RUNTIME_V2=on`:只发送 V2 reducer 结果。
+- `TMUXBOT_CLAUDE_HOOKS=true`:启动时幂等合并 tmuxbot 自有 hooks 到 `~/.claude/settings.json`,保留其他 hook 与设置。hook 命令只把官方事件写入 `data/claude-hooks.jsonl`,由 Claude adapter 消费。
+
+无论模式为何,执行面始终是 tmux pane 内的交互式 Claude/Codex CLI;hooks 与 JSONL 都只是观测源。
+
 ```bash
 mkdir -p ~/.config/systemd/user
 ln -sf "$(pwd)/deploy/systemd/tmuxbot.service" ~/.config/systemd/user/tmuxbot.service

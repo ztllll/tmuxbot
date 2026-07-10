@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
-from tmuxbot.core.event_reducer import reduce_provider_event
 from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.core.runtime_v2 import RuntimeV2Router
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.tmux import tmux_capture
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
@@ -168,7 +168,8 @@ async def _dispatch_provider_events(
     b: "Binding", events, frontend: "Frontend", state: "State", backend: "Backend"
 ) -> None:
     for event in events:
-        for reduced in reduce_provider_event(event):
+        decision = RuntimeV2Router.from_environment().route(event)
+        for reduced in decision.deliveries:
             try:
                 await on_tmux_event(
                     b,

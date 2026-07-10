@@ -90,6 +90,12 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 
 `CLAUDE_BIN` 会在拉起 Claude 时读取,避免 systemd/tmux 的非交互 shell `PATH` 找不到 `claude`,也避免命中坏掉的 npm 全局安装。`CODEX_BIN` 同理可指向 codex 绝对路径。
 
+Runtime V2 仍然直接操作 tmux 内的交互式 CLI。建议先配置
+`TMUXBOT_RUNTIME_V2=shadow`:线上继续发送兼容路径结果,同时只比较脱敏后的事件结构;
+日志无 mismatch 后再切 `on`。`TMUXBOT_CLAUDE_HOOKS=true` 会幂等安装 tmuxbot
+自有 Claude hooks,用于会话身份与 Stop 最终回复;hooks 只写本地 spool,不会直接发 IM,
+JSONL 和终端状态探测仍继续工作。
+
 ```bash
 mkdir -p ~/.config/systemd/user
 ln -sf "$(pwd)/deploy/systemd/tmuxbot.service" ~/.config/systemd/user/tmuxbot.service
