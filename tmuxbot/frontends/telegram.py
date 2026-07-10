@@ -1245,5 +1245,9 @@ class TelegramFrontend(Frontend):
     async def stop(self) -> None:
         for chat_id in list(self._unknown_chat_leave_tasks):
             self._cancel_unknown_chat_leave(chat_id)
-        await self.dp.stop_polling()
-        await self.bot.session.close()
+        try:
+            await self.dp.stop_polling()
+        except RuntimeError as exc:
+            log.debug("telegram polling already stopped: %s", exc)
+        finally:
+            await self.bot.session.close()

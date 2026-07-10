@@ -178,3 +178,29 @@ def test_interrupt_confirmation_buttons(tmp_path):
     token = binding_token("alpha")
     assert labels == ["确认中断", "取消"]
     assert callbacks == [f"tui:{token}:ctrl_c", f"tui:{token}:refresh"]
+
+
+def test_telegram_stop_always_closes_http_session():
+    calls = []
+
+    class FakeDispatcher:
+        async def stop_polling(self):
+            calls.append("stop_polling")
+            raise RuntimeError("polling already stopped")
+
+    class FakeSession:
+        async def close(self):
+            calls.append("close_session")
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend._unknown_chat_leave_tasks = {}
+        frontend.dp = FakeDispatcher()
+        frontend.bot = SimpleNamespace(session=FakeSession())
+        await frontend.stop()
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert calls == ["stop_polling", "close_session"]

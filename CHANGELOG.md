@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- Telegram 多 bot 服务重启时即使 polling 已先停止,也保证关闭 aiogram HTTP session,不再残留 `Unclosed client session`。
 - 修复 Codex pane 前台命令为 standalone `codex` 时被 watchdog 误判并周期性注入启动命令的问题;未知前台进程不再注入 Claude/Codex 启动命令。
 - 修复输入在 pane busy 时先 paste 后等待导致多条命令堆积的问题;现在按 tmux target 排队并在粘贴前确认 idle 与前台进程。
 - Codex 多 binding 串线风险:Codex rollout 路径不含 cwd,旧逻辑在找不到当前 binding 的 `session_meta.payload.cwd` 时会返回全局最新 `rollout-*.jsonl`,导致多个 chat 可能同时 tail 同一个 Codex 会话。现在只接受 cwd 匹配的 rollout,找不到就返回 `None`。
