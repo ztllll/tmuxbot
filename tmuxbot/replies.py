@@ -3,17 +3,18 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass
 
 from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.core.rich_messages import (
+    RenderedReply,
+    build_reply_document,
+    render_telegram_document,
+)
 from tmuxbot.state import Binding
 from tmuxbot.utils import strip_decorations, utf16_len
 
 
-@dataclass(frozen=True)
-class AssistantReply:
-    chat_html: str
-    full_text: str | None = None
+AssistantReply = RenderedReply
 
 
 def render_assistant_reply(
@@ -28,20 +29,11 @@ def render_assistant_reply(
     ``envelope.body`` is already escaped by backend parsers, so this function only
     wraps it with metadata and optionally creates a plain full-output payload.
     """
-    body = envelope.body.strip()
-    full_text = None
-    if utf16_len(body) > full_output_threshold:
-        full_text = html_to_plain_text(envelope.body)
-        body = _truncate_by_lines(body, full_output_threshold // 2)
-        body = f"{body}\n\n<i>完整输出已附为文件。</i>"
-    body = format_markdownish_html(body)
-
-    title = html.escape(envelope.title or "回复")
-    header = f"💬 <b>{title}</b> · <code>{html.escape(b.name)}</code>"
-    footer = f"<i>{html.escape(footer_text)}</i>" if footer_text else ""
-    if not footer:
-        return AssistantReply(chat_html=f"{header}\n\n{body}", full_text=full_text)
-    return AssistantReply(chat_html=f"{header}\n\n{body}\n\n{footer}", full_text=full_text)
+    document = build_reply_document(b, envelope, footer_text=footer_text)
+    return render_telegram_document(
+        document,
+        full_output_threshold=full_output_threshold,
+    )
 
 
 def screen_footer_from_capture(raw: str) -> str | None:
