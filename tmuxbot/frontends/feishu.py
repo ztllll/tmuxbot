@@ -26,12 +26,18 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from tmuxbot.attachments import (
+    attachment_ref,
     attachment_path,
     attachment_prompt,
     is_image_file,
     split_outbound_attachments,
 )
-from tmuxbot.addressing import message_is_addressed_to_bot
+from tmuxbot.addressing import incoming_message_is_addressed
+from tmuxbot.channels.feishu import (
+    FeishuChannelAdapter,
+    feishu_mentions_bot,
+    feishu_replies_to_bot,
+)
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.base import Frontend
@@ -140,22 +146,11 @@ def _make_fake_msg(message_id: str) -> Any:
 
 
 def feishu_message_mentions_bot(msg: Any, bot_open_id: str | None) -> bool:
-    if not bot_open_id:
-        return False
-    mentions = getattr(msg, "mentions", None) or []
-    return any(
-        getattr(getattr(m, "id", None), "open_id", None) == bot_open_id
-        for m in mentions
-    )
+    return feishu_mentions_bot(msg, bot_open_id)
 
 
 def feishu_message_replies_to_bot(msg: Any, outbound_message_ids: set[str]) -> bool:
-    candidate_ids = (
-        getattr(msg, "parent_id", None),
-        getattr(msg, "root_id", None),
-        getattr(msg, "reply_to_message_id", None),
-    )
-    return any(mid in outbound_message_ids for mid in candidate_ids if mid)
+    return feishu_replies_to_bot(msg, outbound_message_ids)
 
 
 def feishu_message_addresses_bot(
@@ -215,6 +210,10 @@ class FeishuFrontend(Frontend):
         self.project_base = project_base
         self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
         self._outbound_message_ids: set[str] = set()
+        self.channel_adapter = FeishuChannelAdapter(
+            bot_open_id=self.bot_open_id,
+            outbound_message_ids=self._outbound_message_ids,
+        )
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_client = None   # lark.ws.Client 实例
@@ -227,6 +226,22 @@ class FeishuFrontend(Frontend):
             if str(b.chat_id) == str(chat_id) and b.thread_id is None:
                 return b
         return None
+
+    def normalize_incoming(
+        self, message: Any, *, sender_id: str = "", chat_type: str | None = None,
+        attachments=(),
+    ):
+        adapter = FeishuChannelAdapter(
+            bot_open_id=self.bot_open_id,
+            outbound_message_ids=self._outbound_message_ids,
+            chat_type=chat_type,
+        )
+        self.channel_adapter = adapter
+        return adapter.normalize_incoming(
+            message,
+            sender_id=sender_id,
+            attachments=tuple(attachments),
+        )
 
     # ────────── ACL ──────────
 
@@ -245,11 +260,9 @@ class FeishuFrontend(Frontend):
             self._outbound_message_ids.add(message_id)
 
     def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
-        return message_is_addressed_to_bot(
-            require_addressing=self.group_only_when_mentioned,
-            direct_chat=chat_type == "p2p",
-            mentioned=feishu_message_mentions_bot(msg, self.bot_open_id),
-            replied_to_bot=feishu_message_replies_to_bot(msg, self._outbound_message_ids),
+        incoming = self.normalize_incoming(msg, chat_type=chat_type)
+        return incoming_message_is_addressed(
+            incoming, require_addressing=self.group_only_when_mentioned
         )
 
     # ────────── 飞书 REST 发送 (同步, 在 asyncio.to_thread 里调) ──────────
@@ -818,6 +831,9 @@ class FeishuFrontend(Frontend):
             chat_type: str = msg.chat_type      # "group" / "p2p"
             msg_type: str = msg.message_type    # "text" / "image" / ...
             open_id: str = sender.sender_id.open_id
+            incoming = self.normalize_incoming(
+                msg, sender_id=open_id, chat_type=chat_type
+            )
 
             # 诊断: 收到的每条消息 (open_id 按 app 区分, 新接入时据此配白名单; debug 级不刷屏)
             log.debug(
@@ -836,19 +852,12 @@ class FeishuFrontend(Frontend):
             #   - text 以 /init 开头 → 自动开通会话 (建目录 + tmux + binding + 起 claude)
             #     /init <目录名> → 用指定目录; /init → 用群名新建
             #   - 否则打印 chat_id 提示 (便于加新 binding) 后静默
-            b = self.find_binding(chat_id)
+            b = self.find_binding(str(incoming.source_id))
             # ── /deinit 手动拆除该 source 的 binding (Boss; 已绑定群) ──
             # 放 ACL 白名单后、/init 检测附近, 在"未绑定静默"分支之前判断:
             # 有 binding → deprovision (复用 provision.deprovision_chat, 不重写);
             # 无 binding → 回提示 (这里是回提示而非静默, 放 ACL 后即可)。
-            _text_now = ""
-            if msg_type == "text":
-                try:
-                    _cn = json.loads(msg.content)
-                    _text_now = (_cn.get("text", "") or "").strip()
-                except (json.JSONDecodeError, AttributeError):
-                    _text_now = str(msg.content or "").strip()
-                _text_now = re.sub(r"@_user_\d+\s*", "", _text_now).strip()
+            _text_now = incoming.text if msg_type == "text" else ""
             if _text_now == "/deinit":
                 from tmuxbot.provision import deprovision_chat
                 if b is None:
@@ -865,14 +874,7 @@ class FeishuFrontend(Frontend):
                 return
 
             if b is None:
-                _text_for_init = ""
-                if msg_type == "text":
-                    try:
-                        _co = json.loads(msg.content)
-                        _text_for_init = (_co.get("text", "") or "").strip()
-                    except (json.JSONDecodeError, AttributeError):
-                        _text_for_init = str(msg.content or "").strip()
-                    _text_for_init = re.sub(r"@_user_\d+\s*", "", _text_for_init).strip()
+                _text_for_init = incoming.text if msg_type == "text" else ""
                 if _text_for_init == "/projects":
                     await self.send_html(chat_id, None, self._list_projects())
                     return
@@ -958,9 +960,16 @@ class FeishuFrontend(Frontend):
                     )
                     return
 
+                refs = tuple(attachment_ref(path, kind="image") for path in paths)
+                normalized = self.normalize_incoming(
+                    msg,
+                    sender_id=open_id,
+                    chat_type=chat_type,
+                    attachments=refs,
+                )
                 inject = attachment_prompt(
-                    caption,
-                    paths,
+                    normalized.text or caption,
+                    [item.path for item in normalized.attachments],
                     default_caption="请处理这个图片",
                     backend_name=self.backend.name,
                 )
@@ -1009,9 +1018,16 @@ class FeishuFrontend(Frontend):
                     )
                     return
 
+                ref = attachment_ref(path, kind="file", name=filename)
+                normalized = self.normalize_incoming(
+                    msg,
+                    sender_id=open_id,
+                    chat_type=chat_type,
+                    attachments=(ref,),
+                )
                 inject = attachment_prompt(
-                    filename,
-                    [path],
+                    normalized.text,
+                    [item.path for item in normalized.attachments],
                     default_caption="请处理这个文件",
                     backend_name=self.backend.name,
                 )
@@ -1026,15 +1042,7 @@ class FeishuFrontend(Frontend):
                 log.debug(f"feishu: ignore non-text msg_type={msg_type}")
                 return
 
-            # ── 解析文本内容 ──
-            try:
-                content_obj = json.loads(msg.content)
-                text: str = content_obj.get("text", "")
-            except (json.JSONDecodeError, AttributeError):
-                text = str(msg.content or "")
-
-            # 清掉群消息里的 @_user_N 占位符
-            text = re.sub(r"@_user_\d+\s*", "", text).strip()
+            text = incoming.text
 
             if not text:
                 return
@@ -1055,7 +1063,7 @@ class FeishuFrontend(Frontend):
             from tmuxbot.dispatch import dispatch_incoming_text
             await dispatch_incoming_text(
                 self, self.backend, b, self.state,
-                chat_id, None, text,
+                incoming.source_id, incoming.thread_id, text,
             )
 
         except asyncio.CancelledError:

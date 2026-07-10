@@ -43,12 +43,18 @@ from tmuxbot.command_adapter import (
     semantic_actions_from_body,
 )
 from tmuxbot.attachments import (
+    attachment_ref,
     attachment_path,
     attachment_prompt,
     is_image_file,
     split_outbound_attachments,
 )
-from tmuxbot.addressing import message_is_addressed_to_bot
+from tmuxbot.addressing import incoming_message_is_addressed
+from tmuxbot.channels.telegram import (
+    TelegramChannelAdapter,
+    telegram_mentions_bot,
+    telegram_replies_to_bot,
+)
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.base import Frontend
@@ -124,32 +130,13 @@ def thread_id_of(m: Message) -> int | None:
 
 
 def telegram_message_mentions_bot(m: Message, bot_username: str | None) -> bool:
-    """Return whether a Telegram message text/caption explicitly @mentions this bot."""
-    if not bot_username:
-        return False
-    username = bot_username.lstrip("@")
-    if not username:
-        return False
-    pattern = re.compile(rf"@{re.escape(username)}(?![A-Za-z0-9_])", re.IGNORECASE)
-    return any(
-        pattern.search(value or "")
-        for value in (getattr(m, "text", None), getattr(m, "caption", None))
-    )
+    return telegram_mentions_bot(m, bot_username)
 
 
 def telegram_message_replies_to_bot(
     m: Message, bot_username: str | None, bot_id: int | None
 ) -> bool:
-    reply = getattr(m, "reply_to_message", None)
-    user = getattr(reply, "from_user", None)
-    if user is None:
-        return False
-    if bot_id is not None and getattr(user, "id", None) == bot_id:
-        return True
-    if bot_username:
-        username = str(getattr(user, "username", "") or "").lstrip("@").lower()
-        return username == bot_username.lstrip("@").lower()
-    return False
+    return telegram_replies_to_bot(m, bot_username, bot_id)
 
 
 def telegram_message_addresses_bot(
@@ -232,6 +219,7 @@ class TelegramFrontend(Frontend):
         self.dp = Dispatcher()
         self._bot_username: str | None = None  # 懒加载, start_polling 时填入
         self._bot_id: int | None = None
+        self.channel_adapter = TelegramChannelAdapter()
         # forum topic 名缓存: key=(chat_id, thread_id) → topic name。
         # 话题名只在 forum_topic_created / _edited 服务消息里, 普通 message 拿不到 →
         # 服务消息进来时缓存, /init 时按 (chat_id, thread_id) 命中, 取代群名。
@@ -245,6 +233,14 @@ class TelegramFrontend(Frontend):
             if b.chat_id == chat_id and b.thread_id == thread_id:
                 return b
         return None
+
+    def normalize_incoming(self, message: Message, *, attachments=()):
+        adapter = TelegramChannelAdapter(
+            bot_username=self._bot_username,
+            bot_id=self._bot_id,
+        )
+        self.channel_adapter = adapter
+        return adapter.normalize_incoming(message, attachments=tuple(attachments))
 
     def _cancel_unknown_chat_leave(self, chat_id: int) -> None:
         task = self._unknown_chat_leave_tasks.pop(chat_id, None)
@@ -620,13 +616,9 @@ class TelegramFrontend(Frontend):
         return self.find_binding(*source_key(m)) is not None
 
     def _message_allowed_by_mention(self, m: Message) -> bool:
-        return message_is_addressed_to_bot(
-            require_addressing=self.group_only_when_mentioned,
-            direct_chat=getattr(m.chat, "type", None) == "private",
-            mentioned=telegram_message_mentions_bot(m, self._bot_username),
-            replied_to_bot=telegram_message_replies_to_bot(
-                m, self._bot_username, self._bot_id
-            ),
+        incoming = self.normalize_incoming(m)
+        return incoming_message_is_addressed(
+            incoming, require_addressing=self.group_only_when_mentioned
         )
 
     async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
@@ -861,10 +853,16 @@ class TelegramFrontend(Frontend):
             except Exception as e:
                 await m.reply(f"❌ 下载失败: {html.escape(str(e))}")
                 return
-            default_caption = "请处理这个图片" if kind == "photo" else "请处理这个文件"
+            ref = attachment_ref(
+                save_path,
+                kind="image" if kind == "photo" else "file",
+                name=fname,
+            )
+            incoming = F_.normalize_incoming(m, attachments=(ref,))
+            default_caption = "请处理这个图片" if ref.kind == "image" else "请处理这个文件"
             inject = attachment_prompt(
-                m.caption,
-                [save_path],
+                incoming.text,
+                [item.path for item in incoming.attachments],
                 default_caption=default_caption,
                 backend_name=F_.backend.name,
             )
@@ -1018,12 +1016,13 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
+            incoming = F_.normalize_incoming(m)
             # ★ bot_username 传入供 dispatch 剥 @bot_username 后缀
             # (TG group 内命令自动带 /compact@ztl_claude_bot 形式)
             # _bot_username 在 start_polling 时通过 get_me() 填入, 避免每条消息都 API 请求
             await dispatch_incoming_text(
                 F_, F_.backend, b, S,
-                m.chat.id, thread_id_of(m), m.text,
+                incoming.source_id, incoming.thread_id, incoming.text,
                 bot_username=F_._bot_username,
             )
 

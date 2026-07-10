@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from tmuxbot.core.messages import AttachmentRef
+
 
 ATTACHMENT_DIR = Path(os.getenv("TMUXBOT_ATTACHMENT_DIR", "/tmp/tmuxbot-attachments"))
 _UNSAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._ -]+")
@@ -29,6 +31,23 @@ _IMAGE_EXTENSIONS = {
 class OutboundAttachment:
     path: Path
     kind: str
+
+
+def attachment_ref(
+    path: str | Path,
+    *,
+    kind: str | None = None,
+    name: str | None = None,
+    mime_type: str | None = None,
+) -> AttachmentRef:
+    """Describe a downloaded local attachment without channel-specific fields."""
+    p = Path(path)
+    return AttachmentRef(
+        path=str(p),
+        kind=kind or ("image" if is_image_file(p) else "file"),
+        name=name or p.name,
+        mime_type=mime_type or mimetypes.guess_type(str(p))[0],
+    )
 
 
 def safe_filename(name: str | None, fallback: str = "attachment.bin") -> str:
