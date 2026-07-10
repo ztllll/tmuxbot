@@ -48,7 +48,6 @@ from tmuxbot.attachments import (
     attachment_ref,
     attachment_path,
     attachment_prompt,
-    is_image_file,
     prepare_outbound_attachments,
     split_outbound_attachments,
 )
@@ -466,22 +465,45 @@ class TelegramFrontend(Frontend):
         self, chat_id: int | str, thread_id: int | None, path: str | Path,
         caption: str | None = None,
     ) -> Any:
-        file = FSInputFile(path)
-        return await self._tg_call(
-            lambda: self.bot.send_photo(
-                int(chat_id), file, caption=caption, message_thread_id=thread_id
+        try:
+            file = FSInputFile(path)
+            return await self._tg_call(
+                lambda: self.bot.send_photo(
+                    int(chat_id), file, caption=caption, message_thread_id=thread_id
+                )
             )
-        )
+        except Exception:
+            log.exception("telegram image upload failed: %s", path)
+            await self._send_attachment_failure(chat_id, thread_id, path)
+            return None
 
     async def send_file(
         self, chat_id: int | str, thread_id: int | None, path: str | Path,
         caption: str | None = None,
     ) -> Any:
-        file = FSInputFile(path)
-        return await self._tg_call(
-            lambda: self.bot.send_document(
-                int(chat_id), file, caption=caption, message_thread_id=thread_id
+        try:
+            file = FSInputFile(path)
+            return await self._tg_call(
+                lambda: self.bot.send_document(
+                    int(chat_id), file, caption=caption, message_thread_id=thread_id
+                )
             )
+        except Exception:
+            log.exception("telegram file upload failed: %s", path)
+            await self._send_attachment_failure(chat_id, thread_id, path)
+            return None
+
+    async def _send_attachment_failure(
+        self,
+        chat_id: int | str,
+        thread_id: int | None,
+        path: str | Path,
+    ) -> None:
+        basename = html.escape(Path(path).name or "attachment")
+        await self.send_html(
+            chat_id,
+            thread_id,
+            f"❌ <b>附件发送失败</b>: <code>{basename}</code>",
         )
 
     async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:

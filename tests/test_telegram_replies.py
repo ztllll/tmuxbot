@@ -195,6 +195,38 @@ def test_telegram_assistant_reply_promotes_relative_file_without_exposing_path(t
     assert calls[1] == ("document", str(report), {"caption": "result.pdf", "message_thread_id": 456})
 
 
+def test_telegram_file_upload_failure_reports_only_basename(tmp_path):
+    report = tmp_path / "secret-report.pdf"
+    report.write_bytes(b"pdf")
+    calls = []
+
+    class FakeBot:
+        async def send_document(self, chat_id, file, **kwargs):
+            raise RuntimeError("upload failed")
+
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(text)
+            return SimpleNamespace(message_id=912)
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        result = await frontend.send_file(123, None, report, caption=report.name)
+        assert result is None
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert calls == ["❌ <b>附件发送失败</b>: <code>secret-report.pdf</code>"]
+    assert str(tmp_path) not in calls[0]
+
+
 def test_light_status_summary_does_not_use_heavy_status_injection(tmp_path, monkeypatch):
     sent = []
 

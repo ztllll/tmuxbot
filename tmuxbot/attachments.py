@@ -277,6 +277,12 @@ def _attachment_roots(
     if cwd is not None:
         candidates.insert(0, cwd)
     candidates.extend(Path(root).expanduser() for root in allowed_roots)
+    configured = os.getenv("TMUXBOT_ATTACHMENT_ALLOWED_ROOTS", "")
+    candidates.extend(
+        Path(root).expanduser()
+        for root in configured.split(os.pathsep)
+        if root.strip()
+    )
 
     roots: list[Path] = []
     for candidate in candidates:

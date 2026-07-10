@@ -31,7 +31,6 @@ from tmuxbot.attachments import (
     attachment_ref,
     attachment_path,
     attachment_prompt,
-    is_image_file,
     prepare_outbound_attachments,
     split_outbound_attachments,
 )
@@ -635,15 +634,19 @@ class FeishuFrontend(Frontend):
         caption: str | None = None,
     ) -> Any:
         """上传本地图片并以飞书 image 消息发送。"""
-        image_key = await asyncio.to_thread(self._upload_image_sync, path)
+        try:
+            image_key = await asyncio.to_thread(self._upload_image_sync, path)
+        except Exception:
+            log.exception("feishu image upload failed: %s", path)
+            image_key = None
         if not image_key:
-            if caption:
-                await self.send_html(chat_id, thread_id, caption)
+            await self._send_attachment_failure(chat_id, thread_id, path)
             return None
         message_id = await asyncio.to_thread(
             self._send_resource_message_sync, str(chat_id), "image", {"image_key": image_key}
         )
         if message_id is None:
+            await self._send_attachment_failure(chat_id, thread_id, path)
             return None
         self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
@@ -653,18 +656,35 @@ class FeishuFrontend(Frontend):
         caption: str | None = None,
     ) -> Any:
         """上传本地文件并以飞书 file 消息发送。"""
-        file_key = await asyncio.to_thread(self._upload_file_sync, path)
+        try:
+            file_key = await asyncio.to_thread(self._upload_file_sync, path)
+        except Exception:
+            log.exception("feishu file upload failed: %s", path)
+            file_key = None
         if not file_key:
-            if caption:
-                await self.send_html(chat_id, thread_id, caption)
+            await self._send_attachment_failure(chat_id, thread_id, path)
             return None
         message_id = await asyncio.to_thread(
             self._send_resource_message_sync, str(chat_id), "file", {"file_key": file_key}
         )
         if message_id is None:
+            await self._send_attachment_failure(chat_id, thread_id, path)
             return None
         self._remember_outbound_message(message_id)
         return _make_fake_msg(message_id)
+
+    async def _send_attachment_failure(
+        self,
+        chat_id: int | str,
+        thread_id: int | None,
+        path: str | Path,
+    ) -> None:
+        basename = html_mod.escape(Path(path).name or "attachment")
+        await self.send_html(
+            chat_id,
+            thread_id,
+            f"❌ <b>附件发送失败</b>: <code>{basename}</code>",
+        )
 
     async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:
         clean_body, attachments = prepare_outbound_attachments(

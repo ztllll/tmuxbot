@@ -117,3 +117,24 @@ def test_feishu_assistant_reply_falls_back_to_legacy_card_when_v2_send_fails(tmp
     assert json.loads(sent[0])["schema"] == "2.0"
     assert "schema" not in json.loads(sent[1])
     assert "兼容内容" in sent[1]
+
+
+def test_feishu_image_upload_failure_reports_only_basename(tmp_path):
+    image = tmp_path / "private-chart.png"
+    image.write_bytes(b"png")
+    notices = []
+    frontend = FeishuFrontend.__new__(FeishuFrontend)
+    frontend._upload_image_sync = lambda path: None
+
+    async def send_html(chat_id, thread_id, content):
+        notices.append(content)
+
+    frontend.send_html = send_html
+
+    result = asyncio.run(
+        frontend.send_image("oc_123", None, image, caption=image.name)
+    )
+
+    assert result is None
+    assert notices == ["❌ <b>附件发送失败</b>: <code>private-chart.png</code>"]
+    assert str(tmp_path) not in notices[0]

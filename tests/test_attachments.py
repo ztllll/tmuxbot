@@ -153,3 +153,22 @@ def test_split_outbound_attachments_deduplicates_path_and_keeps_first_label(tmp_
 
     assert text == "文件：结果"
     assert [(a.path, a.label) for a in attachments] == [(report, "结果")]
+
+
+def test_split_outbound_attachments_accepts_configured_extra_root(tmp_path, monkeypatch):
+    import tmuxbot.attachments as attachments_module
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    extra = tmp_path / "shared"
+    extra.mkdir()
+    report = extra / "report.pdf"
+    report.write_bytes(b"pdf")
+    monkeypatch.setattr(attachments_module, "ATTACHMENT_DIR", tmp_path / "attachments")
+    monkeypatch.setattr(attachments_module.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+    monkeypatch.setenv("TMUXBOT_ATTACHMENT_ALLOWED_ROOTS", str(extra))
+
+    text, found = split_outbound_attachments(str(report), cwd=cwd)
+
+    assert text == ""
+    assert [item.path for item in found] == [report]
