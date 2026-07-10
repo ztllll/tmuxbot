@@ -32,6 +32,7 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LinkPreviewOptions,
     Message,
     ReactionTypeEmoji,
 )
@@ -508,6 +509,9 @@ class TelegramFrontend(Frontend):
         }
         buttons = [action_buttons[action] for action in envelope.actions if action in action_buttons]
         markup = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
+        link_preview_options = LinkPreviewOptions(
+            is_disabled=not bool(envelope.metadata.get("link_preview", False))
+        )
         first_msg = None
         for chunk in split_for_tg(rendered.chat_html):
             msg = await self._tg_call(
@@ -516,6 +520,7 @@ class TelegramFrontend(Frontend):
                     c,
                     message_thread_id=b.thread_id,
                     reply_markup=markup if first_msg is None else None,
+                    link_preview_options=link_preview_options,
                 )
             )
             if first_msg is None:

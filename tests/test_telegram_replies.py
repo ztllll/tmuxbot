@@ -108,6 +108,7 @@ def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
 
     assert calls[0][0] == "message"
     assert calls[0][3]["message_thread_id"] == 456
+    assert calls[0][3]["link_preview_options"].is_disabled is True
     markup = calls[0][3]["reply_markup"]
     labels = [button.text for row in markup.inline_keyboard for button in row]
     assert labels == ["屏幕", "状态", "取消", "强制中断"]
@@ -121,6 +122,39 @@ def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
     ]
     assert calls[1][0] == "document"
     assert calls[1][2] == "assistant-alpha.txt"
+
+
+def test_telegram_assistant_reply_can_explicitly_enable_link_preview(tmp_path):
+    calls = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(message_id=909)
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+        frontend.backend = CodexBackend()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.send_assistant_reply(
+            binding(tmp_path),
+            ReplyEnvelope(
+                title="回复",
+                body="https://example.com",
+                metadata={"link_preview": True},
+            ),
+        )
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert calls[0]["link_preview_options"].is_disabled is False
 
 
 def test_telegram_assistant_reply_promotes_relative_file_without_exposing_path(tmp_path):
