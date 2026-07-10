@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass, field, replace
+from html.parser import HTMLParser
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -185,21 +186,108 @@ def _parse_blocks(source: str) -> tuple[ReplyBlock, ...]:
 
 def _render_telegram_block(block: ReplyBlock) -> str:
     if block.kind == "heading":
-        return f"<b>{block.text}</b>"
+        return f"<b>{_sanitize_telegram_inline(block.text)}</b>"
     if block.kind == "code":
+        code = html.escape(html.unescape(block.text), quote=False)
         if block.language:
             return (
                 f'<pre><code class="language-{html.escape(block.language)}">'
-                f"{block.text}</code></pre>"
+                f"{code}</code></pre>"
             )
-        return f"<pre>{block.text}</pre>"
+        return f"<pre>{code}</pre>"
     if block.kind == "quote":
-        return f"<blockquote expandable>{block.text}</blockquote>"
+        return f"<blockquote expandable>{_sanitize_telegram_inline(block.text)}</blockquote>"
     if block.kind == "list":
-        return "\n".join(f"• {item}" for item in block.items)
+        return "\n".join(f"• {_sanitize_telegram_inline(item)}" for item in block.items)
     if block.kind == "divider":
         return "────────"
-    return block.text
+    return _sanitize_telegram_inline(block.text)
+
+
+_TELEGRAM_INLINE_TAG_RE = re.compile(
+    r"(</?(?:b|strong|i|em|u|ins|s|strike|del|code)\s*>)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_telegram_inline(value: str) -> str:
+    return sanitize_telegram_html(value)
+
+
+def sanitize_telegram_html(value: str) -> str:
+    parser = _TelegramHTMLSanitizer()
+    parser.feed(value)
+    parser.close()
+    return "".join(parser.parts)
+
+
+class _TelegramHTMLSanitizer(HTMLParser):
+    _SIMPLE_TAGS = {
+        "b",
+        "strong",
+        "i",
+        "em",
+        "u",
+        "ins",
+        "s",
+        "strike",
+        "del",
+        "pre",
+    }
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        attr_map = dict(attrs)
+        if tag in self._SIMPLE_TAGS:
+            self.parts.append(f"<{tag}>")
+            return
+        if tag == "code":
+            language = attr_map.get("class", "")
+            if re.fullmatch(r"language-[A-Za-z0-9_+-]+", language):
+                self.parts.append(f'<code class="{html.escape(language, quote=True)}">')
+            else:
+                self.parts.append("<code>")
+            return
+        if tag == "blockquote":
+            expandable = any(name == "expandable" for name, _value in attrs)
+            self.parts.append("<blockquote expandable>" if expandable else "<blockquote>")
+            return
+        if tag == "span" and attr_map.get("class") == "tg-spoiler":
+            self.parts.append('<span class="tg-spoiler">')
+            return
+        if tag == "tg-spoiler":
+            self.parts.append("<tg-spoiler>")
+            return
+        if tag == "a" and attr_map.get("href"):
+            href = html.escape(attr_map["href"], quote=True)
+            self.parts.append(f'<a href="{href}">')
+            return
+        self.parts.append(html.escape(self.get_starttag_text() or f"<{tag}>", quote=False))
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        allowed = self._SIMPLE_TAGS | {"code", "blockquote", "tg-spoiler", "a"}
+        if tag in allowed:
+            self.parts.append(f"</{tag}>")
+        elif tag == "span":
+            self.parts.append("</span>")
+        else:
+            self.parts.append(html.escape(f"</{tag}>", quote=False))
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(html.escape(data, quote=False))
+
+    def handle_entityref(self, name: str) -> None:
+        value = html.unescape(f"&{name};")
+        self.parts.append(html.escape(value, quote=False))
+
+    def handle_charref(self, name: str) -> None:
+        value = html.unescape(f"&#{name};")
+        self.parts.append(html.escape(value, quote=False))
 
 
 def _plain_text(value: str) -> str:

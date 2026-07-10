@@ -80,3 +80,19 @@ def test_reply_summary_removes_markup_and_never_uses_local_path(tmp_path):
     )
 
     assert reply_summary(document) == "完成 文件已作为附件发送。"
+
+
+def test_telegram_renderer_escapes_unknown_angle_brackets_but_keeps_known_tags(tmp_path):
+    document = build_reply_document(
+        binding(tmp_path),
+        ReplyEnvelope(
+            title="回复",
+            body="状态 <- previous，<b>安全粗体</b>，<danger>不是标签</danger>",
+        ),
+    )
+
+    result = render_telegram_document(document, full_output_threshold=8000)
+
+    assert "状态 &lt;- previous" in result.chat_html
+    assert "<b>安全粗体</b>" in result.chat_html
+    assert "&lt;danger&gt;不是标签&lt;/danger&gt;" in result.chat_html

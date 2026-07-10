@@ -59,6 +59,7 @@ from tmuxbot.channels.telegram import (
 )
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.core.rich_messages import sanitize_telegram_html
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
@@ -396,6 +397,7 @@ class TelegramFrontend(Frontend):
 
     async def send_html(self, chat_id: int, thread_id: int | None, html_text: str) -> Any:
         """单条 HTML, 长则分片或转 .txt 附件。返回第一条 message 对象 (供后续 edit)"""
+        html_text = sanitize_telegram_html(html_text)
         if utf16_len(html_text) > TG_DOC_THRESHOLD:
             try:
                 plain = re.sub(r"<[^>]+>", "", html_text)
@@ -418,6 +420,7 @@ class TelegramFrontend(Frontend):
 
     async def edit_html(self, chat_id: int, message_id: int, html_text: str) -> None:
         """编辑已发送消息 — 工具调用聚合用。超长直接 truncate 末尾。"""
+        html_text = sanitize_telegram_html(html_text)
         if utf16_len(html_text) > TG_SPLIT:
             html_text = html_text[: TG_SPLIT - 30] + "\n<i>… (内容已截断)</i>"
         await self._tg_call(
