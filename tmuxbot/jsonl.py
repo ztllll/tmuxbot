@@ -275,7 +275,7 @@ async def on_tmux_event(
         return
 
     # 走到这: kind == "assistant_tools", 进 aggregator
-    body, attachments = split_outbound_attachments(body)
+    body, attachments = split_outbound_attachments(body, cwd=b.cwd)
     if not body.strip():
         await _send_outbound_attachments(frontend, b, attachments)
         return
@@ -310,7 +310,7 @@ async def on_tmux_event(
 async def _send_html_with_outbound_attachments(
     frontend: "Frontend", b: "Binding", html_text: str,
 ) -> None:
-    clean_text, attachments = split_outbound_attachments(html_text)
+    clean_text, attachments = split_outbound_attachments(html_text, cwd=b.cwd)
     if clean_text.strip():
         await frontend.send_html(b.chat_id, b.thread_id, clean_text)
     await _send_outbound_attachments(frontend, b, attachments)
@@ -319,7 +319,7 @@ async def _send_html_with_outbound_attachments(
 async def _send_assistant_reply(
     frontend: "Frontend", b: "Binding", html_text: str, backend: "Backend",
 ) -> None:
-    clean_text, attachments = split_outbound_attachments(html_text)
+    clean_text, attachments = split_outbound_attachments(html_text, cwd=b.cwd)
     try:
         pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
         status = backend.parse_terminal_status(pane)

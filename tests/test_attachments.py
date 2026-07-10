@@ -84,3 +84,72 @@ def test_split_outbound_attachments_recognizes_markdown_file_link(tmp_path):
 
     assert text == "这是终稿文件路径:"
     assert [(a.path, a.kind) for a in attachments] == [(final, "file")]
+
+
+def test_split_outbound_attachments_promotes_inline_links_and_images(tmp_path):
+    report = tmp_path / "report final.pdf"
+    report.write_bytes(b"pdf")
+    image = tmp_path / "chart.png"
+    image.write_bytes(b"png")
+
+    text, attachments = split_outbound_attachments(
+        f"报告在这里：[终稿](<{report}>)，图表见 ![趋势图](<{image}>)。",
+        cwd=tmp_path,
+    )
+
+    assert text == "报告在这里：终稿，图表见 趋势图。"
+    assert [(a.path, a.kind, a.label) for a in attachments] == [
+        (report, "file", "终稿"),
+        (image, "image", "趋势图"),
+    ]
+
+
+def test_split_outbound_attachments_strips_editor_line_suffixes(tmp_path):
+    report = tmp_path / "report.md"
+    report.write_text("done", encoding="utf-8")
+
+    text, attachments = split_outbound_attachments(
+        f"[第一处](<{report}:12>) 和 [第二处](<{report}#L20>)",
+        cwd=tmp_path,
+    )
+
+    assert text == "第一处 和 第二处"
+    assert [(a.path, a.label) for a in attachments] == [(report, "第一处")]
+
+
+def test_split_outbound_attachments_resolves_relative_paths_from_binding_cwd(tmp_path):
+    report = tmp_path / "build" / "result.csv"
+    report.parent.mkdir()
+    report.write_text("a,b\n", encoding="utf-8")
+
+    text, attachments = split_outbound_attachments(
+        "生成完成：\n./build/result.csv",
+        cwd=tmp_path,
+    )
+
+    assert text == "生成完成："
+    assert [(a.path, a.kind) for a in attachments] == [(report, "file")]
+
+
+def test_split_outbound_attachments_rejects_existing_files_outside_allowed_roots(tmp_path):
+    outside = Path("/etc/hosts")
+    if not outside.is_file():
+        return
+
+    text, attachments = split_outbound_attachments(str(outside), cwd=tmp_path)
+
+    assert text == str(outside)
+    assert attachments == []
+
+
+def test_split_outbound_attachments_deduplicates_path_and_keeps_first_label(tmp_path):
+    report = tmp_path / "result.pdf"
+    report.write_bytes(b"pdf")
+
+    text, attachments = split_outbound_attachments(
+        f"文件：[结果](<{report}>)\n@{report}",
+        cwd=tmp_path,
+    )
+
+    assert text == "文件：结果"
+    assert [(a.path, a.label) for a in attachments] == [(report, "结果")]

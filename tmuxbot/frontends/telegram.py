@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, TYPE_CHECKING
 
@@ -47,6 +48,7 @@ from tmuxbot.attachments import (
     attachment_path,
     attachment_prompt,
     is_image_file,
+    prepare_outbound_attachments,
     split_outbound_attachments,
 )
 from tmuxbot.addressing import incoming_message_is_addressed
@@ -427,7 +429,11 @@ class TelegramFrontend(Frontend):
     async def send_pre(self, chat_id: int, thread_id: int | None, raw_text: str) -> None:
         if not raw_text.strip():
             return
-        clean_text, attachments = split_outbound_attachments(raw_text)
+        binding = self.find_binding(chat_id, thread_id)
+        clean_text, attachments = split_outbound_attachments(
+            raw_text,
+            cwd=binding.cwd if binding is not None else None,
+        )
         if clean_text.strip() and utf16_len(clean_text) > TG_DOC_THRESHOLD:
             try:
                 file = BufferedInputFile(clean_text.encode("utf-8"), filename="capture.txt")
@@ -478,10 +484,16 @@ class TelegramFrontend(Frontend):
         )
 
     async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:
-        footer_text = self.backend.format_status_footer(envelope.footer)
+        clean_body, attachments = prepare_outbound_attachments(
+            envelope.body,
+            envelope.attachments,
+            cwd=b.cwd,
+        )
+        effective_envelope = replace(envelope, body=clean_body, attachments=())
+        footer_text = self.backend.format_status_footer(effective_envelope.footer)
         rendered = render_assistant_reply(
             b,
-            envelope,
+            effective_envelope,
             full_output_threshold=TG_REPLY_FULL_OUTPUT_THRESHOLD,
             footer_text=footer_text,
         )
@@ -523,11 +535,12 @@ class TelegramFrontend(Frontend):
                 )
             )
 
-        for attachment in envelope.attachments:
-            if is_image_file(attachment):
-                await self.send_image(b.chat_id, b.thread_id, attachment)
+        for attachment in attachments:
+            caption = attachment.path.name
+            if attachment.kind == "image":
+                await self.send_image(b.chat_id, b.thread_id, attachment.path, caption=caption)
             else:
-                await self.send_file(b.chat_id, b.thread_id, attachment)
+                await self.send_file(b.chat_id, b.thread_id, attachment.path, caption=caption)
         return first_msg
 
     async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:

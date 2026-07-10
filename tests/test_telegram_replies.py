@@ -123,6 +123,44 @@ def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
     assert calls[1][2] == "assistant-alpha.txt"
 
 
+def test_telegram_assistant_reply_promotes_relative_file_without_exposing_path(tmp_path):
+    report = tmp_path / "result.pdf"
+    report.write_bytes(b"pdf")
+    calls = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(("message", text, kwargs))
+            return SimpleNamespace(message_id=910)
+
+        async def send_document(self, chat_id, file, **kwargs):
+            calls.append(("document", str(file.path), kwargs))
+            return SimpleNamespace(message_id=911)
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+        frontend.backend = CodexBackend()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.send_assistant_reply(
+            binding(tmp_path),
+            ReplyEnvelope(title="回复", body="文件：[报告](<./result.pdf>)"),
+        )
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert calls[0][0] == "message"
+    assert str(report) not in calls[0][1]
+    assert calls[0][1].endswith("文件：报告")
+    assert calls[1] == ("document", str(report), {"caption": "result.pdf", "message_thread_id": 456})
+
+
 def test_light_status_summary_does_not_use_heavy_status_injection(tmp_path, monkeypatch):
     sent = []
 

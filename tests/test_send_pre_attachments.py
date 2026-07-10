@@ -13,6 +13,7 @@ def test_telegram_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         sent = []
 
         frontend = object.__new__(TelegramFrontend)
+        frontend.bindings = [SimpleNamespace(chat_id=123, thread_id=456, cwd=tmp_path)]
         frontend.bot = SimpleNamespace(
             send_message=lambda chat_id, text, message_thread_id=None: sent.append(
                 ("html", chat_id, message_thread_id, text)
@@ -32,7 +33,7 @@ def test_telegram_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         frontend.send_image = send_image
         frontend.send_file = send_file
 
-        await frontend.send_pre(123, 456, f"screen\n│ @{image}")
+        await frontend.send_pre(123, 456, "screen\n│ @./screen.jpg")
 
         assert sent == [
             ("html", 123, 456, "<pre>screen</pre>"),
@@ -49,6 +50,7 @@ def test_feishu_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         sent = []
 
         frontend = object.__new__(FeishuFrontend)
+        frontend.bindings = [SimpleNamespace(chat_id="oc_x", thread_id=None, cwd=tmp_path)]
         frontend._send_card_sync = lambda chat_id, md: sent.append(("card", chat_id, md))
 
         async def send_image(chat_id, thread_id, path, caption=None):
@@ -60,7 +62,7 @@ def test_feishu_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         frontend.send_image = send_image
         frontend.send_file = send_file
 
-        await frontend.send_pre("oc_x", None, f"screen\n│ @{image}")
+        await frontend.send_pre("oc_x", None, "screen\n│ @./screen.jpg")
 
         assert sent == [
             ("card", "oc_x", "```\nscreen\n```"),

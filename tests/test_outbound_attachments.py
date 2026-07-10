@@ -128,6 +128,32 @@ def test_assistant_text_uses_enhanced_reply_sender_when_available(tmp_path):
     asyncio.run(run())
 
 
+def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_path):
+    async def run():
+        report = tmp_path / "reports" / "result.pdf"
+        report.parent.mkdir()
+        report.write_bytes(b"pdf")
+
+        frontend = EnhancedFakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+
+        await on_tmux_event(
+            b,
+            "assistant_text",
+            "结果文件：[下载](<./reports/result.pdf>)",
+            frontend,
+            state,
+            FakeBackend(),
+        )
+
+        assert frontend.sent == [
+            ("assistant_reply", 123, None, "结果文件：下载", (report,)),
+        ]
+
+    asyncio.run(run())
+
+
 def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
     async def run():
         image = tmp_path / "tool-screen.jpg"

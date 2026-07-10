@@ -5,6 +5,7 @@ import html
 import mimetypes
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,7 @@ _IMAGE_EXTENSIONS = {
 class OutboundAttachment:
     path: Path
     kind: str
+    label: str | None = None
 
 
 def attachment_ref(
@@ -119,51 +121,102 @@ def is_image_file(path: str | Path) -> bool:
     return bool(mime and mime.startswith("image/"))
 
 
-def split_outbound_attachments(text: str) -> tuple[str, list[OutboundAttachment]]:
+def split_outbound_attachments(
+    text: str,
+    *,
+    cwd: str | Path | None = None,
+    allowed_roots: tuple[str | Path, ...] = (),
+) -> tuple[str, list[OutboundAttachment]]:
     """Remove local attachment path lines from text and return files to send.
 
     Only existing local files are extracted. Non-existent paths remain in text so
     normal assistant explanations are not silently altered.
     """
+    base_dir = Path(cwd).expanduser().resolve() if cwd is not None else None
+    roots = _attachment_roots(base_dir, allowed_roots)
     kept: list[str] = []
     attachments: list[OutboundAttachment] = []
     seen: set[Path] = set()
 
     for line in text.splitlines():
-        path = _attachment_path_from_line(line)
-        if path is None:
-            kept.append(line)
+        whole_path = _attachment_path_from_line(line, cwd=base_dir, roots=roots)
+        if whole_path is not None:
+            _append_outbound_attachment(attachments, seen, whole_path)
             continue
-        resolved = path.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            attachments.append(
-                OutboundAttachment(
-                    path=path,
-                    kind="image" if is_image_file(path) else "file",
-                )
-            )
+
+        rendered = _replace_inline_attachment_links(
+            line,
+            cwd=base_dir,
+            roots=roots,
+            attachments=attachments,
+            seen=seen,
+        )
+        kept.append(rendered)
 
     return "\n".join(kept).strip(), attachments
 
 
-def _attachment_path_from_line(line: str) -> Path | None:
+def prepare_outbound_attachments(
+    text: str,
+    explicit_paths: tuple[str | Path, ...] = (),
+    *,
+    cwd: str | Path | None = None,
+    allowed_roots: tuple[str | Path, ...] = (),
+) -> tuple[str, list[OutboundAttachment]]:
+    """Merge trusted structured attachments with paths promoted from reply text."""
+    clean_text, discovered = split_outbound_attachments(
+        text,
+        cwd=cwd,
+        allowed_roots=allowed_roots,
+    )
+    base_dir = Path(cwd).expanduser().resolve() if cwd is not None else None
+    attachments: list[OutboundAttachment] = []
+    seen: set[Path] = set()
+
+    for raw_path in explicit_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute() and base_dir is not None:
+            path = base_dir / path
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved.is_file():
+            _append_outbound_attachment(attachments, seen, resolved)
+
+    for attachment in discovered:
+        _append_outbound_attachment(
+            attachments,
+            seen,
+            attachment.path,
+            label=attachment.label,
+        )
+    return clean_text, attachments
+
+
+def _attachment_path_from_line(
+    line: str,
+    *,
+    cwd: Path | None,
+    roots: tuple[Path, ...],
+) -> Path | None:
     raw = html.unescape(line).strip()
     if not raw:
         return None
 
     candidate = _candidate_path(raw)
     if candidate is None and ":" in raw:
-        candidate = _candidate_path(raw.rsplit(":", 1)[1].strip())
+        suffix = raw.rsplit(":", 1)[1].strip()
+        if not suffix.startswith(("[", "![")):
+            candidate = _candidate_path(suffix)
     if candidate is None and "：" in raw:
-        candidate = _candidate_path(raw.rsplit("：", 1)[1].strip())
+        suffix = raw.rsplit("：", 1)[1].strip()
+        if not suffix.startswith(("[", "![")):
+            candidate = _candidate_path(suffix)
     if candidate is None:
         return None
 
-    path = Path(candidate).expanduser()
-    if path.is_file():
-        return path
-    return None
+    return _resolve_attachment_path(candidate, cwd=cwd, roots=roots)
 
 
 def _candidate_path(text: str) -> str | None:
@@ -171,7 +224,7 @@ def _candidate_path(text: str) -> str | None:
     s = re.sub(r"^[\s│┃║▌▐▏▕┆┊|>›»]+", "", s).strip()
     s = re.sub(r"^(?:[-*]\s+|\d+[.)]\s+)", "", s)
     s = s.strip().strip("`'\"")
-    markdown_link = re.fullmatch(r"\[[^\]]+\]\(\s*<?([^<>\s][^<>]*?)>?\s*\)", s)
+    markdown_link = re.fullmatch(r"!?\[[^\]]*\]\(\s*<?([^<>\s][^<>]*?)>?\s*\)", s)
     if markdown_link:
         s = markdown_link.group(1).strip()
     if s.startswith("@file://"):
@@ -180,6 +233,109 @@ def _candidate_path(text: str) -> str | None:
         return s.removeprefix("file://")
     if s.startswith("@/"):
         return s[1:]
+    if s.startswith("@./") or s.startswith("@../"):
+        return s[1:]
     if s.startswith("/"):
         return s
+    if s.startswith("./") or s.startswith("../"):
+        return s
     return None
+
+
+_INLINE_MARKDOWN_FILE_RE = re.compile(
+    r"!?\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^\)\n]+))\s*\)"
+)
+
+
+def _replace_inline_attachment_links(
+    line: str,
+    *,
+    cwd: Path | None,
+    roots: tuple[Path, ...],
+    attachments: list[OutboundAttachment],
+    seen: set[Path],
+) -> str:
+    raw = html.unescape(line)
+
+    def replace(match: re.Match[str]) -> str:
+        label = match.group(1).strip()
+        target = (match.group(2) or match.group(3) or "").strip()
+        path = _resolve_attachment_path(target, cwd=cwd, roots=roots)
+        if path is None:
+            return match.group(0)
+        _append_outbound_attachment(attachments, seen, path, label=label or None)
+        return label or path.name
+
+    return _INLINE_MARKDOWN_FILE_RE.sub(replace, raw)
+
+
+def _attachment_roots(
+    cwd: Path | None,
+    allowed_roots: tuple[str | Path, ...],
+) -> tuple[Path, ...]:
+    candidates: list[Path] = [ATTACHMENT_DIR, Path(tempfile.gettempdir())]
+    if cwd is not None:
+        candidates.insert(0, cwd)
+    candidates.extend(Path(root).expanduser() for root in allowed_roots)
+
+    roots: list[Path] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return tuple(roots)
+
+
+def _resolve_attachment_path(
+    candidate: str,
+    *,
+    cwd: Path | None,
+    roots: tuple[Path, ...],
+) -> Path | None:
+    raw = candidate.strip().strip("`'\"")
+    if raw.startswith("file://"):
+        raw = raw.removeprefix("file://")
+    if raw.startswith("@"):
+        raw = raw[1:]
+
+    path = Path(raw).expanduser()
+    variants = [path]
+    line_suffix = re.sub(r"(?::\d+(?::\d+)?|#L\d+(?:C\d+)?)$", "", raw)
+    if line_suffix != raw:
+        variants.insert(0, Path(line_suffix).expanduser())
+
+    for variant in variants:
+        if not variant.is_absolute():
+            if cwd is None:
+                continue
+            variant = cwd / variant
+        try:
+            resolved = variant.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        if not any(resolved == root or resolved.is_relative_to(root) for root in roots):
+            continue
+        return resolved
+    return None
+
+
+def _append_outbound_attachment(
+    attachments: list[OutboundAttachment],
+    seen: set[Path],
+    path: Path,
+    *,
+    label: str | None = None,
+) -> None:
+    resolved = path.resolve()
+    if resolved in seen:
+        return
+    seen.add(resolved)
+    attachments.append(
+        OutboundAttachment(
+            path=resolved,
+            kind="image" if is_image_file(resolved) else "file",
+            label=label,
+        )
+    )

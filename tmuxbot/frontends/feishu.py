@@ -22,6 +22,7 @@ import os
 import re
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -30,6 +31,7 @@ from tmuxbot.attachments import (
     attachment_path,
     attachment_prompt,
     is_image_file,
+    prepare_outbound_attachments,
     split_outbound_attachments,
 )
 from tmuxbot.addressing import incoming_message_is_addressed
@@ -394,7 +396,11 @@ class FeishuFrontend(Frontend):
         """raw_text 用代码块包裹后发 card"""
         if not raw_text.strip():
             return
-        clean_text, attachments = split_outbound_attachments(raw_text)
+        binding = self.find_binding(str(chat_id), None)
+        clean_text, attachments = split_outbound_attachments(
+            raw_text,
+            cwd=binding.cwd if binding is not None else None,
+        )
         if clean_text.strip():
             md = "```\n" + clean_text + "\n```"
             message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
@@ -442,10 +448,16 @@ class FeishuFrontend(Frontend):
         return _make_fake_msg(message_id)
 
     async def send_assistant_reply(self, b: "Binding", envelope: ReplyEnvelope) -> Any:
-        footer_text = self.backend.format_status_footer(envelope.footer)
+        clean_body, attachments = prepare_outbound_attachments(
+            envelope.body,
+            envelope.attachments,
+            cwd=b.cwd,
+        )
+        effective_envelope = replace(envelope, body=clean_body, attachments=())
+        footer_text = self.backend.format_status_footer(effective_envelope.footer)
         rendered = render_assistant_reply(
             b,
-            envelope,
+            effective_envelope,
             full_output_threshold=self.capabilities.max_text_length,
             footer_text=footer_text,
         )
@@ -477,11 +489,12 @@ class FeishuFrontend(Frontend):
             finally:
                 full_path.unlink(missing_ok=True)
 
-        for attachment in envelope.attachments:
-            if is_image_file(attachment):
-                await self.send_image(b.chat_id, b.thread_id, attachment)
+        for attachment in attachments:
+            caption = attachment.path.name
+            if attachment.kind == "image":
+                await self.send_image(b.chat_id, b.thread_id, attachment.path, caption=caption)
             else:
-                await self.send_file(b.chat_id, b.thread_id, attachment)
+                await self.send_file(b.chat_id, b.thread_id, attachment.path, caption=caption)
         return first_msg
 
     async def send_chat_action(self, chat_id: int | str, thread_id: int | None, action: str) -> None:
