@@ -79,3 +79,20 @@ class Frontend(ABC):
     ) -> Any:
         """发 TUI 交互卡。默认降级为普通 HTML, 支持按钮的前端可覆盖。"""
         return await self.send_html(chat_id, thread_id, html_text)
+
+    async def send_reply_stream_start(
+        self, binding: "Binding", html_text: str
+    ) -> Any:
+        """Start an incremental assistant reply; channels may override."""
+        return await self.send_html(binding.chat_id, binding.thread_id, html_text)
+
+    async def edit_reply_stream(
+        self,
+        binding: "Binding",
+        message_id: int | str,
+        html_text: str,
+        *,
+        final: bool = False,
+    ) -> None:
+        """Update or finalize an incremental assistant reply."""
+        await self.edit_html(binding.chat_id, message_id, html_text)

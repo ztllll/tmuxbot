@@ -22,6 +22,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -50,6 +51,8 @@ from tmuxbot.frontends.feishu_cards import (
     build_feishu_card_v2,
     serialize_feishu_card,
 )
+from tmuxbot.frontends.feishu_cards import html_to_feishu_markdown
+from tmuxbot.frontends.feishu_streaming import FeishuStreamingSession, StreamingPrefixError
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import (
     html_to_plain_text,
@@ -97,6 +100,13 @@ _FEISHU_FILE_TYPES = {
     ".ppt": "ppt",
     ".pptx": "ppt",
 }
+
+
+def _env_enabled(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _feishu_file_type(path: Path) -> str:
@@ -253,8 +263,17 @@ class FeishuFrontend(Frontend):
         self.bot_token_env = bot_token_env
         self.project_base = project_base
         self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
+        self.card_v2_enabled = _env_enabled(
+            f"{bot_token_env}_CARD_V2",
+            _env_enabled("TMUXBOT_FEISHU_CARD_V2", True),
+        )
+        self.streaming_enabled = _env_enabled(
+            f"{bot_token_env}_STREAMING",
+            _env_enabled("TMUXBOT_FEISHU_STREAMING", False),
+        )
         self._outbound_message_ids: set[str] = set()
         self._v2_message_ids: set[str] = set()
+        self._streaming_cards: dict[str, FeishuStreamingSession] = {}
         self.channel_adapter = FeishuChannelAdapter(
             bot_open_id=self.bot_open_id,
             outbound_message_ids=self._outbound_message_ids,
@@ -395,6 +414,113 @@ class FeishuFrontend(Frontend):
         resp = client.im.v1.message.patch(req)
         if not resp.success():
             log.warning(f"feishu patch_card err: code={resp.code} msg={resp.msg} mid={message_id}")
+            return False
+        return True
+
+    def _create_streaming_card_sync(
+        self,
+        chat_id: str,
+        card_json: str,
+    ) -> tuple[str, str] | None:
+        """Create a CardKit entity, send it once, and return card/message IDs."""
+        lark = self._lark
+        import lark_oapi.api.cardkit.v1 as cardkit_v1
+
+        client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+        body = (
+            cardkit_v1.CreateCardRequestBody.builder()
+            .type("card_json")
+            .data(card_json)
+            .build()
+        )
+        request = cardkit_v1.CreateCardRequest.builder().request_body(body).build()
+        response = client.cardkit.v1.card.create(request)
+        if not response.success() or response.data is None or not response.data.card_id:
+            log.warning(
+                "feishu create streaming card err: code=%s msg=%s",
+                response.code,
+                response.msg,
+            )
+            return None
+        card_id = response.data.card_id
+        message_id = self._send_resource_message_sync(
+            chat_id,
+            "interactive",
+            {"type": "card", "data": {"card_id": card_id}},
+        )
+        if message_id is None:
+            return None
+        return card_id, message_id
+
+    def _stream_card_content_sync(
+        self,
+        card_id: str,
+        element_id: str,
+        content: str,
+        sequence: int,
+    ) -> bool:
+        lark = self._lark
+        import lark_oapi.api.cardkit.v1 as cardkit_v1
+
+        client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+        body = (
+            cardkit_v1.ContentCardElementRequestBody.builder()
+            .uuid(str(uuid.uuid4()))
+            .content(content)
+            .sequence(sequence)
+            .build()
+        )
+        request = (
+            cardkit_v1.ContentCardElementRequest.builder()
+            .card_id(card_id)
+            .element_id(element_id)
+            .request_body(body)
+            .build()
+        )
+        response = client.cardkit.v1.card_element.content(request)
+        if not response.success():
+            log.warning(
+                "feishu stream content err: code=%s msg=%s card=%s",
+                response.code,
+                response.msg,
+                card_id,
+            )
+            return False
+        return True
+
+    def _close_streaming_card_sync(
+        self,
+        card_id: str,
+        card: dict[str, Any],
+        sequence: int,
+    ) -> bool:
+        lark = self._lark
+        import lark_oapi.api.cardkit.v1 as cardkit_v1
+
+        client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
+        serialized = serialize_feishu_card(card)
+        card_data = cardkit_v1.Card.builder().type("card_json").data(serialized).build()
+        body = (
+            cardkit_v1.UpdateCardRequestBody.builder()
+            .card(card_data)
+            .uuid(str(uuid.uuid4()))
+            .sequence(sequence)
+            .build()
+        )
+        request = (
+            cardkit_v1.UpdateCardRequest.builder()
+            .card_id(card_id)
+            .request_body(body)
+            .build()
+        )
+        response = client.cardkit.v1.card.update(request)
+        if not response.success():
+            log.warning(
+                "feishu close streaming card err: code=%s msg=%s card=%s",
+                response.code,
+                response.msg,
+                card_id,
+            )
             return False
         return True
 
@@ -624,6 +750,113 @@ class FeishuFrontend(Frontend):
             else:
                 await self.send_file(b.chat_id, b.thread_id, attachment.path, caption=caption)
         return first_msg
+
+    async def send_reply_stream_start(self, b: "Binding", html_text: str) -> Any:
+        if not getattr(self, "streaming_enabled", False):
+            return await self.send_html(b.chat_id, b.thread_id, html_text)
+
+        document = build_reply_document(
+            b,
+            ReplyEnvelope(title="回复", body=html_text),
+        )
+        card = build_feishu_card_v2(
+            document,
+            binding_token(b.name),
+            streaming=True,
+        )
+        created = await asyncio.to_thread(
+            self._create_streaming_card_sync,
+            str(b.chat_id),
+            serialize_feishu_card(card),
+        )
+        if created is None:
+            return await self.send_html(b.chat_id, b.thread_id, html_text)
+        card_id, message_id = created
+
+        async def update_content(
+            stream_card_id: str,
+            element_id: str,
+            content: str,
+            sequence: int,
+        ) -> bool:
+            return await asyncio.to_thread(
+                self._stream_card_content_sync,
+                stream_card_id,
+                element_id,
+                content,
+                sequence,
+            )
+
+        async def close_card(
+            stream_card_id: str,
+            final_card: dict[str, Any],
+            sequence: int,
+        ) -> bool:
+            return await asyncio.to_thread(
+                self._close_streaming_card_sync,
+                stream_card_id,
+                final_card,
+                sequence,
+            )
+
+        session = FeishuStreamingSession(
+            card_id=card_id,
+            element_id="reply_body_0",
+            update_content=update_content,
+            close_card=close_card,
+            text=html_to_feishu_markdown(html_text),
+        )
+        if not hasattr(self, "_streaming_cards"):
+            self._streaming_cards = {}
+        self._streaming_cards[message_id] = session
+        self._remember_outbound_message(message_id)
+        self._remember_v2_message(message_id)
+        return _make_fake_msg(message_id)
+
+    async def edit_reply_stream(
+        self,
+        b: "Binding",
+        message_id: int | str,
+        html_text: str,
+        *,
+        final: bool = False,
+    ) -> None:
+        session = getattr(self, "_streaming_cards", {}).get(str(message_id))
+        if session is None:
+            await self.edit_html(b.chat_id, str(message_id), html_text)
+            return
+
+        if final:
+            document = build_reply_document(
+                b,
+                ReplyEnvelope(
+                    title="回复",
+                    body=html_text,
+                    actions=("screen", "status", "cancel", "interrupt"),
+                ),
+            )
+            card = build_feishu_card_v2(document, binding_token(b.name), streaming=False)
+            ok = await session.close(card)
+            self._streaming_cards.pop(str(message_id), None)
+            if not ok:
+                await self.send_assistant_reply(
+                    b,
+                    ReplyEnvelope(
+                        title="回复",
+                        body=html_text,
+                        actions=("screen", "status", "cancel", "interrupt"),
+                    ),
+                )
+            return
+
+        content = html_to_feishu_markdown(html_text)
+        try:
+            ok = await session.append(content)
+        except StreamingPrefixError:
+            ok = False
+        if not ok:
+            self._streaming_cards.pop(str(message_id), None)
+            await self.edit_html(b.chat_id, str(message_id), html_text)
 
     async def send_chat_action(self, chat_id: int | str, thread_id: int | None, action: str) -> None:
         """飞书无 typing 状态 API → no-op"""

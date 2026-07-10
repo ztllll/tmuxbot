@@ -354,7 +354,11 @@ async def _append_reply_stream(
 
     current = streams.get(b.name)
     if current is None:
-        msg = await frontend.send_html(b.chat_id, b.thread_id, delta_html)
+        start_stream = getattr(frontend, "send_reply_stream_start", None)
+        if start_stream is None:
+            msg = await frontend.send_html(b.chat_id, b.thread_id, delta_html)
+        else:
+            msg = await start_stream(b, delta_html)
         if msg is not None and hasattr(msg, "message_id"):
             streams[b.name] = {
                 "msg_id": msg.message_id,
@@ -364,7 +368,11 @@ async def _append_reply_stream(
         return
 
     current["content"] = current.get("content", "") + delta_html
-    await frontend.edit_html(current["chat_id"], current["msg_id"], current["content"])
+    edit_stream = getattr(frontend, "edit_reply_stream", None)
+    if edit_stream is None:
+        await frontend.edit_html(current["chat_id"], current["msg_id"], current["content"])
+    else:
+        await edit_stream(b, current["msg_id"], current["content"])
 
 
 async def _finalize_reply_stream(
@@ -377,8 +385,12 @@ async def _finalize_reply_stream(
     if not current:
         return False
     try:
-        if current.get("content") != html_text:
-            await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
+        edit_stream = getattr(frontend, "edit_reply_stream", None)
+        if edit_stream is None:
+            if current.get("content") != html_text:
+                await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
+        else:
+            await edit_stream(b, current["msg_id"], html_text, final=True)
         _remember_live_text(state, b, html_text)
         return True
     except Exception:
