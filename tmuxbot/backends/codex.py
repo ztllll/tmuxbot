@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
+from tmuxbot.core.capabilities import ProviderCapabilities
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
     tmux_pane_command, tmux_send_key, tmux_send_text,
@@ -184,6 +186,14 @@ _CODEX_BUSY_RE = re.compile(
 )
 
 
+def _parse_codex_duration(raw: str) -> int:
+    minutes = re.search(r"(\d+)m", raw)
+    seconds = re.search(r"(\d+)s", raw)
+    return (int(minutes.group(1)) * 60 if minutes else 0) + (
+        int(seconds.group(1)) if seconds else 0
+    )
+
+
 # ────────── 命令 parser (codex 命令输出格式可能跟 claude 不同, 用最小集) ──────────
 def parse_status_codex(raw: str) -> str | None:
     """/status → codex 的状态格式: 'model:' / 'directory:' / 'session:' 等"""
@@ -232,6 +242,53 @@ class CodexBackend(Backend):
     pane_command_names = frozenset({"node", "codex"})
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
     start_cmd = START_CMD
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            name=self.name,
+            supports_structured_transcript=True,
+            supports_incremental_text=True,
+            supports_resume=True,
+            supports_plans=True,
+            supports_usage=True,
+            supports_interactive_pickers=True,
+        )
+
+    def is_running_command(self, command: str) -> bool:
+        return command in self.pane_command_names
+
+    def parse_terminal_status(self, pane: str) -> TerminalStatus | None:
+        clean = strip_decorations(pane)
+        if not clean.strip():
+            return None
+
+        busy = _CODEX_BUSY_RE.search(clean)
+        state = TerminalState.WORKING if busy else TerminalState.IDLE
+        duration = _parse_codex_duration(busy.group(1)) if busy else None
+
+        model = effort = cwd = None
+        status_match = re.search(
+            r"^\s*(gpt-[\w.-]+)(?:\s+([\w-]+))?\s*[·•]\s*(~?/\S+|/\S+)\s*$",
+            clean,
+            re.M | re.I,
+        )
+        if status_match:
+            model, effort, cwd = status_match.groups()
+
+        permission = None
+        if re.search(r"\bYOLO(?: mode)?\b", clean, re.I):
+            permission = "YOLO"
+
+        return TerminalStatus(
+            state=state,
+            label=busy.group(0).strip() if busy else "ready",
+            model=model,
+            effort=effort,
+            permission_mode=permission,
+            cwd=cwd,
+            duration_seconds=duration,
+        )
 
     bot_commands = [
         ("status", "ℹ️ Codex 状态"),
@@ -385,10 +442,9 @@ class CodexBackend(Backend):
 
     def find_tui_activity_fp(self, pane: str) -> str | None:
         """codex active 指示: '• Working (Xs • esc to interrupt)' (无 token 字段)"""
-        clean = strip_decorations(pane)
-        m = _CODEX_BUSY_RE.search(clean)
-        if m:
-            return m.group(0).strip()
+        status = self.parse_terminal_status(pane)
+        if status and status.state == TerminalState.WORKING:
+            return status.label
         return None
 
     async def ensure_running(self, b: "Binding") -> None:
@@ -396,9 +452,9 @@ class CodexBackend(Backend):
             tmux_new_session(b.tmux_session, b.cwd)
             await asyncio.sleep(0.5)
         cmd = tmux_pane_command(b.tmux_target)
-        if cmd in self.pane_command_names:
+        if self.is_running_command(cmd):
             return
-        if cmd not in self.shell_command_names:
+        if not self.can_start_from_command(cmd):
             log.warning(
                 "[%s] refusing to start codex in pane with foreground command %r",
                 b.name,
@@ -427,7 +483,7 @@ class CodexBackend(Backend):
                 tmux_send_key(b.tmux_target, "Enter")    # 选信任 (默认 Yes)
                 continue
             if (
-                tmux_pane_command(b.tmux_target) in self.pane_command_names
+                    self.is_running_command(tmux_pane_command(b.tmux_target))
                 and ("›" in scr or "gpt-" in low)
             ):
                 break

@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
+from tmuxbot.core.capabilities import ProviderCapabilities
+from tmuxbot.core.events import TerminalState, TerminalStatus
+
 if TYPE_CHECKING:
     from tmuxbot.state import Binding
 
@@ -43,6 +46,57 @@ class Backend(ABC):
     pane_command_name: str = ""   # 检测 pane 是不是这个 backend (e.g. "claude" / "codex")
     start_cmd: str = ""           # 启动命令字符串 (会注入到 tmux)
     bot_commands: list[tuple[str, str]] = []  # (cmd, desc) for BotFather menu
+    shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(name=self.name)
+
+    def is_running_command(self, command: str) -> bool:
+        return command == self.pane_command_name
+
+    def can_start_from_command(self, command: str) -> bool:
+        return command in self.shell_command_names
+
+    def parse_terminal_status(self, pane: str) -> TerminalStatus | None:
+        return None
+
+    def format_status_footer(self, status: TerminalStatus | None) -> str | None:
+        if status is None:
+            return None
+        parts: list[str] = []
+        model = " ".join(v for v in (status.model, status.effort) if v)
+        if model:
+            parts.append(model)
+        if status.state != TerminalState.IDLE:
+            state = status.state.value
+            if status.duration_seconds is not None:
+                state += f" {self._format_duration(status.duration_seconds)}"
+            parts.append(state)
+        if status.permission_mode:
+            parts.append(status.permission_mode)
+        if status.context_used is not None and status.context_limit is not None:
+            parts.append(
+                f"{self._format_tokens(status.context_used)}/{self._format_tokens(status.context_limit)}"
+            )
+        if status.cwd:
+            parts.append(status.cwd)
+        return " · ".join(parts) or None
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        total = max(0, int(seconds))
+        minutes, secs = divmod(total, 60)
+        return f"{minutes}m {secs}s" if minutes else f"{secs}s"
+
+    @staticmethod
+    def _format_tokens(tokens: int) -> str:
+        if tokens >= 1_000_000 and tokens % 1_000_000 == 0:
+            return f"{tokens // 1_000_000}m"
+        if tokens >= 1_000:
+            value = tokens / 1_000
+            return f"{value:.1f}k" if value % 1 else f"{int(value)}k"
+        return str(tokens)
 
     @abstractmethod
     def find_active_jsonl(self, b: "Binding") -> Path | None:

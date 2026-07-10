@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
+from tmuxbot.core.capabilities import ProviderCapabilities
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.quota import fetch_quota
 from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_send_text
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
@@ -459,11 +461,90 @@ _TUI_TIME_RE = re.compile(r"\b\d+m\s+\d+s|\b\d+s\b")
 _TUI_TOK_RE = re.compile(r"\b\d+(?:\.\d+)?[km]?\s*tokens?\b", re.I)
 
 
+def _parse_scaled_number(raw: str) -> int:
+    value = float(raw[:-1]) if raw[-1:].lower() in {"k", "m"} else float(raw)
+    suffix = raw[-1:].lower()
+    if suffix == "k":
+        value *= 1_000
+    elif suffix == "m":
+        value *= 1_000_000
+    return int(value)
+
+
+def _parse_duration(raw: str) -> int:
+    minutes = re.search(r"(\d+)m", raw)
+    seconds = re.search(r"(\d+)s", raw)
+    return (int(minutes.group(1)) * 60 if minutes else 0) + (
+        int(seconds.group(1)) if seconds else 0
+    )
+
+
 # ────────── ClaudeCodeBackend ──────────
 class ClaudeCodeBackend(Backend):
     name = "claude_code"
     pane_command_name = "claude"
     start_cmd = START_CMD
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            name=self.name,
+            supports_hooks=True,
+            supports_resume=True,
+            supports_continue=True,
+            supports_tasks=True,
+            supports_usage=True,
+            supports_interactive_pickers=True,
+        )
+
+    def is_running_command(self, command: str) -> bool:
+        return command == "claude"
+
+    def parse_terminal_status(self, pane: str) -> TerminalStatus | None:
+        clean = strip_decorations(pane)
+        if not clean.strip():
+            return None
+
+        working_line = next(
+            (
+                line.strip()
+                for line in clean.splitlines()
+                if _TUI_TIME_RE.search(line) and _TUI_TOK_RE.search(line)
+            ),
+            None,
+        )
+        state = TerminalState.WORKING if working_line else TerminalState.IDLE
+        duration = _parse_duration(working_line) if working_line else None
+
+        permission = None
+        permission_match = re.search(
+            r"\b(accept edits|bypass permissions|plan mode|manual)(?:\s+on)?\b",
+            clean,
+            re.I,
+        )
+        if permission_match:
+            permission = permission_match.group(1).lower()
+
+        context_used = context_limit = None
+        context_match = re.search(
+            r"(\d+(?:\.\d+)?[km]?)\s*/\s*(\d+(?:\.\d+)?[km]?)\s+tokens",
+            clean,
+            re.I,
+        )
+        if context_match:
+            context_used = _parse_scaled_number(context_match.group(1))
+            context_limit = _parse_scaled_number(context_match.group(2))
+
+        model_match = re.search(r"\b(claude-[\w-]+)\b", clean, re.I)
+        return TerminalStatus(
+            state=state,
+            label=working_line or "ready",
+            model=model_match.group(1) if model_match else None,
+            permission_mode=permission,
+            duration_seconds=duration,
+            context_used=context_used,
+            context_limit=context_limit,
+        )
 
     # 给 BotFather 注册菜单 (其他 backend 可以有不同清单)
     bot_commands = [
@@ -593,10 +674,9 @@ class ClaudeCodeBackend(Backend):
         return []
 
     def find_tui_activity_fp(self, pane: str) -> str | None:
-        clean = strip_decorations(pane)
-        for line in clean.splitlines():
-            if _TUI_TIME_RE.search(line) and _TUI_TOK_RE.search(line):
-                return line.strip()
+        status = self.parse_terminal_status(pane)
+        if status and status.state == TerminalState.WORKING:
+            return status.label
         return None
 
     async def ensure_running(self, b: "Binding") -> None:
@@ -604,12 +684,20 @@ class ClaudeCodeBackend(Backend):
             tmux_new_session(b.tmux_session, b.cwd)
             await asyncio.sleep(0.5)
         cmd = tmux_pane_command(b.tmux_target)
-        if cmd != self.pane_command_name:
-            start = _start_cmd()
-            if b.last_session_id:
-                start += f" --resume {b.last_session_id}"
-            await tmux_send_text(b.tmux_target, start)
-            await asyncio.sleep(2.0)
+        if self.is_running_command(cmd):
+            return
+        if not self.can_start_from_command(cmd):
+            log.warning(
+                "[%s] refusing to start claude in pane with foreground command %r",
+                b.name,
+                cmd,
+            )
+            return
+        start = _start_cmd()
+        if b.last_session_id:
+            start += f" --resume {b.last_session_id}"
+        await tmux_send_text(b.tmux_target, start)
+        await asyncio.sleep(2.0)
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
