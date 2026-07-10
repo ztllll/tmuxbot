@@ -5,16 +5,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import subprocess
 
-log = logging.getLogger("tmuxbot")
+from tmuxbot.runtime.tmux_runtime import TmuxRuntime
 
 TMUX = "tmux"
-SEND_KEYS_DELAY = 0.5    # paste 完到 Enter 之间(TUI 渲染窗口, idle 态下兜底)
-IDLE_WAIT_MAX = 10.0     # 等 claude TUI idle 最长秒数(busy 时 Enter 会丢)
+IDLE_WAIT_MAX = 300.0
 IDLE_POLL_INTERVAL = 0.25
 
 # claude / codex TUI busy 状态行 = 动词 + **括号包裹**的时间字段 (进行中标记):
@@ -70,15 +68,11 @@ def _is_tui_busy(pane: str) -> bool:
 
 
 async def tmux_send_text(target: str, text: str, *, with_enter: bool = True) -> None:
-    """文本注入: paste-buffer -p (bracketed paste) + 等 TUI idle + Enter。
+    """Queue input, wait for an idle pane, then paste and submit exactly once."""
+    await _RUNTIME.send_text(target, text, with_enter=with_enter)
 
-    ★ 关键: claude busy 态下直接 send Enter 会进 PTY buffer 排队, 切回 idle 时
-    Enter 可能被 paste 上下文吃掉 (历史踩坑 — 图片+文字一起发卡住的 race)。
-    修复: paste 后**轮询 capture-pane**, 等 _TUI_BUSY_RE 不再命中 (TUI idle)
-    才发 Enter。超时兜底 10s 强发 (适合极长 task 的情况)。
 
-    不前置 Esc: Boss 发消息时不应中断 claude 当前生成。
-    需要显式打断/退 modal: 用 /esc 或 /cc 命令。"""
+async def _paste_text(target: str, text: str) -> None:
     buf = f"tb_{os.getpid()}"
     load_proc = await asyncio.create_subprocess_exec(
         TMUX, "load-buffer", "-b", buf, "-",
@@ -90,26 +84,13 @@ async def tmux_send_text(target: str, text: str, *, with_enter: bool = True) -> 
     )
     await paste_proc.wait()
 
-    if not with_enter:
-        return
 
-    # 等 TUI idle 再发 Enter, 避开 busy 态下 PTY buffer race
-    elapsed = 0.0
-    saw_busy = False
-    while elapsed < IDLE_WAIT_MAX:
-        await asyncio.sleep(IDLE_POLL_INTERVAL)
-        elapsed += IDLE_POLL_INTERVAL
-        try:
-            pane = tmux_capture(target, lines=15)
-        except Exception:
-            break
-        if _is_tui_busy(pane):
-            saw_busy = True
-            continue
-        # idle, 但是如果刚 paste 进去, TUI 可能还没渲染 — 给 SEND_KEYS_DELAY 兜底
-        if not saw_busy and elapsed < SEND_KEYS_DELAY:
-            continue
-        break
-    if elapsed >= IDLE_WAIT_MAX:
-        log.warning(f"tmux_send_text: TUI busy >{IDLE_WAIT_MAX}s 仍未 idle, 强发 Enter (可能丢)")
-    tmux_send_key(target, "Enter")
+_RUNTIME = TmuxRuntime(
+    capture_func=tmux_capture,
+    pane_command_func=tmux_pane_command,
+    paste_func=_paste_text,
+    send_key_func=tmux_send_key,
+    busy_detector=_is_tui_busy,
+    poll_interval=IDLE_POLL_INTERVAL,
+    wait_timeout=IDLE_WAIT_MAX,
+)
