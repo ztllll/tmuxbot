@@ -1,0 +1,1 @@
+"""Managed provider hook ingestion."""

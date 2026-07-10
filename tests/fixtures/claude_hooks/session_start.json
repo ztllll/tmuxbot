@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "session-claude-1",
+  "transcript_path": "/tmp/claude-project/session-claude-1.jsonl",
+  "cwd": "/tmp/claude-project",
+  "source": "resume"
+}

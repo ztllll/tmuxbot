@@ -137,6 +137,10 @@ class Backend(ABC):
             metadata=event_metadata,
         )
 
+    def poll_provider_events(self, b: "Binding") -> list[ProviderEvent]:
+        """Read provider-native event sources other than the main transcript."""
+        return []
+
     @staticmethod
     def _format_duration(seconds: float) -> str:
         total = max(0, int(seconds))

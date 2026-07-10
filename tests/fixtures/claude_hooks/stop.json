@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "session-claude-1",
+  "transcript_path": "/tmp/claude-project/session-claude-1.jsonl",
+  "cwd": "/tmp/claude-project",
+  "stop_hook_active": false,
+  "last_assistant_message": "修复已经完成。"
+}

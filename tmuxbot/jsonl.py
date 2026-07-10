@@ -61,6 +61,17 @@ async def jsonl_poll_loop(
             log.info(f"[{b.name}] tailer alive · tick={tick} · bg_tasks={len(state.bg_tasks)}")
             last_hb = now
         try:
+            old_identity = (b.provider_session_id, b.transcript_path)
+            provider_events = backend.poll_provider_events(b)
+            if old_identity != (b.provider_session_id, b.transcript_path):
+                await asyncio.to_thread(
+                    save_binding_identity,
+                    getattr(frontend, "bindings_file", None),
+                    b,
+                )
+            await _dispatch_provider_events(
+                b, provider_events, frontend, state, backend
+            )
             jl = backend.find_active_jsonl(b)
             if jl is None:
                 await asyncio.sleep(JSONL_POLL)
@@ -143,24 +154,32 @@ async def jsonl_poll_loop(
                     # ★ 同一 binding 内串行 await, 避免 aggregator race condition
                     # (旧 S.fire 并发让多个 event 同时拿到 agg=None, 各自新建 → 多条"工作中"卡片)
                     # 串行只影响本 binding tailer 实时性, 不影响其他 binding 并发
-                    for event in events:
-                        for reduced in reduce_provider_event(event):
-                            try:
-                                await on_tmux_event(
-                                    b,
-                                    reduced.kind,
-                                    reduced.body,
-                                    frontend,
-                                    state,
-                                    backend,
-                                )
-                            except Exception:
-                                log.exception(f"[{b.name}] on_tmux_event err")
+                    await _dispatch_provider_events(
+                        b, events, frontend, state, backend
+                    )
                 state.offsets[key] = safe_off
                 save_offsets(offsets_file, state.offsets)
         except Exception:
             log.exception(f"[{b.name}] poll err")
         await asyncio.sleep(JSONL_POLL)
+
+
+async def _dispatch_provider_events(
+    b: "Binding", events, frontend: "Frontend", state: "State", backend: "Backend"
+) -> None:
+    for event in events:
+        for reduced in reduce_provider_event(event):
+            try:
+                await on_tmux_event(
+                    b,
+                    reduced.kind,
+                    reduced.body,
+                    frontend,
+                    state,
+                    backend,
+                )
+            except Exception:
+                log.exception(f"[{b.name}] on_tmux_event err")
 
 
 async def _close_aggregator(b: "Binding", state: "State", frontend: "Frontend") -> None:

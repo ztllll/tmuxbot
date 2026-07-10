@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "Notification",
+  "session_id": "session-claude-1",
+  "cwd": "/tmp/claude-project",
+  "notification_type": "permission_prompt",
+  "title": "Claude needs attention",
+  "message": "Permission required"
+}

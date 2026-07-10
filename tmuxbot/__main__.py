@@ -20,6 +20,7 @@ from tmuxbot import __version__
 from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
 from tmuxbot.heartbeat import HEARTBEAT_INTERVAL, heartbeat_typing_loop
+from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.state import S
@@ -85,6 +86,9 @@ def acquire_lock() -> int:
 async def main() -> None:
     acquire_lock()
     load_config(ENV_FILE, BINDINGS_FILE, OFFSETS_FILE)
+    if _env_flag("TMUXBOT_CLAUDE_HOOKS"):
+        install_claude_hooks()
+        log.info("managed Claude hooks installed")
 
     # 装配 backend 实例池
     backends_pool = {

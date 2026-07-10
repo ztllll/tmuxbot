@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
+from tmuxbot.hooks.claude import default_hook_spool_path, read_hook_spool
 from tmuxbot.quota import fetch_quota
 from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_send_text
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
@@ -485,6 +486,12 @@ class ClaudeCodeBackend(Backend):
     pane_command_name = "claude"
     start_cmd = START_CMD
 
+    def __init__(self, hook_spool_path: Path | None = None) -> None:
+        self.hook_spool_path = hook_spool_path or default_hook_spool_path()
+        self._hook_offsets: dict[str, int] = {}
+        self._seen_hook_event_ids: set[str] = set()
+        self._hook_final_texts: set[tuple[str, str]] = set()
+
     @property
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
@@ -583,6 +590,123 @@ class ClaudeCodeBackend(Backend):
         if not files:
             return None
         return max(files, key=lambda p: p.stat().st_mtime)
+
+    def poll_provider_events(self, b: "Binding") -> list[ProviderEvent]:
+        if b.name not in self._hook_offsets:
+            self._hook_offsets[b.name] = (
+                self.hook_spool_path.stat().st_size
+                if self.hook_spool_path.is_file()
+                else 0
+            )
+            return []
+        records, offset = read_hook_spool(
+            self.hook_spool_path, self._hook_offsets[b.name]
+        )
+        self._hook_offsets[b.name] = offset
+        events: list[ProviderEvent] = []
+        for payload in records:
+            if not self._hook_matches_binding(payload, b):
+                continue
+            for event in self.parse_hook_payload(payload, binding=b):
+                if event.event_id in self._seen_hook_event_ids:
+                    continue
+                self._seen_hook_event_ids.add(event.event_id)
+                events.append(event)
+        return events
+
+    @staticmethod
+    def _hook_matches_binding(payload: dict, b: "Binding") -> bool:
+        hook_cwd = payload.get("cwd")
+        if isinstance(hook_cwd, str):
+            try:
+                if Path(hook_cwd).resolve() == b.cwd.resolve():
+                    return True
+            except OSError:
+                pass
+        session_id = payload.get("session_id")
+        return bool(session_id and b.provider_session_id == session_id)
+
+    def parse_hook_payload(
+        self, payload: dict, binding: "Binding | None" = None
+    ) -> list[ProviderEvent]:
+        event_name = str(payload.get("hook_event_name") or "")
+        session_id = str(payload.get("session_id") or "unknown")
+        transcript = payload.get("transcript_path")
+        if binding is not None and session_id != "unknown":
+            binding.provider_session_id = session_id
+            binding.last_session_id = session_id
+            if isinstance(transcript, str) and transcript:
+                binding.transcript_path = Path(transcript)
+
+        metadata = {"hook_event_name": event_name}
+        if event_name == "Stop":
+            message = str(payload.get("last_assistant_message") or "").strip()
+            if not message:
+                return []
+            text = html.escape(message)
+            self._hook_final_texts.add((session_id, text))
+            return [
+                self.provider_event(
+                    payload,
+                    ProviderEventKind.FINAL_TEXT,
+                    text,
+                    provider_session_id=session_id,
+                    metadata=metadata,
+                )
+            ]
+        if event_name == "SessionStart":
+            return [
+                self.provider_event(
+                    payload,
+                    ProviderEventKind.LIFECYCLE_CHANGE,
+                    str(payload.get("source") or "session_start"),
+                    provider_session_id=session_id,
+                    metadata=metadata,
+                )
+            ]
+        if event_name in {"Notification", "MessageDisplay"}:
+            title = str(payload.get("title") or "").strip()
+            message = str(payload.get("message") or "").strip()
+            text = "\n".join(html.escape(part) for part in (title, message) if part)
+            if not text:
+                return []
+            return [
+                self.provider_event(
+                    payload,
+                    ProviderEventKind.INTERACTION_REQUEST,
+                    text,
+                    provider_session_id=session_id,
+                    metadata=metadata,
+                )
+            ]
+        if event_name in {"TaskCreated", "TaskCompleted"}:
+            subject = str(
+                payload.get("task_subject")
+                or payload.get("subject")
+                or payload.get("task_id")
+                or event_name
+            )
+            return [
+                self.provider_event(
+                    payload,
+                    ProviderEventKind.PLAN_UPDATE,
+                    html.escape(subject),
+                    provider_session_id=session_id,
+                    metadata=metadata,
+                )
+            ]
+        if event_name == "StopFailure":
+            message = str(payload.get("error") or payload.get("message") or event_name)
+            return [
+                self.provider_event(
+                    payload,
+                    ProviderEventKind.PROVIDER_ERROR,
+                    html.escape(message),
+                    provider_session_id=session_id,
+                    metadata=metadata,
+                )
+            ]
+        return []
 
     def read_tasks(self, b: "Binding") -> list:
         """读 harness 任务文件 ~/.claude/tasks/<session_id>/*.json → 当前任务列表。
@@ -697,11 +821,22 @@ class ClaudeCodeBackend(Backend):
                     )
                 )
             if text_parts:
+                final_text = "\n".join(text_parts)
+                session_id = (
+                    provider_session_id
+                    or j.get("sessionId")
+                    or j.get("session_id")
+                    or "unknown"
+                )
+                hook_key = (str(session_id), final_text)
+                if hook_key in self._hook_final_texts:
+                    self._hook_final_texts.discard(hook_key)
+                    return events
                 events.append(
                     self.provider_event(
                         j,
                         ProviderEventKind.FINAL_TEXT,
-                        "\n".join(text_parts),
+                        final_text,
                         provider_session_id=provider_session_id,
                         native_id=f"{native_id}:text" if native_id else None,
                     )
