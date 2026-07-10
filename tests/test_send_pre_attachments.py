@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,7 +51,15 @@ def test_feishu_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         sent = []
 
         frontend = object.__new__(FeishuFrontend)
-        frontend.bindings = [SimpleNamespace(chat_id="oc_x", thread_id=None, cwd=tmp_path)]
+        frontend.bindings = [
+            SimpleNamespace(
+                name="alpha",
+                chat_id="oc_x",
+                thread_id=None,
+                cwd=tmp_path,
+                backend="codex",
+            )
+        ]
         frontend._send_card_sync = lambda chat_id, md: sent.append(("card", chat_id, md))
 
         async def send_image(chat_id, thread_id, path, caption=None):
@@ -64,9 +73,10 @@ def test_feishu_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
 
         await frontend.send_pre("oc_x", None, "screen\n│ @./screen.jpg")
 
-        assert sent == [
-            ("card", "oc_x", "```\nscreen\n```"),
-            ("image", "oc_x", None, image, None),
-        ]
+        assert sent[0][0:2] == ("card", "oc_x")
+        card = json.loads(sent[0][2])
+        assert card["schema"] == "2.0"
+        assert card["body"]["elements"][0]["content"] == "```\nscreen\n```"
+        assert sent[1] == ("image", "oc_x", None, image, None)
 
     asyncio.run(run())

@@ -40,7 +40,7 @@ from tmuxbot.channels.feishu import (
     feishu_mentions_bot,
     feishu_replies_to_bot,
 )
-from tmuxbot.command_adapter import binding_token
+from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import build_reply_document
@@ -51,7 +51,11 @@ from tmuxbot.frontends.feishu_cards import (
     serialize_feishu_card,
 )
 from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.replies import html_to_plain_text, render_assistant_reply
+from tmuxbot.replies import (
+    html_to_plain_text,
+    render_assistant_reply,
+    screen_footer_from_capture,
+)
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -167,6 +171,24 @@ def _make_fake_msg(message_id: str) -> Any:
     return obj
 
 
+def _card_action_response(
+    toast_type: str,
+    content: str,
+    *,
+    card: dict[str, Any] | None = None,
+) -> Any:
+    from lark_oapi.event.callback.model.p2_card_action_trigger import (
+        P2CardActionTriggerResponse,
+    )
+
+    payload: dict[str, Any] = {
+        "toast": {"type": toast_type, "content": content},
+    }
+    if card is not None:
+        payload["card"] = {"type": "raw", "data": card}
+    return P2CardActionTriggerResponse(payload)
+
+
 def feishu_message_mentions_bot(msg: Any, bot_open_id: str | None) -> bool:
     return feishu_mentions_bot(msg, bot_open_id)
 
@@ -192,7 +214,7 @@ class FeishuFrontend(Frontend):
     capabilities = ChannelCapabilities(
         name="feishu",
         supports_edit=True,
-        supports_actions=False,
+        supports_actions=True,
         supports_threads=False,
         supports_cards=True,
         supports_images=True,
@@ -232,6 +254,7 @@ class FeishuFrontend(Frontend):
         self.project_base = project_base
         self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
         self._outbound_message_ids: set[str] = set()
+        self._v2_message_ids: set[str] = set()
         self.channel_adapter = FeishuChannelAdapter(
             bot_open_id=self.bot_open_id,
             outbound_message_ids=self._outbound_message_ids,
@@ -280,6 +303,12 @@ class FeishuFrontend(Frontend):
     def _remember_outbound_message(self, message_id: str | None) -> None:
         if message_id:
             self._outbound_message_ids.add(message_id)
+
+    def _remember_v2_message(self, message_id: str | None) -> None:
+        if message_id:
+            if not hasattr(self, "_v2_message_ids"):
+                self._v2_message_ids = set()
+            self._v2_message_ids.add(message_id)
 
     def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
         incoming = self.normalize_incoming(msg, chat_type=chat_type)
@@ -399,18 +428,50 @@ class FeishuFrontend(Frontend):
     # ────────── Frontend 接口实现 ──────────
 
     async def send_html(self, chat_id: int | str, thread_id: int | None, html_text: str) -> Any:
-        """HTML → 飞书 Markdown → interactive card。返回带 .message_id 的对象供 edit 用。"""
+        """发送 Card JSON 2.0；不可用时降级旧版 interactive card。"""
         md = _html_to_feishu_md(html_text)
-        message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+        message_id = None
+        used_v2 = False
+        binding = self.find_binding(str(chat_id), None)
+        if binding is not None and getattr(self, "card_v2_enabled", True):
+            document = build_reply_document(
+                binding,
+                ReplyEnvelope(title="tmuxbot", body=html_text),
+            )
+            card_json = serialize_feishu_card(
+                build_feishu_card_v2(document, binding_token(binding.name))
+            )
+            message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), card_json)
+            used_v2 = message_id is not None
+        if message_id is None:
+            message_id = await asyncio.to_thread(
+                self._send_card_sync,
+                str(chat_id),
+                _build_card(md),
+            )
         if message_id is None:
             return None
         self._remember_outbound_message(message_id)
+        if used_v2:
+            self._remember_v2_message(message_id)
         return _make_fake_msg(message_id)
 
     async def edit_html(self, chat_id: int | str, message_id: str, html_text: str) -> None:
-        """PATCH 更新已发 card 内容 (工具调用聚合器使用)"""
+        """PATCH 更新已发 card 内容 (工具调用聚合器使用)。"""
+        if message_id in getattr(self, "_v2_message_ids", set()):
+            binding = self.find_binding(str(chat_id), None)
+            if binding is not None:
+                document = build_reply_document(
+                    binding,
+                    ReplyEnvelope(title="tmuxbot", body=html_text),
+                )
+                card_json = serialize_feishu_card(
+                    build_feishu_card_v2(document, binding_token(binding.name))
+                )
+                await asyncio.to_thread(self._patch_card_sync, message_id, card_json)
+                return
         md = _html_to_feishu_md(html_text)
-        await asyncio.to_thread(self._patch_card_sync, message_id, md)
+        await asyncio.to_thread(self._patch_card_sync, message_id, _build_card(md))
 
     async def send_pre(self, chat_id: int | str, thread_id: int | None, raw_text: str) -> None:
         """raw_text 用代码块包裹后发 card"""
@@ -423,8 +484,20 @@ class FeishuFrontend(Frontend):
         )
         if clean_text.strip():
             md = "```\n" + clean_text + "\n```"
-            message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), md)
+            if binding is not None and getattr(self, "card_v2_enabled", True):
+                document = build_reply_document(
+                    binding,
+                    ReplyEnvelope(title="屏幕", body=md),
+                )
+                content = serialize_feishu_card(
+                    build_feishu_card_v2(document, binding_token(binding.name))
+                )
+            else:
+                content = _build_card(md)
+            message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), content)
             self._remember_outbound_message(message_id)
+            if binding is not None and getattr(self, "card_v2_enabled", True):
+                self._remember_v2_message(message_id)
         for attachment in attachments:
             if attachment.kind == "image":
                 await self.send_image(chat_id, thread_id, attachment.path)
@@ -508,6 +581,8 @@ class FeishuFrontend(Frontend):
                 str(b.chat_id),
                 card_json,
             )
+            if message_id is not None:
+                self._remember_v2_message(message_id)
 
         if message_id is None:
             md = _html_to_feishu_md(rendered.chat_html)
@@ -554,11 +629,103 @@ class FeishuFrontend(Frontend):
         """飞书无 typing 状态 API → no-op"""
         return
 
+    async def send_light_status_summary(
+        self, b: "Binding", chat_id: int | str, thread_id: int | None
+    ) -> None:
+        from tmuxbot.tmux import tmux_capture, tmux_has_session, tmux_pane_command
+
+        alive = tmux_has_session(b.tmux_session)
+        raw = tmux_capture(b.tmux_target, 12) if alive else ""
+        footer = screen_footer_from_capture(raw) or "-"
+        pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
+        await self.send_html(
+            chat_id,
+            thread_id,
+            "\n".join(
+                [
+                    f"ℹ️ <b>轻状态</b> · <code>{html_mod.escape(b.name)}</code>",
+                    f"tmux: <code>{html_mod.escape(b.tmux_target)}</code>",
+                    f"状态: {'正常' if alive else '断开'} · pane: "
+                    f"<code>{html_mod.escape(pane_cmd)}</code>",
+                    f"末行: <code>{html_mod.escape(footer)}</code>",
+                ]
+            ),
+        )
+
     async def send_interaction_card(
         self, chat_id: int | str, thread_id: int | None, html_text: str, binding_name: str
     ) -> Any:
         """飞书先降级为说明卡; 用户可用 /up /down /enter 等文本命令继续操作。"""
         return await self.send_html(chat_id, thread_id, html_text)
+
+    def _on_card_action(self, event: Any) -> Any:
+        data = getattr(event, "event", None)
+        operator = getattr(data, "operator", None)
+        open_id = getattr(operator, "open_id", None)
+        if not open_id or open_id not in self.boss_open_ids:
+            return _card_action_response("error", "无权限")
+
+        action_obj = getattr(data, "action", None)
+        value = getattr(action_obj, "value", None)
+        if not isinstance(value, dict):
+            return _card_action_response("error", "卡片参数格式错误")
+        token = value.get("token")
+        action = value.get("action")
+        if not isinstance(token, str) or not isinstance(action, str):
+            return _card_action_response("error", "卡片参数格式错误")
+
+        b = binding_by_token(self.bindings, token)
+        if b is None:
+            return _card_action_response("error", "会话已失效")
+        context = getattr(data, "context", None)
+        chat_id = str(getattr(context, "open_chat_id", "") or "")
+        if not chat_id or str(b.chat_id) != chat_id:
+            return _card_action_response("error", "卡片与会话不匹配")
+
+        allowed_actions = {"refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c"}
+        if action not in allowed_actions:
+            return _card_action_response("error", "未知操作")
+        if action == "confirm_ctrl_c":
+            confirmation = build_reply_document(
+                b,
+                ReplyEnvelope(
+                    title="确认中断",
+                    body="这会向当前 tmux TUI 发送 Ctrl-C。",
+                ),
+            )
+            card = build_feishu_card_v2(
+                confirmation,
+                token,
+                confirm_interrupt=True,
+            )
+            return _card_action_response("warning", "请确认中断", card=card)
+
+        self._schedule_card_action(b, chat_id, action)
+        return _card_action_response("success", "操作已提交")
+
+    def _schedule_card_action(self, b: "Binding", chat_id: str, action: str) -> None:
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            log.warning("feishu card action dropped: main loop unavailable")
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self._execute_card_action(b, chat_id, action),
+            loop,
+        )
+
+        def done(result) -> None:
+            try:
+                result.result()
+            except Exception:
+                log.exception("feishu card action failed")
+
+        future.add_done_callback(done)
+
+    async def _execute_card_action(self, b: "Binding", chat_id: str, action: str) -> None:
+        if action == "status":
+            await self.send_light_status_summary(b, chat_id, None)
+            return
+        await handle_tui_action(self, b, chat_id, None, action)
 
     # ────────── auto-provision (/init 自动开通会话) ──────────
 
@@ -1158,6 +1325,11 @@ class FeishuFrontend(Frontend):
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._on_message)
         )
+        card_action_register = getattr(builder, "register_p2_card_action_trigger", None)
+        if card_action_register is not None:
+            card_action_register(self._on_card_action)
+        else:
+            log.warning("feishu: lark-oapi 缺 register_p2_card_action_trigger, 卡片按钮不可用")
         # 群解散 + bot 被移出群 → 自动拆除会话。不同 lark-oapi 版本方法名可能缺,
         # 用 getattr 防御性注册: 缺哪个只 warning, 不影响消息收发主链路。
         for _evt_method in (
