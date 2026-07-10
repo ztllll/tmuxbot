@@ -11,6 +11,7 @@ Make assistant replies render consistently across Codex and Claude while using t
 - Render it as a Feishu Card JSON 2.0 interactive card with header, summary, structured body, status note, and action buttons.
 - Add Feishu card-action callback handling for screen, status, cancel, and interrupt.
 - Preserve long-output files, attachments, message replacement, thread behavior, and legacy Feishu-card fallback.
+- Promote referenced local documents and images to real channel attachments instead of exposing local filesystem paths.
 - Add optional Feishu streaming behind a capability/configuration gate after the static card path is stable.
 
 Out of scope: replacing tmux, changing provider event ingestion, introducing a web UI, or adopting Telegram business-only checklist features.
@@ -41,6 +42,34 @@ The first implementation keeps the model intentionally small:
 - Actions: screen, status, cancel, and interrupt, using the existing canonical action names.
 
 The parser accepts the Markdown-shaped provider body already used by `ReplyEnvelope`. Unknown syntax remains a paragraph instead of being dropped. Provider identity and model details come from structured metadata/status, never from assumptions about the last output line.
+
+## Local Attachment Promotion
+
+Attachment delivery uses a hybrid contract:
+
+1. Structured `ReplyEnvelope.attachments` is authoritative whenever the provider/runtime supplies it.
+2. A deterministic fallback scanner extracts explicit local-file references from the body before rendering.
+
+The fallback scanner recognizes existing regular files referenced as:
+
+- Markdown links and images, including angle-bracket targets and optional `:line` or `#Lline` suffixes.
+- `file://`, `@/absolute/path`, absolute paths, and `./relative/path` references.
+- Standalone path lines, tmux-guttered lines, and paths following labels such as `文件:` or `图片:`.
+- Inline Markdown links while preserving the surrounding sentence.
+
+Relative paths resolve against the binding working directory. A reference is promoted only when it resolves to an existing regular file under an allowed root. Default allowed roots are the binding working directory, the tmuxbot attachment directory, and the operating-system temporary directory; deployments may add roots explicitly. Directory references, devices, sockets, missing files, and paths outside allowed roots remain text and are never uploaded.
+
+Images use the channel image API; all other permitted MIME types use the channel file/document API. Duplicate references resolve to one upload per reply. Promoted path syntax is removed from the rendered body and replaced with a short filename label only when removal would otherwise make the sentence unreadable.
+
+Upload behavior is channel-neutral:
+
+- Telegram uploads images with `send_photo` and documents with `send_document`.
+- Feishu uploads images to obtain an `image_key` and files to obtain a `file_key`, then sends the corresponding resource message.
+- Captions use the safe basename and optional surrounding link text, never the absolute local path.
+- An upload failure produces a visible `附件发送失败: <basename>` notice and retains enough server-side logging to diagnose the channel API response; it does not reveal the local path to the chat.
+- File size and MIME checks run before upload. Unsupported or oversized files receive the same basename-only failure notice.
+
+This scanner is a compatibility fallback, not a substitute for structured attachments. Provider adapters should attach generated artifacts explicitly when their event formats expose them.
 
 ## Telegram Rendering
 
@@ -95,6 +124,8 @@ Telegram continues sending finalized messages initially. Its new rich-message dr
 - A renderer failure falls back to plain text or the legacy simple card rather than dropping the reply.
 - Unsupported blocks degrade to escaped text.
 - Attachment upload failures do not invalidate the main reply.
+- Local paths are never rendered into Telegram or Feishu when they identify an uploadable attachment.
+- Automatic attachment promotion is restricted to allowed roots and existing regular files.
 - All callback payloads remain within platform limits and contain no filesystem paths or secrets.
 - Tmux targets and command dispatch remain unchanged.
 
@@ -103,6 +134,8 @@ Telegram continues sending finalized messages initially. Its new rich-message dr
 - Pure parser tests for headings, code fences, lists, quotes, malformed Markdown, and provider-neutral endings.
 - Golden-structure tests for Telegram output and Feishu Card JSON 2.0.
 - Size-boundary tests for card/file fallback.
+- Local attachment tests covering absolute paths, relative paths, Markdown image/link syntax, line-number suffixes, inline links, duplicate references, allowed-root rejection, missing files, and upload failures.
+- Cross-channel tests proving promoted images/files call the native Telegram and Feishu attachment APIs and never expose absolute paths in message text or captions.
 - Callback tests for every action, invalid tokens, authorization, and interrupt confirmation.
 - Contract tests proving Codex and Claude envelopes produce equivalent channel semantics.
 - Regression tests for attachments, threads, long output, edits, and legacy Feishu fallback.
@@ -126,4 +159,5 @@ Rollback is configuration-only: disable Card JSON 2.0/streaming and use the lega
 - Feishu shows structured Card JSON 2.0 content and working native action buttons.
 - Interrupt requires confirmation on both channels.
 - Oversized output is never silently truncated or rejected.
+- Existing referenced local documents and images are sent as native attachments on both channels, with no absolute local path exposed to recipients.
 - The full automated test suite passes, followed by live Telegram and Feishu acceptance tests against tmux-backed sessions.
