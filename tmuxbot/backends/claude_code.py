@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.quota import fetch_quota
 from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_send_text
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
@@ -631,10 +631,10 @@ class ClaudeCodeBackend(Backend):
             lines.append(f"  🎯 <b>缓存命中率 {st['cache_hit_rate'] * 100:.1f}%</b>")
         return ("\n" + "\n".join(lines)) if lines else ""
 
-    def parse_event(self, line: str) -> list[tuple[str, str]]:
-        """jsonl 一行 → events 列表。
-        区分 assistant_tools (thinking + tool_use) 和 assistant_text (真说话)
-        给聚合器用 (tools 合并到可编辑消息, text 单独发)。"""
+    def parse_event(
+        self, line: str, provider_session_id: str | None = None
+    ) -> list[ProviderEvent]:
+        """Claude JSONL row → normalized provider events."""
         try:
             j = json.loads(line)
         except Exception:
@@ -646,10 +646,7 @@ class ClaudeCodeBackend(Backend):
         t = j.get("type")
 
         if t == "user":
-            msg = j.get("message") or {}
-            c = msg.get("content")
-            if isinstance(c, str):
-                return [("user", c)]
+            # User input is already known to the channel and must not be echoed.
             return []
 
         if t == "assistant":
@@ -657,6 +654,7 @@ class ClaudeCodeBackend(Backend):
             content = msg.get("content") or []
             text_parts: list[str] = []
             tool_parts: list[str] = []
+            plan_parts: list[str] = []
             for blk in content:
                 if not isinstance(blk, dict):
                     continue
@@ -670,14 +668,58 @@ class ClaudeCodeBackend(Backend):
                             f"💭 <i>{html.escape(tx[:300])}{'…' if len(tx) > 300 else ''}</i>"
                         )
                 elif bt == "tool_use":
-                    tool_parts.append(format_tool_use(blk.get("name", "?"), blk.get("input") or {}))
+                    rendered = format_tool_use(blk.get("name", "?"), blk.get("input") or {})
+                    if blk.get("name") in {"TodoWrite", "TaskCreate", "TaskUpdate", "TaskList"}:
+                        plan_parts.append(rendered)
+                    else:
+                        tool_parts.append(rendered)
             # 注: AskUserQuestion 已全局封禁, picker 兜底由 detect_idle_picker 处理
-            events: list[tuple[str, str]] = []
+            events: list[ProviderEvent] = []
+            native_id = j.get("uuid") or msg.get("id")
             if tool_parts:
-                events.append(("assistant_tools", "\n".join(tool_parts)))
+                events.append(
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.TOOL_PROGRESS,
+                        "\n".join(tool_parts),
+                        provider_session_id=provider_session_id,
+                        native_id=f"{native_id}:tools" if native_id else None,
+                    )
+                )
+            if plan_parts:
+                events.append(
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.PLAN_UPDATE,
+                        "\n".join(plan_parts),
+                        provider_session_id=provider_session_id,
+                        native_id=f"{native_id}:plan" if native_id else None,
+                    )
+                )
             if text_parts:
-                events.append(("assistant_text", "\n".join(text_parts)))
+                events.append(
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.FINAL_TEXT,
+                        "\n".join(text_parts),
+                        provider_session_id=provider_session_id,
+                        native_id=f"{native_id}:text" if native_id else None,
+                    )
+                )
             return events
+
+        if t == "system" and j.get("subtype"):
+            subtype = str(j.get("subtype"))
+            return [
+                self.provider_event(
+                    j,
+                    ProviderEventKind.LIFECYCLE_CHANGE,
+                    subtype,
+                    provider_session_id=provider_session_id,
+                    native_id=str(j.get("uuid")) if j.get("uuid") else None,
+                    metadata={"lifecycle": subtype},
+                )
+            ]
 
         if t == "attachment":
             # 所有 attachment 事件都不推到 TG:

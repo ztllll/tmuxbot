@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -14,7 +16,7 @@ from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.core.sessions import SessionIdentity
 
 if TYPE_CHECKING:
@@ -94,6 +96,47 @@ class Backend(ABC):
             cwd=str(b.cwd),
         )
 
+    def provider_event(
+        self,
+        source: dict,
+        kind: ProviderEventKind,
+        text: str = "",
+        *,
+        provider_session_id: str | None = None,
+        native_id: str | None = None,
+        phase: str | None = None,
+        metadata: dict | None = None,
+    ) -> ProviderEvent:
+        """Build a deterministic normalized event from one provider-native row."""
+        session_id = (
+            provider_session_id
+            or source.get("sessionId")
+            or source.get("session_id")
+            or "unknown"
+        )
+        if native_id:
+            source_id = str(native_id)
+        else:
+            stable = json.dumps(
+                {"kind": kind.value, "source": source, "text": text, "phase": phase},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            source_id = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:20]
+        event_metadata = {"source": source}
+        if metadata:
+            event_metadata.update(metadata)
+        return ProviderEvent(
+            event_id=f"{self.name}:{session_id}:{kind.value}:{source_id}",
+            kind=kind,
+            text=text,
+            provider_session_id=str(session_id),
+            phase=phase,
+            metadata=event_metadata,
+        )
+
     @staticmethod
     def _format_duration(seconds: float) -> str:
         total = max(0, int(seconds))
@@ -114,12 +157,10 @@ class Backend(ABC):
         """找该 binding 当前活跃的 jsonl 文件 (mtime 最新)"""
 
     @abstractmethod
-    def parse_event(self, line: str) -> list[tuple[str, str]]:
-        """jsonl 一行 → 0..多条事件。
-        每条事件 = (kind, body)
-        kind ∈ {"user", "assistant_text", "assistant_tools", "attachment"}
-        body 已 HTML escape, 可直接发到 TG。
-        """
+    def parse_event(
+        self, line: str, provider_session_id: str | None = None
+    ) -> list[ProviderEvent]:
+        """jsonl 一行 → 0..多条渠道无关 ProviderEvent。"""
 
     @abstractmethod
     def find_tui_activity_fp(self, pane: str) -> str | None:

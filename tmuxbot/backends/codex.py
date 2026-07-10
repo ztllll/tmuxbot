@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
@@ -375,17 +375,10 @@ class CodexBackend(Backend):
             cwd=str(b.cwd),
         )
 
-    def parse_event(self, line: str) -> list[tuple[str, str]]:
-        """codex jsonl 一行 → events 列表。
-        - session_meta / turn_context / task_started / token_count: 跳过
-        - event_msg.user_message: 跳过 (跟 response_item user 重复)
-        - event_msg.agent_message: 跳过 (跟 response_item assistant message 重复)
-        - response_item message role=user: ("user", ...) 不回声
-        - response_item message role=assistant: ("assistant_text", text)
-        - response_item reasoning: ("assistant_tools", 💭 thinking) 通常 empty 跳过
-        - response_item function_call: ("assistant_tools", tool_use 卡片)
-        - response_item function_call_output: 跳过 (类似 claude 的 tool_result)
-        """
+    def parse_event(
+        self, line: str, provider_session_id: str | None = None
+    ) -> list[ProviderEvent]:
+        """Codex rollout row → normalized provider events."""
         try:
             j = json.loads(line)
         except Exception:
@@ -400,11 +393,28 @@ class CodexBackend(Backend):
         if t == "event_msg":
             pt = p.get("type")
             if pt == "patch_apply_end":
-                return [("assistant_tools", _format_patch_apply_end(p))]
+                return [
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.TOOL_PROGRESS,
+                        _format_patch_apply_end(p),
+                        provider_session_id=provider_session_id,
+                        native_id=p.get("call_id") or p.get("id"),
+                    )
+                ]
             if pt == "agent_message":
                 message = str(p.get("message") or "").strip()
                 if message:
-                    return [("assistant_live_text", html.escape(message))]
+                    return [
+                        self.provider_event(
+                            j,
+                            ProviderEventKind.FINAL_TEXT,
+                            html.escape(message),
+                            provider_session_id=provider_session_id,
+                            native_id=p.get("id"),
+                            phase="live",
+                        )
+                    ]
                 return []
             if pt == "agent_message_delta":
                 delta = str(
@@ -414,11 +424,29 @@ class CodexBackend(Backend):
                     or ""
                 )
                 if delta:
-                    return [("assistant_text_delta", html.escape(delta))]
+                    return [
+                        self.provider_event(
+                            j,
+                            ProviderEventKind.TEXT_DELTA,
+                            html.escape(delta),
+                            provider_session_id=provider_session_id,
+                            native_id=p.get("id"),
+                        )
+                    ]
                 return []
+            if pt in ("task_started", "task_complete"):
+                return [
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.LIFECYCLE_CHANGE,
+                        str(pt),
+                        provider_session_id=provider_session_id,
+                        native_id=p.get("id"),
+                        metadata={"lifecycle": pt},
+                    )
+                ]
             # 这些都跟 response_item 重复或纯 metadata, 跳过
-            if pt in ("task_started", "task_complete", "token_count",
-                      "user_message",
+            if pt in ("token_count", "user_message",
                       "agent_reasoning_delta", "agent_reasoning"):
                 return []
             return []
@@ -441,7 +469,15 @@ class CodexBackend(Backend):
                             parts.append(html.escape(c.get("text", "")))
                     if not parts:
                         return []
-                    return [("assistant_text", "\n".join(parts))]
+                    return [
+                        self.provider_event(
+                            j,
+                            ProviderEventKind.FINAL_TEXT,
+                            "\n".join(parts),
+                            provider_session_id=provider_session_id,
+                            native_id=p.get("id"),
+                        )
+                    ]
                 return []
             if pt == "reasoning":
                 # codex reasoning 通常 summary[] / content 都空 (encrypted_content 不解析)
@@ -457,25 +493,56 @@ class CodexBackend(Backend):
                         if tx:
                             texts.append(str(tx)[:300])
                 if texts:
-                    return [("assistant_tools", "💭 <i>" + html.escape(" / ".join(texts)) + "</i>")]
+                    return [
+                        self.provider_event(
+                            j,
+                            ProviderEventKind.TOOL_PROGRESS,
+                            "💭 <i>" + html.escape(" / ".join(texts)) + "</i>",
+                            provider_session_id=provider_session_id,
+                            native_id=p.get("id"),
+                        )
+                    ]
                 return []
             if pt == "function_call":
                 name = p.get("name", "?")
                 args_json = p.get("arguments", "")
-                kind = "assistant_plan" if name == "update_plan" else "assistant_tools"
-                return [(kind, _format_codex_tool(name, args_json))]
+                kind = (
+                    ProviderEventKind.PLAN_UPDATE
+                    if name == "update_plan"
+                    else ProviderEventKind.TOOL_PROGRESS
+                )
+                return [
+                    self.provider_event(
+                        j,
+                        kind,
+                        _format_codex_tool(name, args_json),
+                        provider_session_id=provider_session_id,
+                        native_id=p.get("call_id") or p.get("id"),
+                    )
+                ]
             if pt == "custom_tool_call":
                 name = p.get("name", "?")
                 input_text = str(p.get("input") or "")
-                return [("assistant_tools", _format_codex_custom_tool(name, input_text))]
+                return [
+                    self.provider_event(
+                        j,
+                        ProviderEventKind.TOOL_PROGRESS,
+                        _format_codex_custom_tool(name, input_text),
+                        provider_session_id=provider_session_id,
+                        native_id=p.get("call_id") or p.get("id"),
+                    )
+                ]
             if pt == "custom_tool_call_output":
                 output = str(p.get("output") or "")
                 if re.search(r"failed|error|traceback", output, re.I):
                     detail = output.strip().splitlines()[0] if output.strip() else "tool failed"
                     return [
-                        (
-                            "assistant_tools",
+                        self.provider_event(
+                            j,
+                            ProviderEventKind.PROVIDER_ERROR,
                             f"⚠️ 工具失败 <code>{html.escape(detail[:220])}</code>",
+                            provider_session_id=provider_session_id,
+                            native_id=p.get("call_id") or p.get("id"),
                         )
                     ]
                 return []

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
+from tmuxbot.core.event_reducer import reduce_provider_event
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
 
@@ -134,15 +135,25 @@ async def jsonl_poll_loop(
                     safe_off += len(line.encode("utf-8")) + 1
                     if not line.strip():
                         continue
-                    events = backend.parse_event(line)
+                    events = backend.parse_event(
+                        line, provider_session_id=b.provider_session_id
+                    )
                     # ★ 同一 binding 内串行 await, 避免 aggregator race condition
                     # (旧 S.fire 并发让多个 event 同时拿到 agg=None, 各自新建 → 多条"工作中"卡片)
                     # 串行只影响本 binding tailer 实时性, 不影响其他 binding 并发
-                    for kind, body in events:
-                        try:
-                            await on_tmux_event(b, kind, body, frontend, state, backend)
-                        except Exception:
-                            log.exception(f"[{b.name}] on_tmux_event err")
+                    for event in events:
+                        for reduced in reduce_provider_event(event):
+                            try:
+                                await on_tmux_event(
+                                    b,
+                                    reduced.kind,
+                                    reduced.body,
+                                    frontend,
+                                    state,
+                                    backend,
+                                )
+                            except Exception:
+                                log.exception(f"[{b.name}] on_tmux_event err")
                 state.offsets[key] = safe_off
                 save_offsets(offsets_file, state.offsets)
         except Exception:

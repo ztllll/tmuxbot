@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.core.events import ProviderEventKind
 from tmuxbot.state import Binding
 
 
@@ -139,8 +140,9 @@ def test_codex_update_plan_function_call_forwards_full_plan():
     events = CodexBackend().parse_event(line)
 
     assert len(events) == 1
-    kind, body = events[0]
-    assert kind == "assistant_plan"
+    event = events[0]
+    body = event.text
+    assert event.kind == ProviderEventKind.PLAN_UPDATE
     assert "先复现，再修复。" in body
     assert "复现 TG/飞书漏消息" in body
     assert "补 Codex 计划解析" in body
@@ -165,7 +167,9 @@ def test_codex_custom_apply_patch_call_is_forwarded():
 
     events = CodexBackend().parse_event(line)
 
-    assert events == [("assistant_tools", "✂️ 改文件 <code>app.py</code>")]
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.TOOL_PROGRESS
+    assert events[0].text == "✂️ 改文件 <code>app.py</code>"
 
 
 def test_codex_patch_apply_end_event_is_forwarded():
@@ -183,7 +187,9 @@ def test_codex_patch_apply_end_event_is_forwarded():
 
     events = CodexBackend().parse_event(line)
 
-    assert events == [("assistant_tools", "✓ 改文件成功 <code>app.py</code>")]
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.TOOL_PROGRESS
+    assert events[0].text == "✓ 改文件成功 <code>app.py</code>"
 
 
 def test_codex_agent_message_is_forwarded_as_live_text():
@@ -201,7 +207,10 @@ def test_codex_agent_message_is_forwarded_as_live_text():
 
     events = CodexBackend().parse_event(line)
 
-    assert events == [("assistant_live_text", "我先检查配置，再给结论。")]
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.FINAL_TEXT
+    assert events[0].phase == "live"
+    assert events[0].text == "我先检查配置，再给结论。"
 
 
 def test_codex_agent_message_delta_is_forwarded_as_text_delta():
@@ -218,4 +227,6 @@ def test_codex_agent_message_delta_is_forwarded_as_text_delta():
 
     events = CodexBackend().parse_event(line)
 
-    assert events == [("assistant_text_delta", "正在读取")]
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.TEXT_DELTA
+    assert events[0].text == "正在读取"
