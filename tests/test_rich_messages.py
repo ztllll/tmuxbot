@@ -50,7 +50,7 @@ def test_build_reply_document_parses_common_blocks_without_provider_tail_heurist
     ]
     assert document.blocks[4].language == "python"
     assert document.blocks[-1].text == "claude-opus-4-7"
-    assert document.provider is None
+    assert document.provider == "codex"
     assert document.actions == ("screen", "status")
 
 

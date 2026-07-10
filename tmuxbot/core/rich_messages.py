@@ -29,6 +29,7 @@ class ReplyDocument:
     source_text: str
     footer_text: str | None = None
     provider: str | None = None
+    state: str | None = None
     actions: tuple[str, ...] = ()
     attachments: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -52,7 +53,8 @@ def build_reply_document(
     footer_text: str | None = None,
 ) -> ReplyDocument:
     source = envelope.body
-    provider = envelope.metadata.get("provider")
+    provider = envelope.metadata.get("provider") or binding.backend
+    state = envelope.footer.state.value if envelope.footer is not None else None
     return ReplyDocument(
         title=envelope.title or "回复",
         binding_name=binding.name,
@@ -60,6 +62,7 @@ def build_reply_document(
         source_text=source,
         footer_text=footer_text,
         provider=str(provider) if provider else None,
+        state=state,
         actions=envelope.actions,
         attachments=envelope.attachments,
         metadata=envelope.metadata,

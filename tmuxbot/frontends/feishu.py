@@ -40,11 +40,18 @@ from tmuxbot.channels.feishu import (
     feishu_mentions_bot,
     feishu_replies_to_bot,
 )
+from tmuxbot.command_adapter import binding_token
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.core.rich_messages import build_reply_document
 from tmuxbot.frontends.base import Frontend
+from tmuxbot.frontends.feishu_cards import (
+    FeishuCardTooLarge,
+    build_feishu_card_v2,
+    serialize_feishu_card,
+)
 from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.replies import render_assistant_reply
+from tmuxbot.replies import html_to_plain_text, render_assistant_reply
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -136,6 +143,19 @@ def _build_card(md_text: str) -> str:
         ],
     }
     return json.dumps(card, ensure_ascii=False)
+
+
+def _coerce_card_json(content: str) -> str:
+    """Accept serialized card JSON or wrap plain Markdown in the legacy card."""
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return _build_card(content)
+    if isinstance(parsed, dict) and (
+        parsed.get("schema") == "2.0" or "elements" in parsed or "body" in parsed
+    ):
+        return content
+    return _build_card(content)
 
 
 def _make_fake_msg(message_id: str) -> Any:
@@ -275,7 +295,7 @@ class FeishuFrontend(Frontend):
         import lark_oapi.api.im.v1 as im_v1
 
         client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
-        card_json = _build_card(md_text)
+        card_json = _coerce_card_json(md_text)
         body = (
             im_v1.CreateMessageRequestBody.builder()
             .receive_id(chat_id)
@@ -330,7 +350,7 @@ class FeishuFrontend(Frontend):
         import lark_oapi.api.im.v1 as im_v1
 
         client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
-        card_json = _build_card(md_text)
+        card_json = _coerce_card_json(md_text)
         # PATCH 接口只更新 content (不接受 msg_type, builder 也没这属性)
         body = (
             im_v1.PatchMessageRequestBody.builder()
@@ -461,28 +481,61 @@ class FeishuFrontend(Frontend):
             full_output_threshold=self.capabilities.max_text_length,
             footer_text=footer_text,
         )
-        md = _html_to_feishu_md(rendered.chat_html)
-        if envelope.actions:
-            command_labels = {
-                "screen": "/screen",
-                "status": "/status",
-                "cancel": "/esc",
-                "interrupt": "/cc",
-            }
-            commands = [command_labels[a] for a in envelope.actions if a in command_labels]
-            if commands:
-                md += "\n\n操作: " + " · ".join(commands)
-        message_id = await asyncio.to_thread(self._send_card_sync, str(b.chat_id), md)
+        full_text = rendered.full_text
+        document = build_reply_document(b, effective_envelope, footer_text=footer_text)
+        message_id = None
+        if getattr(self, "card_v2_enabled", True):
+            try:
+                card_json = serialize_feishu_card(
+                    build_feishu_card_v2(document, binding_token(b.name))
+                )
+            except FeishuCardTooLarge:
+                full_text = full_text or html_to_plain_text(effective_envelope.body)
+                preview_envelope = replace(
+                    effective_envelope,
+                    body=effective_envelope.body[:2000] + "\n\n… 完整输出已附为文件。",
+                )
+                preview_document = build_reply_document(
+                    b,
+                    preview_envelope,
+                    footer_text=footer_text,
+                )
+                card_json = serialize_feishu_card(
+                    build_feishu_card_v2(preview_document, binding_token(b.name))
+                )
+            message_id = await asyncio.to_thread(
+                self._send_card_sync,
+                str(b.chat_id),
+                card_json,
+            )
+
+        if message_id is None:
+            md = _html_to_feishu_md(rendered.chat_html)
+            if envelope.actions:
+                command_labels = {
+                    "screen": "/screen",
+                    "status": "/status",
+                    "cancel": "/esc",
+                    "interrupt": "/cc",
+                }
+                commands = [command_labels[a] for a in envelope.actions if a in command_labels]
+                if commands:
+                    md += "\n\n操作: " + " · ".join(commands)
+            message_id = await asyncio.to_thread(
+                self._send_card_sync,
+                str(b.chat_id),
+                _build_card(md),
+            )
         if message_id is None:
             return None
         self._remember_outbound_message(message_id)
         first_msg = _make_fake_msg(message_id)
 
-        if rendered.full_text:
+        if full_text:
             with tempfile.NamedTemporaryFile(
                 mode="w", encoding="utf-8", suffix=".txt", delete=False
             ) as handle:
-                handle.write(rendered.full_text)
+                handle.write(full_text)
                 full_path = Path(handle.name)
             try:
                 await self.send_file(b.chat_id, b.thread_id, full_path, caption="完整输出")
