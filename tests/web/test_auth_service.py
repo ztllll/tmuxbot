@@ -63,6 +63,30 @@ def test_auth_service_rejects_short_password(tmp_path):
     assert auth.is_configured() is False
 
 
+def test_auth_service_rejects_corrupted_password_hash_as_invalid_credentials(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    repo.set_setting(AuthService.PASSWORD_KEY, "not-a-valid-password-hash")
+    auth = AuthService(repo, session_ttl_seconds=3600)
+
+    with pytest.raises(AuthError, match="invalid credentials"):
+        auth.login("correct horse battery staple", now=NOW)
+
+
+def test_authenticate_rejects_invalid_signature_even_when_session_hash_exists(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    repo.set_setting(AuthService.SIGNING_KEY, "persisted-signing-key")
+    forged_token = "forged-token.invalid-signature"
+    token_hash = hashlib.sha256(forged_token.encode()).hexdigest()
+    repo.create_session(token_hash, "forged-csrf", expires_at=NOW + 3600)
+    auth = AuthService(repo, session_ttl_seconds=3600)
+
+    assert repo.get_session(token_hash, now=NOW) == "forged-csrf"
+    with pytest.raises(AuthError, match="invalid or expired session"):
+        auth.authenticate(forged_token, now=NOW)
+
+
 def test_concurrent_setup_configures_exactly_one_password(tmp_path, monkeypatch):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
@@ -73,7 +97,7 @@ def test_concurrent_setup_configures_exactly_one_password(tmp_path, monkeypatch)
     barrier = Barrier(2)
 
     def synchronized_hash(_password_hash, password):
-        barrier.wait()
+        barrier.wait(timeout=5)
         return hashes[password]
 
     monkeypatch.setattr(PasswordHash, "hash", synchronized_hash)
@@ -86,7 +110,11 @@ def test_concurrent_setup_configures_exactly_one_password(tmp_path, monkeypatch)
         return True
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(configure, (first, second), passwords))
+        futures = [
+            executor.submit(configure, auth, password)
+            for auth, password in zip((first, second), passwords)
+        ]
+        results = [future.result(timeout=5) for future in futures]
 
     assert sorted(results) == [False, True]
     accepted = [password for password, configured in zip(passwords, results) if configured]
@@ -109,16 +137,15 @@ def test_concurrent_signing_key_creation_keeps_all_sessions_valid(tmp_path, monk
     def synchronized_token_urlsafe(length):
         if length != 48:
             return original_token_urlsafe(length)
-        barrier.wait()
+        barrier.wait(timeout=5)
         with key_lock:
             return next(generated_keys)
 
     monkeypatch.setattr("tmuxbot.web.auth.secrets.token_urlsafe", synchronized_token_urlsafe)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        sessions = list(
-            executor.map(lambda auth: auth.login(password, now=NOW), (first, second))
-        )
+        futures = [executor.submit(auth.login, password, now=NOW) for auth in (first, second)]
+        sessions = [future.result(timeout=5) for future in futures]
 
     verifier = AuthService(repo, session_ttl_seconds=3600)
     assert [

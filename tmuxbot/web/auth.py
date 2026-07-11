@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from itsdangerous import BadSignature, Signer
 from pwdlib import PasswordHash
+from pwdlib.exceptions import PwdlibError
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 
@@ -47,7 +48,11 @@ class AuthService:
 
     def login(self, password: str, *, now: int) -> AuthenticatedSession:
         encoded = self.repository.get_setting(self.PASSWORD_KEY)
-        if encoded is None or not self.password_hash.verify(password, encoded):
+        try:
+            verified = encoded is not None and self.password_hash.verify(password, encoded)
+        except PwdlibError as exc:
+            raise AuthError("invalid credentials") from exc
+        if not verified:
             raise AuthError("invalid credentials")
         return self._new_session(now)
 
