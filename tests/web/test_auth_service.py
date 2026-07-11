@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Lock
 
 import pytest
+from itsdangerous import TimestampSigner
 from pwdlib import PasswordHash
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
@@ -61,6 +62,33 @@ def test_auth_service_rejects_short_password(tmp_path):
         auth.setup("too short", now=1000)
 
     assert auth.is_configured() is False
+
+
+def test_auth_service_signs_and_validates_bootstrap_csrf_token(tmp_path, monkeypatch):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    auth = AuthService(repo, session_ttl_seconds=3600)
+    monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda self: NOW)
+
+    token = auth.issue_bootstrap_token()
+
+    auth.validate_bootstrap_token(token, max_age_seconds=300)
+    with pytest.raises(AuthError, match="invalid or expired bootstrap csrf token"):
+        auth.validate_bootstrap_token(token + "tampered", max_age_seconds=300)
+
+
+def test_auth_service_rejects_expired_bootstrap_csrf_token(tmp_path, monkeypatch):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    auth = AuthService(repo, session_ttl_seconds=3600)
+    now = NOW
+    monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda self: now)
+    token = auth.issue_bootstrap_token()
+
+    now += 301
+
+    with pytest.raises(AuthError, match="invalid or expired bootstrap csrf token"):
+        auth.validate_bootstrap_token(token, max_age_seconds=300)
 
 
 def test_auth_service_rejects_corrupted_password_hash_as_invalid_credentials(tmp_path):

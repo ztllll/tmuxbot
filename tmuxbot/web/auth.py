@@ -4,7 +4,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 
-from itsdangerous import BadSignature, Signer
+from itsdangerous import BadSignature, Signer, TimestampSigner
 from pwdlib import PasswordHash
 from pwdlib.exceptions import PwdlibError
 
@@ -24,6 +24,7 @@ class AuthenticatedSession:
 class AuthService:
     PASSWORD_KEY = "auth.password_hash"
     SIGNING_KEY = "auth.cookie_signing_key"
+    BOOTSTRAP_CSRF_SALT = "tmuxbot-web-bootstrap-csrf"
 
     def __init__(self, repository: ControlPlaneRepository, *, session_ttl_seconds: int):
         self.repository = repository
@@ -69,6 +70,16 @@ class AuthService:
     def logout(self, token: str) -> None:
         self.repository.delete_session(self._token_hash(token))
 
+    def issue_bootstrap_token(self) -> str:
+        token = secrets.token_urlsafe(32)
+        return self._bootstrap_signer().sign(token).decode("utf-8")
+
+    def validate_bootstrap_token(self, token: str, *, max_age_seconds: int) -> None:
+        try:
+            self._bootstrap_signer().unsign(token, max_age=max_age_seconds)
+        except BadSignature as exc:
+            raise AuthError("invalid or expired bootstrap csrf token") from exc
+
     def _new_session(self, now: int) -> AuthenticatedSession:
         token = self._signer().sign(secrets.token_urlsafe(32)).decode("utf-8")
         csrf = secrets.token_urlsafe(24)
@@ -80,6 +91,12 @@ class AuthService:
         return AuthenticatedSession(token=token, csrf_token=csrf)
 
     def _signer(self) -> Signer:
+        return Signer(self._signing_key(), salt="tmuxbot-web-session")
+
+    def _bootstrap_signer(self) -> TimestampSigner:
+        return TimestampSigner(self._signing_key(), salt=self.BOOTSTRAP_CSRF_SALT)
+
+    def _signing_key(self) -> str:
         key = self.repository.get_setting(self.SIGNING_KEY)
         if key is None:
             candidate = secrets.token_urlsafe(48)
@@ -87,7 +104,7 @@ class AuthService:
             key = self.repository.get_setting(self.SIGNING_KEY)
         if key is None:
             raise AuthError("failed to initialize cookie signing key")
-        return Signer(key, salt="tmuxbot-web-session")
+        return key
 
     @staticmethod
     def _validate_password(password: str) -> None:

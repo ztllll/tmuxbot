@@ -6,6 +6,7 @@ import time
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi import status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -28,16 +29,29 @@ def create_app(
     inventory: TmuxInventory,
     bindings: list[Binding],
 ) -> FastAPI:
-    app = FastAPI(title="tmuxbot control plane", docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="tmuxbot control plane",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
     auth = AuthService(repository, session_ttl_seconds=settings.session_ttl_seconds)
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
     @app.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
-        _request: Request, _exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"detail": "invalid request"})
+        if request.url.path in {"/api/auth/setup", "/api/auth/login"}:
+            detail: str | list[dict] = "invalid request"
+        else:
+            detail = []
+            for error in exc.errors():
+                sanitized = dict(error)
+                sanitized.pop("input", None)
+                detail.append(jsonable_encoder(sanitized))
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
@@ -79,6 +93,12 @@ def create_app(
             or not secrets.compare_digest(cookie_token, header_token)
         ):
             raise HTTPException(status_code=403, detail="invalid csrf token")
+        try:
+            auth.validate_bootstrap_token(
+                cookie_token, max_age_seconds=BOOTSTRAP_COOKIE_MAX_AGE
+            )
+        except AuthError as exc:
+            raise HTTPException(status_code=403, detail="invalid csrf token") from exc
 
     def set_session_cookie(response: Response, token: str) -> None:
         response.set_cookie(
@@ -117,7 +137,7 @@ def create_app(
 
     @app.get("/api/auth/status")
     def auth_status(response: Response) -> dict[str, bool | str]:
-        csrf_token = secrets.token_urlsafe(32)
+        csrf_token = auth.issue_bootstrap_token()
         set_bootstrap_cookie(response, csrf_token)
         return {"configured": auth.is_configured(), "csrf_token": csrf_token}
 

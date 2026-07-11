@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from itsdangerous import TimestampSigner
 
 from tmuxbot.control_plane.models import RunEvent, TmuxPaneRecord
 from tmuxbot.control_plane.repository import ControlPlaneRepository
@@ -96,6 +97,12 @@ def test_web_api_requires_auth_and_csrf(tmp_path):
     assert client.get("/api/events").status_code == 401
 
 
+def test_openapi_schema_is_not_exposed(tmp_path):
+    client, _, _ = _client(tmp_path)
+
+    assert client.get("/openapi.json").status_code == 404
+
+
 def test_setup_is_disabled_after_first_password(tmp_path):
     client, _, _ = _client(tmp_path)
 
@@ -174,6 +181,39 @@ def test_setup_requires_bootstrap_double_submit_csrf(tmp_path):
     assert wrong.status_code == 403
     assert success.status_code == 201
     assert BOOTSTRAP_COOKIE_NAME not in client.cookies
+
+
+def test_setup_rejects_tampered_bootstrap_csrf_signature(tmp_path):
+    client, _, _ = _client(tmp_path)
+    bootstrap_csrf = _bootstrap(client)
+    tampered = bootstrap_csrf + "tampered"
+    client.cookies.set(BOOTSTRAP_COOKIE_NAME, tampered)
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={"X-CSRF-Token": tampered},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid csrf token"}
+
+
+def test_setup_rejects_expired_bootstrap_csrf_signature(tmp_path, monkeypatch):
+    now = 2_000_000_000
+    monkeypatch.setattr(TimestampSigner, "get_timestamp", lambda self: now)
+    client, _, _ = _client(tmp_path)
+    bootstrap_csrf = _bootstrap(client)
+    now += 301
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={"X-CSRF-Token": bootstrap_csrf},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid csrf token"}
 
 
 def test_login_requires_bootstrap_double_submit_csrf(tmp_path):
@@ -347,14 +387,23 @@ def test_events_serialize_only_persisted_run_events(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("limit", [0, 501])
-def test_events_reject_limit_outside_supported_range(tmp_path, limit):
+@pytest.mark.parametrize(
+    ("limit", "error_type"),
+    [(0, "greater_than_equal"), (501, "less_than_equal")],
+)
+def test_events_reject_limit_outside_supported_range_without_echoing_input(
+    tmp_path, limit, error_type
+):
     client, _, _ = _client(tmp_path)
     _setup(client)
 
     response = client.get("/api/events", params={"limit": limit})
 
     assert response.status_code == 422
+    [detail] = response.json()["detail"]
+    assert detail["loc"] == ["query", "limit"]
+    assert detail["type"] == error_type
+    assert "input" not in detail
 
 
 def test_tmux_inventory_serializes_managed_and_orphan_panes(tmp_path):
