@@ -40,6 +40,7 @@ The panel never stores a static model catalog. It dispatches `/model` to the act
 
 - Codex opens its native model and reasoning-effort picker. Official Codex documentation states that `/model` changes the active model mid-session; `/status` verifies the result.
 - Claude opens its native picker. Claude also accepts `/model <alias|name>` and applies the change immediately; native picker confirmation can also update its default for future sessions according to Claude Code behavior.
+- Claude model interaction cards expose a Chinese `仅本会话` control that sends the native `s` key. The normal confirm control retains Claude's documented behavior of changing the current model and saving it as the default for future sessions.
 - The interaction card captures the tmux screen and provides navigation keys. Available choices therefore remain aligned with the installed CLI version and account entitlement.
 
 No provider process is replaced, no SDK conversation is created, and the active tmux session remains the execution plane.

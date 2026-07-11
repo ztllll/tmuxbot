@@ -68,3 +68,16 @@ The rollout changed only channel rendering, attachment delivery, and card intera
 - `ruff check tmuxbot tests` passed; `pytest -q` passed with 169 tests and one upstream lark-oapi deprecation warning.
 - Local `tmuxbot.service` restarted active; tmux session count remained 6 before and after restart.
 - Telegram Codex acceptance message `1043` displayed the completed-state badge and was delivered with `reply_markup=None`.
+
+## 2026-07-11 channel control-panel rollout
+
+- Added Chinese `/panel` and `/settings` entry points plus `/mention on|off|default|status` fallback commands.
+- Binding-scoped mention policy is atomically persisted in `bindings.yaml`; Boss control commands bypass mention wake-up so the panel cannot lock out its owner.
+- Panel actions cover `/status`, `/screen`, `/new` with confirmation, `/compact`, `/resume`, `/model`, `/esc`, and `/cc` while ordinary assistant replies remain button-free.
+- Model switching uses each active tmux CLI's native `/model` picker. A temporary Codex canary switched from `gpt-5.6-sol high` to `gpt-5.6-terra medium` and confirmed the change in the live TUI.
+- Claude Code 2.1.205 native picker was verified to expose default, Opus, Fable, Sonnet, and Haiku choices in the current account. Interaction cards include `仅本会话`, which sends Claude's native `s` shortcut instead of changing the future-session default.
+- Telegram Codex control-panel acceptance message `1044` was delivered with six Chinese keyboard rows.
+- Claude Feishu panel `om_x100b6a2ec6a084a8c2e8a300e9efc32` and Codex Feishu panel `om_x100b6a2ec6b6dca8c444b39d78f3228` were delivered as interactive Card JSON 2.0 messages.
+- `ruff check tmuxbot tests` passed; `pytest -q` passed with 186 tests and one upstream lark-oapi deprecation warning.
+- Local service remained active with 6 tmux sessions before and after restart. Both hbhy services remained active with 21 tmux sessions before and after restart.
+- Expanded multi-LLM coordination research was recorded in English and Chinese only; no orchestration runtime code was added.

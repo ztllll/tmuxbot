@@ -90,6 +90,6 @@
 
 - [x] Record expanded multi-agent research without implementing orchestration code.
 - [x] Document `/panel`, `/mention`, common actions, and model-picker semantics in Chinese.
-- [ ] Run `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
-- [ ] Deploy locally and to hbhy while preserving tmux sessions.
-- [ ] Perform Telegram and Feishu live acceptance, commit, push, and synchronize deployments.
+- [x] Run `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
+- [x] Deploy locally and to hbhy while preserving tmux sessions.
+- [x] Perform Telegram and Feishu live acceptance, commit, push, and synchronize deployments.
