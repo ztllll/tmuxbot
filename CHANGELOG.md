@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### 0.3.0 Preview
+
+- 新增零配置 `tmuxbot serve --open`、XDG 路径、一次性首次设置授权、doctor 与 systemd user service 安装。
+- 新增中文 WebUI：Provider 扫描/版本探测、项目与受管 Claude/Codex tmux 会话、Telegram/飞书配置。
+- 新增 xterm.js 观察/审计接管终端，浏览器断开不终止 tmux。
+- 新增确定性 TeamRun：三角色、DAG、单写租约、mailbox、Artifact、独立 Reviewer 验收与恢复。
+- 修复飞书/Telegram 多行附件粘贴后回车竞态。
+
 ### Added
 
 - Phase 1 Web foundation:独立 control plane 进程、首次设置与会话认证、SQLite 事件存储、只读 tmux inventory/event API。
