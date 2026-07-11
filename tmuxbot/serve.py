@@ -60,10 +60,16 @@ async def serve(
     while not server.started and not web_task.done():
         await asyncio.sleep(0.02)
 
-    if open_browser and server.started:
+    if server.started:
         grant_obj = getattr(app.state, "setup_grant", None)
         grant = None if grant_obj is None else grant_obj.token
-        webbrowser.open(browser_url(settings.host, settings.port, grant))
+        local_url = browser_url(settings.host, settings.port, grant)
+        if grant is not None:
+            print(f"首次设置地址（10 分钟内有效）: {local_url}", flush=True)
+        else:
+            print(f"WebUI: {local_url}", flush=True)
+        if open_browser:
+            webbrowser.open(local_url)
 
     stop_task = asyncio.create_task(stop.wait())
     done, _ = await asyncio.wait(
