@@ -214,8 +214,8 @@ def test_systemd_unit_is_a_secret_free_user_service():
 
     assert "WantedBy=default.target" in unit
     assert "multi-user.target" not in unit
-    assert "WorkingDirectory=%h/claude-project/tmuxbot" in unit
-    assert "EnvironmentFile=%h/claude-project/tmuxbot/.env" in unit
-    assert exec_start == "ExecStart=%h/claude-project/tmuxbot/.venv/bin/tmuxbot web"
+    assert "WorkingDirectory=" not in unit
+    assert "EnvironmentFile=-%h/.config/tmuxbot/.env" in unit
+    assert exec_start == "ExecStart=%h/.local/bin/tmuxbot web"
     assert "password" not in exec_start.lower()
     assert "secret" not in exec_start.lower()
