@@ -1,0 +1,54 @@
+from pathlib import Path
+from types import SimpleNamespace
+
+from tests.web.test_provider_api import _fake_cli, _make_client
+
+
+def test_project_and_managed_session_wizard_uses_server_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_cli(bin_dir / "codex", "codex 5.0")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    client, _, csrf = _make_client(tmp_path / "state")
+    [provider] = client.post(
+        "/api/providers/scan", headers={"X-CSRF-Token": csrf}
+    ).json()
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    project = client.post(
+        "/api/projects",
+        json={"name": "演示项目", "root_path": str(project_dir)},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert project.status_code == 201
+
+    observed: list[list[str]] = []
+    monkeypatch.setattr("tmuxbot.web.app.shutil.which", lambda name: "/usr/bin/tmux")
+
+    def run(argv, **kwargs):
+        observed.append(argv)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("tmuxbot.web.app.subprocess.run", run)
+    session = client.post(
+        "/api/managed-sessions",
+        json={
+            "project_id": project.json()["id"],
+            "provider_id": provider["id"],
+            "name": "Codex 实施",
+            "binary_path": "/tmp/ignored",
+            "tmux_target": "browser-controlled",
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert session.status_code == 201
+    assert session.json()["provider"] == "codex"
+    assert observed[0][0:3] == ["/usr/bin/tmux", "new-session", "-d"]
+    assert "/tmp/ignored" not in observed[0]
+    assert "browser-controlled" not in observed[0]
+    assert client.get("/api/projects").json()[0]["name"] == "演示项目"
+    assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
+

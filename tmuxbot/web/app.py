@@ -3,10 +3,13 @@ from __future__ import annotations
 import ipaddress
 import os
 import platform
+import re
 import secrets
 import shutil
 import socket
+import subprocess
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -18,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.control_plane.models import ProviderProfile
+from tmuxbot.control_plane.models import ManagedSession, ProjectRecord, ProviderProfile
 from tmuxbot.control_plane.tmux_inventory import (
     TmuxInventory,
     TmuxInventoryError,
@@ -27,7 +30,11 @@ from tmuxbot.control_plane.tmux_inventory import (
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
 from tmuxbot.state import Binding
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
-from tmuxbot.web.schemas import PasswordRequest
+from tmuxbot.web.schemas import (
+    ManagedSessionCreateRequest,
+    PasswordRequest,
+    ProjectCreateRequest,
+)
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
 
@@ -340,6 +347,137 @@ def create_app(
             "duration_ms": result.duration_ms,
             "output_truncated": result.output_truncated,
             "observed_at": result.observed_at,
+        }
+
+    @app.get("/api/projects")
+    def projects(
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "id": project.id,
+                "name": project.name,
+                "root_path": project.root_path,
+                "created_at": project.created_at,
+            }
+            for project in repository.list_projects()
+        ]
+
+    @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
+    def create_project(
+        body: ProjectCreateRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        try:
+            root = Path(body.root_path).expanduser().resolve(strict=True)
+            info = root.stat()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="project path is unavailable") from exc
+        if not root.is_dir():
+            raise HTTPException(status_code=400, detail="project path must be a directory")
+        project = ProjectRecord(
+            id=f"project-{uuid.uuid4().hex}",
+            name=body.name.strip(),
+            root_path=str(root),
+            device=info.st_dev,
+            inode=info.st_ino,
+            mtime_ns=info.st_mtime_ns,
+            created_at=int(time.time()),
+        )
+        try:
+            repository.create_project(project)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="project already exists") from exc
+        return {
+            "id": project.id,
+            "name": project.name,
+            "root_path": project.root_path,
+            "created_at": project.created_at,
+        }
+
+    @app.get("/api/managed-sessions")
+    def managed_sessions(
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "id": item.id,
+                "project_id": item.project_id,
+                "provider_id": item.provider_id,
+                "name": item.name,
+                "tmux_target": f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}",
+                "status": item.status,
+            }
+            for item in repository.list_managed_sessions()
+        ]
+
+    @app.post("/api/managed-sessions", status_code=status.HTTP_201_CREATED)
+    def create_managed_session(
+        body: ManagedSessionCreateRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        project = repository.get_project(body.project_id)
+        provider = repository.get_provider_profile(body.provider_id)
+        if project is None or provider is None or provider.binary_name not in {"claude", "codex"}:
+            raise HTTPException(status_code=404, detail="project or provider not found")
+        try:
+            ProviderDiscovery._verify_identity(provider)
+        except ProviderDiscoveryError as exc:
+            raise HTTPException(status_code=409, detail="provider identity changed") from exc
+        try:
+            current = Path(project.root_path).stat()
+        except OSError as exc:
+            raise HTTPException(status_code=409, detail="project identity changed") from exc
+        if (current.st_dev, current.st_ino) != (project.device, project.inode):
+            raise HTTPException(status_code=409, detail="project identity changed")
+        tmux_binary = shutil.which("tmux")
+        if tmux_binary is None:
+            raise HTTPException(status_code=503, detail="tmux is unavailable")
+        safe_provider = re.sub(r"[^a-z0-9]+", "-", provider.binary_name.lower()).strip("-")
+        tmux_session = f"tmuxbot-{safe_provider}-{uuid.uuid4().hex[:8]}"
+        provider_argv = [provider.executable_path]
+        if provider.binary_name == "claude":
+            provider_argv.append("--dangerously-skip-permissions")
+        else:
+            provider_argv.append("--dangerously-bypass-approvals-and-sandbox")
+        # tmux accepts a command argv after its options. No browser-supplied command or target
+        # enters this call; provider path and cwd come from server-verified records.
+        completed = subprocess.run(
+            [
+                tmux_binary,
+                "new-session",
+                "-d",
+                "-s",
+                tmux_session,
+                "-c",
+                project.root_path,
+                *provider_argv,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise HTTPException(status_code=503, detail="unable to create tmux session")
+        managed = ManagedSession(
+            id=f"session-{uuid.uuid4().hex}",
+            project_id=project.id,
+            provider_id=provider.id,
+            name=body.name.strip(),
+            tmux_session=tmux_session,
+            tmux_window=0,
+            tmux_pane=0,
+            status="running",
+            created_at=int(time.time()),
+        )
+        repository.create_managed_session(managed)
+        return {
+            "id": managed.id,
+            "name": managed.name,
+            "provider": provider.binary_name,
+            "tmux_target": f"{tmux_session}:0.0",
+            "status": managed.status,
         }
 
     @app.get("/api/system/status")
