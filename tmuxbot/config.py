@@ -86,6 +86,7 @@ def load_config(env_file: Path, bindings_file: Path, offsets_file: Path) -> None
                 backend=b.get("backend", "claude_code"),
                 bot_token_env=b.get("bot_token_env", "TG_BOT_TOKEN"),
                 channel=b.get("channel", "telegram"),
+                mention_required=b.get("mention_required"),
                 provider_session_id=provider_session_id,
                 transcript_path=Path(transcript_raw) if transcript_raw else None,
                 last_session_id=provider_session_id,
