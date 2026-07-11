@@ -41,11 +41,18 @@ def build_terminal_service(
     bindings: list[Binding],
 ) -> TerminalService:
     targets = {binding.name: binding.tmux_target for binding in bindings}
+
+    def resolve_target(managed_session_id: str) -> str | None:
+        managed = repository.get_managed_session(managed_session_id)
+        if managed is not None:
+            return f"{managed.tmux_session}:{managed.tmux_window}.{managed.tmux_pane}"
+        return targets.get(managed_session_id)
+
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
     return TerminalService(
         repository=repository,
-        target_resolver=targets.get,
+        target_resolver=resolve_target,
         allowed_origin=allowed_origin,
     )
 
