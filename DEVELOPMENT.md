@@ -280,7 +280,7 @@ Codex 的 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 路径不编码 cwd,bac
 Web 进程与 Telegram/飞书 bridge 分开启动:
 
 ```bash
-uv sync --extra dev --extra web
+make install-dev
 uv run tmuxbot web
 # 等价: uv run python -m tmuxbot.web
 ```

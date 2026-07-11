@@ -3,7 +3,7 @@
 UV ?= uv
 
 install-dev:
-	$(UV) sync --extra dev
+	$(UV) sync --extra dev --extra web --extra feishu
 
 test:
 	$(UV) run pytest

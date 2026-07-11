@@ -1,7 +1,9 @@
 import sqlite3
+import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from threading import Barrier, Event
 
 import pytest
@@ -20,6 +22,92 @@ def _event(event_id: str, occurred_at: datetime) -> RunEvent:
         payload={"classification": "orphan", "metadata": {"label": "孤儿"}},
         occurred_at=occurred_at,
     )
+
+
+def _mode(path):
+    return path.stat().st_mode & 0o777
+
+
+def test_repository_creates_private_data_directory_and_database_with_permissive_umask(
+    tmp_path,
+):
+    data_dir = tmp_path / "data"
+    path = data_dir / "control.sqlite3"
+    previous_umask = os.umask(0o002)
+    try:
+        ControlPlaneRepository(path).migrate()
+    finally:
+        os.umask(previous_umask)
+
+    assert _mode(data_dir) == 0o700
+    assert _mode(path) == 0o600
+
+
+@pytest.mark.parametrize("initial_mode", [0o644, 0o664])
+def test_repository_repairs_existing_database_permissions(tmp_path, initial_mode):
+    path = tmp_path / "control.sqlite3"
+    path.touch(mode=initial_mode)
+    path.chmod(initial_mode)
+
+    ControlPlaneRepository(path).migrate()
+
+    assert _mode(path) == 0o600
+
+
+def test_repository_repairs_existing_data_directory_permissions(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(mode=0o755)
+    data_dir.chmod(0o755)
+
+    ControlPlaneRepository(data_dir / "control.sqlite3").migrate()
+
+    assert _mode(data_dir) == 0o700
+
+
+def test_repository_secures_wal_and_shm_files_while_connection_is_open(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    observed_modes = {}
+
+    class InspectingRepository(ControlPlaneRepository):
+        def _connect(self):
+            connection = super()._connect()
+            for suffix in ("-wal", "-shm"):
+                sidecar = path.with_name(path.name + suffix)
+                assert sidecar.exists()
+                observed_modes[suffix] = _mode(sidecar)
+            return connection
+
+    with sqlite3.connect(path) as keeper:
+        keeper.execute("PRAGMA journal_mode = WAL")
+        keeper.execute("CREATE TABLE keep_sidecars(value TEXT)")
+        keeper.execute("INSERT INTO keep_sidecars(value) VALUES ('open')")
+        keeper.commit()
+        for suffix in ("-wal", "-shm"):
+            sidecar = path.with_name(path.name + suffix)
+            assert sidecar.exists()
+            sidecar.chmod(0o664)
+
+        InspectingRepository(path).migrate()
+
+    assert observed_modes == {"-wal": 0o600, "-shm": 0o600}
+
+
+def test_repository_raises_clear_error_when_permissions_cannot_be_secured(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "control.sqlite3"
+    path.touch(mode=0o644)
+    real_chmod = Path.chmod
+
+    def deny_database_chmod(target, mode, *, follow_symlinks=True):
+        if os.fspath(target) == os.fspath(path):
+            raise PermissionError("operation not permitted")
+        real_chmod(target, mode, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "chmod", deny_database_chmod)
+
+    with pytest.raises(RuntimeError, match="secure SQLite storage permissions.*control.sqlite3"):
+        ControlPlaneRepository(path).migrate()
 
 
 def test_repository_migrates_repeatedly_and_appends_event_idempotently(tmp_path):
