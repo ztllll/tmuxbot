@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from tmuxbot.control_plane.tmux_inventory import TmuxInventory, TmuxInventoryErr
 from tmuxbot.state import Binding
 from tmuxbot.web.app import BOOTSTRAP_COOKIE_NAME, COOKIE_NAME, create_app
 from tmuxbot.web.auth import AuthError, AuthService
+from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
 
 
@@ -60,6 +62,7 @@ def _client(
     bindings: list[Binding] | None = None,
     client_host: str = "127.0.0.1",
     setup_token: str | None = SETUP_TOKEN,
+    setup_grant: SetupGrant | None = None,
     raise_server_exceptions: bool = True,
 ) -> tuple[TestClient, ControlPlaneRepository, FakeInventory]:
     settings = _settings(
@@ -70,12 +73,32 @@ def _client(
     fake_inventory = inventory or FakeInventory()
     scheme = "https" if secure_cookie else "http"
     client = TestClient(
-        create_app(settings, repository, fake_inventory, bindings or []),
+        create_app(
+            settings,
+            repository,
+            fake_inventory,
+            bindings or [],
+            setup_grant=setup_grant,
+        ),
         base_url=f"{scheme}://testserver",
         client=(client_host, 50000),
         raise_server_exceptions=raise_server_exceptions,
     )
     return client, repository, fake_inventory
+
+
+def _grant_setup(client: TestClient, token: str) -> str:
+    bootstrap_csrf = _bootstrap(client)
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": token,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()["csrf_token"]
 
 
 def _bootstrap(client: TestClient) -> str:
@@ -125,6 +148,79 @@ def test_web_api_requires_auth_and_csrf(tmp_path):
         "/api/auth/logout", headers={"X-CSRF-Token": csrf}
     ).status_code == 204
     assert client.get("/api/events").status_code == 401
+
+
+def test_ephemeral_setup_grant_authorizes_loopback_setup_and_is_consumed(tmp_path):
+    now = int(time.time())
+    grant = SetupGrant.generate(now=now)
+    client, _, _ = _client(tmp_path, setup_token=None, setup_grant=grant)
+
+    status_response = client.get("/api/auth/status")
+    status = status_response.json()
+
+    assert status["setup_available"] is True
+    assert status["setup_expires_at"] == grant.expires_at
+    assert grant.token not in status_response.text
+
+    _grant_setup(client, grant.token)
+
+    assert grant.consumed is True
+    configured = client.get("/api/auth/status").json()
+    assert configured["configured"] is True
+    assert configured["setup_available"] is False
+    assert configured["setup_expires_at"] is None
+
+
+@pytest.mark.parametrize("grant_state", ["wrong", "expired", "consumed"])
+def test_ephemeral_setup_grant_rejects_invalid_authorization_with_fixed_403(
+    tmp_path, grant_state
+):
+    now = int(time.time())
+    grant = SetupGrant.generate(now=now)
+    submitted = grant.token
+    if grant_state == "wrong":
+        submitted = "wrong-grant-token"
+    elif grant_state == "expired":
+        grant.expires_at = now
+    else:
+        grant.consume()
+    client, _, _ = _client(tmp_path, setup_token=None, setup_grant=grant)
+    bootstrap_csrf = _bootstrap(client)
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": submitted,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid setup authorization"}
+    assert submitted not in response.text
+
+
+def test_legacy_setup_token_takes_precedence_over_ephemeral_grant(tmp_path):
+    grant = SetupGrant.generate(now=int(time.time()))
+    client, _, _ = _client(tmp_path, setup_grant=grant)
+    bootstrap_csrf = _bootstrap(client)
+
+    rejected = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": grant.token,
+        },
+    )
+
+    assert rejected.status_code == 403
+    assert grant.consumed is False
+
+    _grant_setup(client, SETUP_TOKEN)
+
+    assert grant.consumed is False
 
 
 def test_openapi_schema_is_not_exposed(tmp_path):

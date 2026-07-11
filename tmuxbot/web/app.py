@@ -4,6 +4,7 @@ import ipaddress
 import os
 import secrets
 import time
+from collections.abc import Callable, Mapping
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi import status
@@ -20,6 +21,7 @@ from tmuxbot.control_plane.tmux_inventory import (
 from tmuxbot.state import Binding
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import PasswordRequest
+from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
 
 
@@ -33,6 +35,9 @@ def create_app(
     repository: ControlPlaneRepository,
     inventory: TmuxInventory,
     bindings: list[Binding],
+    *,
+    setup_grant: SetupGrant | None = None,
+    bridge_status: Callable[[], Mapping[str, object]] | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -41,6 +46,8 @@ def create_app(
         openapi_url=None,
     )
     auth = AuthService(repository, session_ttl_seconds=settings.session_ttl_seconds)
+    app.state.setup_grant = setup_grant
+    app.state.bridge_status = bridge_status
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
@@ -75,15 +82,22 @@ def create_app(
                     status_code=403,
                     content={"detail": "setup is only allowed from loopback"},
                 )
-            if settings.setup_token is None:
+            submitted_setup_token = request.headers.get("x-setup-token") or ""
+            now = int(time.time())
+            if settings.setup_token is not None:
+                authorized = secrets.compare_digest(
+                    submitted_setup_token, settings.setup_token
+                )
+            elif setup_grant is not None:
+                authorized = setup_grant.authorize(
+                    submitted_setup_token, now=now
+                )
+            else:
                 return JSONResponse(
                     status_code=503,
                     content={"detail": "password setup is unavailable"},
                 )
-            submitted_setup_token = request.headers.get("x-setup-token") or ""
-            if not secrets.compare_digest(
-                submitted_setup_token, settings.setup_token
-            ):
+            if not authorized:
                 return JSONResponse(
                     status_code=403,
                     content={"detail": "invalid setup authorization"},
@@ -165,13 +179,27 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/auth/status")
-    def auth_status(response: Response) -> dict[str, bool | str]:
+    def auth_status(response: Response) -> dict[str, bool | str | int | None]:
         csrf_token = auth.issue_bootstrap_token()
         set_bootstrap_cookie(response, csrf_token)
         configured = auth.is_configured()
+        now = int(time.time())
+        grant_available = (
+            settings.setup_token is None
+            and setup_grant is not None
+            and setup_grant.is_available(now=now)
+        )
+        setup_available = not configured and (
+            settings.setup_token is not None or grant_available
+        )
         return {
             "configured": configured,
-            "setup_available": not configured and settings.setup_token is not None,
+            "setup_available": setup_available,
+            "setup_expires_at": (
+                setup_grant.expires_at
+                if setup_available and grant_available and setup_grant is not None
+                else None
+            ),
             "csrf_token": csrf_token,
         }
 
@@ -189,6 +217,8 @@ def create_app(
                     status_code=409, detail="password is already configured"
                 ) from exc
             raise HTTPException(status_code=400, detail="password setup failed") from exc
+        if settings.setup_token is None and setup_grant is not None:
+            setup_grant.consume()
         delete_bootstrap_cookie(response)
         set_session_cookie(response, session.token)
         return {"csrf_token": session.csrf_token}
