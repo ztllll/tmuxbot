@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import platform
 import secrets
+import shutil
+import socket
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -282,10 +285,28 @@ def create_app(
             if callable(bridge_callback)
             else {"state": "standalone", "reason": "web_only"}
         )
+        bridge.setdefault("status", bridge.get("state", "unknown"))
+        provider_items = []
+        for provider_name, binary_name in (("Claude Code", "claude"), ("Codex", "codex")):
+            binary_path = shutil.which(binary_name)
+            provider_items.append(
+                {
+                    "name": provider_name,
+                    "status": "found" if binary_path else "missing",
+                    "path": binary_path,
+                }
+            )
+        tmux_path = shutil.which("tmux")
         return {
-            "host": settings.host,
-            "port": settings.port,
+            "host": {
+                "hostname": socket.gethostname(),
+                "platform": platform.system(),
+                "python_version": platform.python_version(),
+            },
             "bridge": bridge,
+            "tmux": {"status": "found" if tmux_path else "missing", "path": tmux_path},
+            "paths": {"database": str(settings.database_path)},
+            "providers": provider_items,
             "binding_count": len(bindings),
         }
 
