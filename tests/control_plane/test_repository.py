@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -121,6 +122,17 @@ def test_repository_rejects_symlink_data_directory(tmp_path):
         ControlPlaneRepository(data_dir / "control.sqlite3").migrate()
 
 
+def test_repository_rejects_symlink_in_existing_ancestor(tmp_path):
+    actual_root = tmp_path / "actual-root"
+    data_dir = actual_root / "data"
+    data_dir.mkdir(parents=True)
+    linked_root = tmp_path / "linked-root"
+    linked_root.symlink_to(actual_root, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="ancestor must not be a symbolic link.*linked-root"):
+        ControlPlaneRepository(linked_root / "data" / "control.sqlite3").migrate()
+
+
 def test_repository_rejects_symlink_database_without_modifying_target(tmp_path):
     target = tmp_path / "target.sqlite3"
     target.write_bytes(b"not a database")
@@ -157,6 +169,24 @@ def test_repository_rejects_non_regular_sidecar(tmp_path):
         ControlPlaneRepository(path).migrate()
 
 
+def test_repository_rejects_fifo_sidecar_without_blocking(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    fifo = path.with_name(path.name + "-wal")
+    os.mkfifo(fifo)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(ControlPlaneRepository(path).migrate)
+        try:
+            with pytest.raises(RuntimeError, match="not a regular file.*-wal"):
+                result.result(timeout=0.5)
+        except FutureTimeoutError:
+            writer = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            os.close(writer)
+            with pytest.raises(RuntimeError):
+                result.result(timeout=1)
+            pytest.fail("repository blocked opening a FIFO sidecar")
+
+
 def test_repository_ignores_sidecar_deleted_before_secure_open(tmp_path, monkeypatch):
     path = tmp_path / "control.sqlite3"
     real_open = os.open
@@ -173,6 +203,57 @@ def test_repository_ignores_sidecar_deleted_before_secure_open(tmp_path, monkeyp
     ControlPlaneRepository(path).migrate()
 
     assert {Path(item).suffix for item in raced_sidecars} == {".sqlite3-wal", ".sqlite3-shm"}
+
+
+def test_repository_rejects_database_replaced_before_sqlite_connect(tmp_path, monkeypatch):
+    path = tmp_path / "control.sqlite3"
+    displaced = tmp_path / "displaced.sqlite3"
+    real_connect = sqlite3.connect
+    replaced = False
+
+    def replace_before_connect(target, *args, **kwargs):
+        nonlocal replaced
+        if not replaced and os.fspath(target) == os.fspath(path):
+            replaced = True
+            os.replace(path, displaced)
+            path.touch(mode=0o600)
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", replace_before_connect)
+
+    with pytest.raises(RuntimeError, match="database path changed before SQLite connected"):
+        ControlPlaneRepository(path).migrate()
+
+    assert replaced is True
+
+
+def test_repository_first_write_secures_live_sidecars_before_commit(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    observed = {}
+
+    class InspectingFirstWriteRepository(ControlPlaneRepository):
+        active_connection = None
+
+        def _connect(self):
+            connection = super()._connect()
+            self.active_connection = connection
+            return connection
+
+        def _secure_storage_permissions(self):
+            super()._secure_storage_permissions()
+            if self.active_connection is not None and self.active_connection.in_transaction:
+                observed["in_transaction"] = True
+                for suffix in ("-wal", "-shm"):
+                    sidecar = path.with_name(path.name + suffix)
+                    observed[suffix] = (sidecar.exists(), _mode(sidecar))
+
+    InspectingFirstWriteRepository(path).migrate()
+
+    assert observed == {
+        "in_transaction": True,
+        "-wal": (True, 0o600),
+        "-shm": (True, 0o600),
+    }
 
 
 def test_repository_permission_failure_before_commit_rolls_back_write(tmp_path):
@@ -225,6 +306,39 @@ def test_repository_preserves_original_sqlite_error_when_permission_check_would_
 
     with pytest.raises(sqlite3.OperationalError, match="no such table: missing"):
         repo.migrate()
+
+
+def test_repository_preserves_body_error_when_rollback_and_close_fail():
+    class BrokenCleanupConnection:
+        def rollback(self):
+            raise RuntimeError("rollback failed")
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    repo = ControlPlaneRepository(Path("unused.sqlite3"))
+    repo._connect = lambda: BrokenCleanupConnection()  # type: ignore[method-assign]
+
+    with pytest.raises(sqlite3.OperationalError, match="primary sqlite failure"):
+        with repo._connection():
+            raise sqlite3.OperationalError("primary sqlite failure")
+
+
+def test_repository_reports_close_error_without_primary_failure():
+    class CloseFailureConnection:
+        def commit(self):
+            return None
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    repo = ControlPlaneRepository(Path("unused.sqlite3"))
+    repo._connect = lambda: CloseFailureConnection()  # type: ignore[method-assign]
+    repo._secure_storage_permissions = lambda: None  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        with repo._connection():
+            pass
 
 
 def test_repository_migrates_repeatedly_and_appends_event_idempotently(tmp_path):

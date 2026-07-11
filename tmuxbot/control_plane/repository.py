@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import sqlite3
 import stat
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -14,26 +15,40 @@ from pathlib import Path
 from tmuxbot.control_plane.migrations import MIGRATIONS
 from tmuxbot.control_plane.models import RunEvent
 
+log = logging.getLogger(__name__)
+
 
 class ControlPlaneRepository:
     def __init__(self, path: Path):
-        self.path = path
+        self.path = Path(os.path.abspath(path))
 
     def _connect(self) -> sqlite3.Connection:
-        self._prepare_storage()
-        connection = sqlite3.connect(self.path)
+        descriptor, expected_identity = self._prepare_storage()
+        connection: sqlite3.Connection | None = None
         try:
+            connection = sqlite3.connect(self.path)
+            _verify_database_identity(self.path, expected_identity)
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA busy_timeout = 5000")
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA journal_mode = WAL")
             self._secure_storage_permissions()
-            return connection
-        except BaseException:
-            connection.close()
+        except BaseException as primary:
+            if connection is not None:
+                _cleanup_preserving_primary(connection.close, "close SQLite connection", primary)
+            _cleanup_preserving_primary(
+                lambda: os.close(descriptor), "close SQLite preflight descriptor", primary
+            )
             raise
+        try:
+            os.close(descriptor)
+        except BaseException as primary:
+            _cleanup_preserving_primary(connection.close, "close SQLite connection", primary)
+            raise
+        return connection
 
-    def _prepare_storage(self) -> None:
+    def _prepare_storage(self) -> tuple[int, tuple[int, int]]:
+        _reject_symlink_ancestors(self.path.parent)
         try:
             parent_info = self.path.parent.lstat()
         except FileNotFoundError:
@@ -44,9 +59,18 @@ class ControlPlaneRepository:
                     f"SQLite data directory must not be a symbolic link: {self.path.parent}"
                 )
         _secure_data_directory(self.path.parent)
-        _secure_regular_file(self.path, create=True)
-        for sidecar in self._sidecars():
-            _secure_regular_file(sidecar, missing_ok=True)
+        opened = _open_secure_regular_file(self.path, create=True)
+        assert opened is not None
+        descriptor, descriptor_info = opened
+        try:
+            for sidecar in self._sidecars():
+                _secure_regular_file(sidecar, missing_ok=True)
+        except BaseException as primary:
+            _cleanup_preserving_primary(
+                lambda: os.close(descriptor), "close SQLite preflight descriptor", primary
+            )
+            raise
+        return descriptor, (descriptor_info.st_dev, descriptor_info.st_ino)
 
     def _secure_storage_permissions(self) -> None:
         _secure_data_directory(self.path.parent)
@@ -63,20 +87,31 @@ class ControlPlaneRepository:
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         connection = self._connect()
+        primary: BaseException | None = None
         try:
             try:
                 yield connection
-            except BaseException:
-                connection.rollback()
+            except BaseException as exc:
+                primary = exc
+                _cleanup_preserving_primary(connection.rollback, "rollback SQLite transaction", exc)
                 raise
             try:
                 self._secure_storage_permissions()
-            except BaseException:
-                connection.rollback()
+            except BaseException as exc:
+                primary = exc
+                _cleanup_preserving_primary(connection.rollback, "rollback SQLite transaction", exc)
                 raise
-            connection.commit()
+            try:
+                connection.commit()
+            except BaseException as exc:
+                primary = exc
+                _cleanup_preserving_primary(connection.rollback, "rollback SQLite transaction", exc)
+                raise
         finally:
-            connection.close()
+            if primary is None:
+                connection.close()
+            else:
+                _cleanup_preserving_primary(connection.close, "close SQLite connection", primary)
 
     def migrate(self) -> None:
         versions = [version for version, _sql in MIGRATIONS]
@@ -191,6 +226,7 @@ class ControlPlaneRepository:
 
 
 def _secure_data_directory(path: Path) -> None:
+    _reject_symlink_ancestors(path)
     try:
         path_info = path.lstat()
     except OSError as exc:
@@ -215,9 +251,19 @@ def _secure_data_directory(path: Path) -> None:
 def _secure_regular_file(
     path: Path, *, create: bool = False, missing_ok: bool = False
 ) -> None:
-    flags = os.O_RDONLY | os.O_NOFOLLOW
+    opened = _open_secure_regular_file(path, create=create, missing_ok=missing_ok)
+    if opened is None:
+        return
+    descriptor, _descriptor_info = opened
+    os.close(descriptor)
+
+
+def _open_secure_regular_file(
+    path: Path, *, create: bool = False, missing_ok: bool = False
+) -> tuple[int, os.stat_result] | None:
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
     if create:
-        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+        flags = os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | os.O_NOFOLLOW
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileNotFoundError:
@@ -235,8 +281,51 @@ def _secure_regular_file(
         if not stat.S_ISREG(descriptor_info.st_mode):
             raise RuntimeError(f"SQLite storage path is not a regular file: {path}")
         _set_descriptor_mode(descriptor, path, 0o600)
-    finally:
-        os.close(descriptor)
+        return descriptor, os.fstat(descriptor)
+    except BaseException as primary:
+        _cleanup_preserving_primary(
+            lambda: os.close(descriptor), "close SQLite storage descriptor", primary
+        )
+        raise
+
+
+def _reject_symlink_ancestors(path: Path) -> None:
+    # This catches static symlinks and detectable path replacement. An actively
+    # malicious same-UID process is outside the project's local threat model.
+    absolute_path = Path(os.path.abspath(path))
+    for ancestor in reversed(absolute_path.parents):
+        try:
+            ancestor_info = ancestor.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RuntimeError(f"unable to inspect SQLite path ancestor {ancestor}: {exc}") from exc
+        if stat.S_ISLNK(ancestor_info.st_mode):
+            raise RuntimeError(f"SQLite path ancestor must not be a symbolic link: {ancestor}")
+
+
+def _verify_database_identity(path: Path, expected_identity: tuple[int, int]) -> None:
+    try:
+        current_info = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        raise RuntimeError(f"unable to verify SQLite database path identity {path}: {exc}") from exc
+    current_identity = (current_info.st_dev, current_info.st_ino)
+    if not stat.S_ISREG(current_info.st_mode) or current_identity != expected_identity:
+        raise RuntimeError(f"SQLite database path changed before SQLite connected: {path}")
+
+
+def _cleanup_preserving_primary(
+    cleanup: Callable[[], object], description: str, primary: BaseException
+) -> None:
+    try:
+        cleanup()
+    except BaseException:
+        log.warning(
+            "%s failed while preserving primary %s",
+            description,
+            type(primary).__name__,
+            exc_info=True,
+        )
 
 
 def _set_descriptor_mode(descriptor: int, path: Path, mode: int) -> None:
