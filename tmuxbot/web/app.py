@@ -264,6 +264,23 @@ def create_app(
             for event in repository.list_events(after_sequence=after, limit=limit)
         ]
 
+    @app.get("/api/system/status")
+    def system_status(
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> dict[str, object]:
+        bridge_callback = app.state.bridge_status
+        bridge = (
+            dict(bridge_callback())
+            if callable(bridge_callback)
+            else {"state": "standalone", "reason": "web_only"}
+        )
+        return {
+            "host": settings.host,
+            "port": settings.port,
+            "bridge": bridge,
+            "binding_count": len(bindings),
+        }
+
     @app.get("/api/tmux/sessions")
     def tmux_sessions(
         _: AuthenticatedSession = Depends(current_session),

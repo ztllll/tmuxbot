@@ -309,6 +309,14 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("bridge", help="run Telegram and Feishu bridge")
     subparsers.add_parser("web", help="run the WebUI control plane")
+    serve_parser = subparsers.add_parser(
+        "serve", help="run WebUI and supervise the configured bridge"
+    )
+    serve_parser.add_argument(
+        "--open", action="store_true", dest="open_browser", help="open the local WebUI"
+    )
+    doctor_parser = subparsers.add_parser("doctor", help="check local runtime readiness")
+    doctor_parser.add_argument("--json", action="store_true", dest="as_json")
     parser.set_defaults(command="bridge")
     return parser
 
@@ -320,6 +328,20 @@ def run(argv: list[str] | None = None) -> None:
 
         run_web()
         return
+    if args.command == "serve":
+        from tmuxbot.serve import run_serve
+
+        run_serve(open_browser=args.open_browser)
+        return
+    if args.command == "doctor":
+        from tmuxbot.doctor import render_report, run_doctor
+
+        paths = RuntimePaths.discover(
+            os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
+        )
+        report = run_doctor(paths, os.environ)
+        print(render_report(report, as_json=args.as_json))
+        raise SystemExit(report.exit_code)
     asyncio.run(main())
 
 
