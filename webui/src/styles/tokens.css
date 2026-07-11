@@ -1,0 +1,19 @@
+:root {
+  --cloud-steel: #e7ebef;
+  --cloud-steel-deep: #cbd2d9;
+  --plate: #f7f9fa;
+  --ink: #17212b;
+  --muted-ink: #5d6872;
+  --circuit-blue: #3157c8;
+  --work-amber: #d59620;
+  --outcome-green: #18866b;
+  --fault-red: #c84848;
+  --line: #aeb8c2;
+  --display-font: "IBM Plex Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --body-font: "Noto Sans SC", "IBM Plex Sans", "Microsoft YaHei", sans-serif;
+  --utility-font: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  color: var(--ink);
+  background: var(--cloud-steel);
+  font-family: var(--body-font);
+  font-synthesis: none;
+}

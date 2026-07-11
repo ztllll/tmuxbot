@@ -5,12 +5,14 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.control_plane.tmux_inventory import (
@@ -28,6 +30,7 @@ from tmuxbot.web.settings import WebSettings
 COOKIE_NAME = "tmuxbot_session"
 BOOTSTRAP_COOKIE_NAME = "tmuxbot_bootstrap_csrf"
 BOOTSTRAP_COOKIE_MAX_AGE = 300
+STATIC_DIR = Path(__file__).with_name("static")
 
 
 def create_app(
@@ -44,6 +47,11 @@ def create_app(
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+    )
+    app.mount(
+        "/assets",
+        StaticFiles(directory=STATIC_DIR / "assets", check_dir=False),
+        name="web-assets",
     )
     auth = AuthService(repository, session_ttl_seconds=settings.session_ttl_seconds)
     app.state.setup_grant = setup_grant
@@ -307,5 +315,20 @@ def create_app(
             }
             for item in items
         ]
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        if full_path in {"openapi.json", "docs", "redoc"} or full_path.startswith(
+            ("api/", "assets/", "docs/", "redoc/")
+        ):
+            raise HTTPException(status_code=404, detail="not found")
+        index_file = STATIC_DIR / "index.html"
+        if index_file.is_file():
+            return FileResponse(index_file)
+        return PlainTextResponse(
+            "WebUI 尚未构建。请在源码目录运行 `cd webui && npm run build`，"
+            "或重新安装包含静态资源的 tmuxbot wheel。API 仍保持可用。",
+            status_code=503,
+        )
 
     return app
