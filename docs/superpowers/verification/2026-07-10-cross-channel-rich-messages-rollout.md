@@ -90,3 +90,7 @@ The rollout changed only channel rendering, attachment delivery, and card intera
 - Codex CLI 0.144.1 支持 `codex resume <SESSION_ID>`。后端现在使用 binding 中的会话 ID 加无人值守权限参数恢复会话，与 Claude 现有的 `--resume` 语义一致。
 - Telegram and Feishu retain the confirmed `重启 CLI` panel action. Lifecycle no longer clears or replaces provider identity during restart.
 - Telegram 与飞书继续保留带二次确认的“重启 CLI”；生命周期层不再在重启时清除或替换 provider 身份。
+- CliproxyApi live acceptance resumed session `019f450e-c966-7b51-b9c0-975d2b1acf7b`; the pane displayed its earlier release/model discussion, the original JSONL grew from 577132 to 603499 bytes, and Telegram received `✅ 已恢复旧会话上下文`.
+- CliproxyApi 在线验收恢复了会话 `019f450e-c966-7b51-b9c0-975d2b1acf7b`；pane 中保留此前的版本/模型讨论，原 JSONL 从 577132 增长到 603499 字节，Telegram 收到 `✅ 已恢复旧会话上下文`。
+- Local and hbhy Ruff checks passed with 190 tests. Local tmux remained at 6 sessions; both hbhy services stayed active with 21 sessions before and after restart.
+- 本机与 hbhy 的 Ruff 检查及 190 项测试均通过；本机保持 6 个 tmux 会话，hbhy 两个服务均为 active，重启前后保持 21 个会话。
