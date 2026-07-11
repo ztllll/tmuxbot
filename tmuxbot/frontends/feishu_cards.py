@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from html.parser import HTMLParser
 from typing import Any
 
@@ -104,6 +105,145 @@ def serialize_feishu_card(card: dict[str, Any], *, max_bytes: int = 30_000) -> s
     if size > max_bytes:
         raise FeishuCardTooLarge(f"Feishu card is {size} bytes; limit is {max_bytes}")
     return serialized
+
+
+def serialize_feishu_reply_chunks(
+    document: ReplyDocument,
+    token: str,
+    *,
+    max_bytes: int = 30_000,
+) -> list[str]:
+    """Serialize a complete reply as as many valid Card JSON messages as needed."""
+    if not document.blocks:
+        return [serialize_feishu_card(build_feishu_card_v2(document, token), max_bytes=max_bytes)]
+
+    groups: list[list[ReplyBlock]] = []
+    current: list[ReplyBlock] = []
+    pending = list(document.blocks)
+    pack_limit = max(1, max_bytes - 512)
+    while pending:
+        block = pending.pop(0)
+        candidate = current + [block]
+        if _feishu_blocks_fit(document, candidate, token, pack_limit):
+            current = candidate
+            continue
+        if current:
+            groups.append(current)
+            current = []
+            pending.insert(0, block)
+            continue
+        split = _split_reply_block(block)
+        if len(split) == 1:
+            raise FeishuCardTooLarge("single Feishu reply block cannot be split further")
+        pending = split + pending
+    if current:
+        groups.append(current)
+
+    total = len(groups)
+    payloads: list[str] = []
+    for index, blocks in enumerate(groups, start=1):
+        title = document.title if total == 1 else f"{document.title}（{index}/{total}）"
+        chunk = replace(
+            document,
+            title=title,
+            blocks=tuple(blocks),
+            source_text=_reply_blocks_text(blocks),
+            footer_text=document.footer_text if index == total else None,
+        )
+        try:
+            payloads.append(
+                serialize_feishu_card(
+                    build_feishu_card_v2(chunk, token),
+                    max_bytes=max_bytes,
+                )
+            )
+        except FeishuCardTooLarge:
+            if index != total or document.footer_text is None:
+                raise
+            without_footer = replace(chunk, footer_text=None)
+            payloads.append(
+                serialize_feishu_card(
+                    build_feishu_card_v2(without_footer, token),
+                    max_bytes=max_bytes,
+                )
+            )
+            footer_chunk = replace(
+                document,
+                title=f"{document.title}（状态）",
+                blocks=(),
+                source_text="",
+            )
+            payloads.append(
+                serialize_feishu_card(
+                    build_feishu_card_v2(footer_chunk, token),
+                    max_bytes=max_bytes,
+                )
+            )
+    return payloads
+
+
+def _feishu_blocks_fit(
+    document: ReplyDocument,
+    blocks: list[ReplyBlock],
+    token: str,
+    max_bytes: int,
+) -> bool:
+    candidate = replace(
+        document,
+        blocks=tuple(blocks),
+        source_text=_reply_blocks_text(blocks),
+        footer_text=None,
+    )
+    try:
+        serialize_feishu_card(
+            build_feishu_card_v2(candidate, token),
+            max_bytes=max_bytes,
+        )
+    except FeishuCardTooLarge:
+        return False
+    return True
+
+
+def _split_reply_block(block: ReplyBlock) -> list[ReplyBlock]:
+    if block.kind == "list":
+        if len(block.items) > 1:
+            middle = len(block.items) // 2
+            return [
+                replace(block, items=block.items[:middle]),
+                replace(block, items=block.items[middle:]),
+            ]
+        if block.items:
+            left, right = _split_text_half(block.items[0])
+            if right:
+                return [replace(block, items=(left,)), replace(block, items=(right,))]
+        return [block]
+    left, right = _split_text_half(block.text)
+    if not right:
+        return [block]
+    return [replace(block, text=left), replace(block, text=right)]
+
+
+def _split_text_half(value: str) -> tuple[str, str]:
+    if len(value) < 2:
+        return value, ""
+    middle = len(value) // 2
+    candidates = [value.rfind("\n", 0, middle + 1), value.rfind(" ", 0, middle + 1)]
+    split_at = max(candidates)
+    if split_at <= 0:
+        split_at = middle
+    else:
+        split_at += 1
+    return value[:split_at], value[split_at:]
+
+
+def _reply_blocks_text(blocks: list[ReplyBlock]) -> str:
+    parts: list[str] = []
+    for block in blocks:
+        if block.kind == "list":
+            parts.append("\n".join(f"- {item}" for item in block.items))
+        else:
+            parts.append(block.text)
+    return "\n\n".join(part for part in parts if part)
 
 
 def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]:

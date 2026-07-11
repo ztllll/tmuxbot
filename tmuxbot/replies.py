@@ -21,7 +21,7 @@ def render_assistant_reply(
     b: Binding,
     envelope: ReplyEnvelope,
     *,
-    full_output_threshold: int,
+    full_output_threshold: int | None,
     footer_text: str | None = None,
 ) -> AssistantReply:
     """Build the readable in-chat assistant reply.

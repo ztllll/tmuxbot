@@ -13,6 +13,7 @@ import re
 import time
 from dataclasses import replace
 from pathlib import Path
+from html.parser import HTMLParser
 from typing import Any, Callable, TYPE_CHECKING
 
 import yaml
@@ -83,7 +84,6 @@ log = logging.getLogger("tmuxbot")
 # ────────── 常量 ──────────
 TG_SPLIT = 3800
 TG_DOC_THRESHOLD = 8000
-TG_REPLY_FULL_OUTPUT_THRESHOLD = 5000
 MAX_FILE_MB = 19
 ACK_REACTION = "👀"
 UNKNOWN_CHAT_INIT_GRACE_SECONDS = 60.0
@@ -109,18 +109,115 @@ def should_grace_unknown_chat(
 def split_for_tg(text: str, limit: int = TG_SPLIT) -> list[str]:
     if utf16_len(text) <= limit:
         return [text]
-    chunks, cur, cur_len = [], [], 0
-    for line in text.split("\n"):
-        ll = utf16_len(line) + 1
-        if cur_len + ll > limit and cur:
-            chunks.append("\n".join(cur))
-            cur, cur_len = [line], ll
-        else:
-            cur.append(line)
-            cur_len += ll
-    if cur:
-        chunks.append("\n".join(cur))
-    return chunks
+    splitter = _TelegramHTMLSplitter(limit)
+    splitter.feed(text)
+    splitter.close()
+    return splitter.finish()
+
+
+class _TelegramHTMLSplitter(HTMLParser):
+    """Split Telegram HTML into balanced chunks without dropping text."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(convert_charrefs=False)
+        self.limit = limit
+        self.chunks: list[str] = []
+        self.current: list[str] = []
+        self.current_len = 0
+        self.stack: list[tuple[str, str, str]] = []
+        self.has_text = False
+
+    def _closing_text(self) -> str:
+        return "".join(entry[2] for entry in reversed(self.stack))
+
+    def _reopen_text(self) -> str:
+        return "".join(entry[1] for entry in self.stack)
+
+    def _flush(self) -> None:
+        if not self.has_text:
+            return
+        self.chunks.append("".join(self.current) + self._closing_text())
+        reopened = self._reopen_text()
+        self.current = [reopened] if reopened else []
+        self.current_len = utf16_len(reopened)
+        self.has_text = False
+
+    def _available(self) -> int:
+        return self.limit - self.current_len - utf16_len(self._closing_text())
+
+    def _append_atomic(self, value: str, *, visible: bool = False) -> None:
+        if utf16_len(value) > self._available() and self.has_text:
+            self._flush()
+        self.current.append(value)
+        self.current_len += utf16_len(value)
+        self.has_text = self.has_text or visible
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        start = self.get_starttag_text() or f"<{tag}>"
+        end = f"</{tag}>"
+        if (
+            utf16_len(start) + utf16_len(end) > self._available()
+            and self.has_text
+        ):
+            self._flush()
+        self.current.append(start)
+        self.current_len += utf16_len(start)
+        self.stack.append((tag.lower(), start, end))
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        end = f"</{lowered}>"
+        self.current.append(end)
+        self.current_len += utf16_len(end)
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == lowered:
+                del self.stack[index]
+                break
+
+    def handle_data(self, data: str) -> None:
+        remaining = data
+        while remaining:
+            available = self._available()
+            if available <= 0:
+                self._flush()
+                available = self._available()
+            part, remaining = _take_utf16_prefix(remaining, available)
+            if not part:
+                self._flush()
+                continue
+            self.current.append(part)
+            self.current_len += utf16_len(part)
+            self.has_text = True
+            if remaining:
+                self._flush()
+
+    def handle_entityref(self, name: str) -> None:
+        self._append_atomic(f"&{name};", visible=True)
+
+    def handle_charref(self, name: str) -> None:
+        self._append_atomic(f"&#{name};", visible=True)
+
+    def finish(self) -> list[str]:
+        self._flush()
+        return self.chunks
+
+
+def _take_utf16_prefix(value: str, limit: int) -> tuple[str, str]:
+    used = 0
+    end = 0
+    for index, char in enumerate(value):
+        units = utf16_len(char)
+        if used + units > limit:
+            break
+        used += units
+        end = index + 1
+    if end == 0:
+        return "", value
+    if end < len(value):
+        boundary = max(value.rfind("\n", 0, end), value.rfind(" ", 0, end))
+        if boundary >= end // 2:
+            end = boundary + 1
+    return value[:end], value[end:]
 
 
 def source_key(m: Message) -> tuple[int, int | None]:
@@ -475,19 +572,8 @@ class TelegramFrontend(Frontend):
         return None
 
     async def send_html(self, chat_id: int, thread_id: int | None, html_text: str) -> Any:
-        """单条 HTML, 长则分片或转 .txt 附件。返回第一条 message 对象 (供后续 edit)"""
+        """发送完整 HTML；超出 Telegram 单条限制时自动分片。"""
         html_text = sanitize_telegram_html(html_text)
-        if utf16_len(html_text) > TG_DOC_THRESHOLD:
-            try:
-                plain = re.sub(r"<[^>]+>", "", html_text)
-                file = BufferedInputFile(plain.encode("utf-8"), filename="output.txt")
-                return await self._tg_call(
-                    lambda: self.bot.send_document(
-                        chat_id, file, caption="(long output)", message_thread_id=thread_id
-                    )
-                )
-            except Exception as e:
-                log.exception(f"send_document fallback to chunks: {e}")
         first_msg = None
         for chunk in split_for_tg(html_text):
             msg = await self._tg_call(
@@ -507,6 +593,34 @@ class TelegramFrontend(Frontend):
                 chat_id=chat_id, message_id=message_id, text=html_text,
             )
         )
+
+    async def edit_reply_stream(
+        self,
+        b: "Binding",
+        message_id: int | str,
+        html_text: str,
+        *,
+        final: bool = False,
+    ) -> None:
+        """Finalize long streamed replies without truncating their overflow."""
+        chunks = split_for_tg(sanitize_telegram_html(html_text))
+        await self._tg_call(
+            lambda: self.bot.edit_message_text(
+                chat_id=int(b.chat_id),
+                message_id=int(message_id),
+                text=chunks[0],
+            )
+        )
+        if not final:
+            return
+        for chunk in chunks[1:]:
+            await self._tg_call(
+                lambda c=chunk: self.bot.send_message(
+                    int(b.chat_id),
+                    c,
+                    message_thread_id=b.thread_id,
+                )
+            )
 
     async def send_pre(self, chat_id: int, thread_id: int | None, raw_text: str) -> None:
         if not raw_text.strip():
@@ -599,7 +713,7 @@ class TelegramFrontend(Frontend):
         rendered = render_assistant_reply(
             b,
             effective_envelope,
-            full_output_threshold=TG_REPLY_FULL_OUTPUT_THRESHOLD,
+            full_output_threshold=None,
             footer_text=footer_text,
         )
         link_preview_options = LinkPreviewOptions(
@@ -617,20 +731,6 @@ class TelegramFrontend(Frontend):
             )
             if first_msg is None:
                 first_msg = msg
-
-        if rendered.full_text:
-            file = BufferedInputFile(
-                rendered.full_text.encode("utf-8"),
-                filename=f"assistant-{safe_filename_fragment(b.name)}.txt",
-            )
-            await self._tg_call(
-                lambda: self.bot.send_document(
-                    int(b.chat_id),
-                    file,
-                    caption="完整输出",
-                    message_thread_id=b.thread_id,
-                )
-            )
 
         for attachment in attachments:
             caption = attachment.path.name

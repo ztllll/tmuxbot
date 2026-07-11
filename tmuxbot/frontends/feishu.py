@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 import time
 import uuid
 from dataclasses import replace
@@ -54,20 +53,16 @@ from tmuxbot.control_panel import (
 )
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.frontends.feishu_cards import (
-    FeishuCardTooLarge,
     build_feishu_control_panel,
     build_feishu_card_v2,
     build_feishu_interaction_card,
     serialize_feishu_card,
+    serialize_feishu_reply_chunks,
 )
 from tmuxbot.frontends.feishu_cards import html_to_feishu_markdown
 from tmuxbot.frontends.feishu_streaming import FeishuStreamingSession, StreamingPrefixError
 from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.replies import (
-    html_to_plain_text,
-    render_assistant_reply,
-    screen_footer_from_capture,
-)
+from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -750,38 +745,30 @@ class FeishuFrontend(Frontend):
         rendered = render_assistant_reply(
             b,
             effective_envelope,
-            full_output_threshold=self.capabilities.max_text_length,
+            full_output_threshold=None,
             footer_text=footer_text,
         )
-        full_text = rendered.full_text
         document = build_reply_document(b, effective_envelope, footer_text=footer_text)
         message_id = None
         if getattr(self, "card_v2_enabled", True):
-            try:
-                card_json = serialize_feishu_card(
-                    build_feishu_card_v2(document, binding_token(b.name))
-                )
-            except FeishuCardTooLarge:
-                full_text = full_text or html_to_plain_text(effective_envelope.body)
-                preview_envelope = replace(
-                    effective_envelope,
-                    body=effective_envelope.body[:2000] + "\n\n… 完整输出已附为文件。",
-                )
-                preview_document = build_reply_document(
-                    b,
-                    preview_envelope,
-                    footer_text=footer_text,
-                )
-                card_json = serialize_feishu_card(
-                    build_feishu_card_v2(preview_document, binding_token(b.name))
-                )
-            message_id = await asyncio.to_thread(
-                self._send_card_sync,
-                str(b.chat_id),
-                card_json,
+            card_payloads = serialize_feishu_reply_chunks(
+                document,
+                binding_token(b.name),
             )
-            if message_id is not None:
-                self._remember_v2_message(message_id)
+            for card_json in card_payloads:
+                sent_id = await asyncio.to_thread(
+                    self._send_card_sync,
+                    str(b.chat_id),
+                    card_json,
+                )
+                if sent_id is None:
+                    if message_id is None:
+                        break
+                    log.error("[%s] Feishu reply chunk send failed", b.name)
+                    continue
+                if message_id is None:
+                    message_id = sent_id
+                self._remember_v2_message(sent_id)
 
         if message_id is None:
             md = _html_to_feishu_md(rendered.chat_html)
@@ -794,17 +781,6 @@ class FeishuFrontend(Frontend):
             return None
         self._remember_outbound_message(message_id)
         first_msg = _make_fake_msg(message_id)
-
-        if full_text:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", suffix=".txt", delete=False
-            ) as handle:
-                handle.write(full_text)
-                full_path = Path(handle.name)
-            try:
-                await self.send_file(b.chat_id, b.thread_id, full_path, caption="完整输出")
-            finally:
-                full_path.unlink(missing_ok=True)
 
         for attachment in attachments:
             caption = attachment.path.name

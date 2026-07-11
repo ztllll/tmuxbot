@@ -4,9 +4,10 @@ from tmuxbot.command_adapter import binding_token
 from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
-from tmuxbot.frontends.telegram import TelegramFrontend
+from tmuxbot.frontends.telegram import TG_SPLIT, TelegramFrontend, split_for_tg
 from tmuxbot.replies import html_to_plain_text, render_assistant_reply, screen_footer_from_capture
 from tmuxbot.state import Binding
+from tmuxbot.utils import utf16_len
 
 
 def binding(tmp_path):
@@ -70,7 +71,7 @@ assistant answer
     assert screen_footer_from_capture(raw) == "assistant answer"
 
 
-def test_telegram_assistant_reply_has_no_buttons_and_sends_full_output_file(tmp_path):
+def test_telegram_assistant_reply_sends_long_output_as_multiple_messages(tmp_path):
     calls = []
 
     class FakeBot:
@@ -97,7 +98,7 @@ def test_telegram_assistant_reply_has_no_buttons_and_sends_full_output_file(tmp_
             binding(tmp_path),
             ReplyEnvelope(
                 title="回复",
-                body="长内容\n" * 2000,
+                body=("长内容\n" * 2000) + "最后一段",
                 actions=("screen", "status", "cancel", "interrupt"),
             ),
         )
@@ -106,12 +107,93 @@ def test_telegram_assistant_reply_has_no_buttons_and_sends_full_output_file(tmp_
 
     asyncio.run(run())
 
-    assert calls[0][0] == "message"
-    assert calls[0][3]["message_thread_id"] == 456
-    assert calls[0][3]["link_preview_options"].is_disabled is True
-    assert calls[0][3].get("reply_markup") is None
-    assert calls[1][0] == "document"
-    assert calls[1][2] == "assistant-alpha.txt"
+    assert len(calls) > 1
+    assert all(call[0] == "message" for call in calls)
+    assert all(call[3]["message_thread_id"] == 456 for call in calls)
+    assert all(call[3]["link_preview_options"].is_disabled is True for call in calls)
+    assert all(call[3].get("reply_markup") is None for call in calls)
+    assert all(utf16_len(call[2]) <= TG_SPLIT for call in calls)
+    assert "最后一段" in "".join(call[2] for call in calls)
+
+
+def test_split_for_tg_splits_single_long_pre_block_without_losing_markup():
+    chunks = split_for_tg("<pre>" + ("x" * 9000) + "</pre>")
+
+    assert len(chunks) == 3
+    assert all(chunk.startswith("<pre>") and chunk.endswith("</pre>") for chunk in chunks)
+    assert all(utf16_len(chunk) <= TG_SPLIT for chunk in chunks)
+    assert "".join(html_to_plain_text(chunk) for chunk in chunks) == "x" * 9000
+
+
+def test_telegram_send_html_splits_long_text_without_document():
+    calls = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(("message", text, kwargs))
+            return SimpleNamespace(message_id=len(calls))
+
+        async def send_document(self, chat_id, file, **kwargs):
+            calls.append(("document", file.filename, kwargs))
+            return SimpleNamespace(message_id=len(calls))
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.send_html(123, 456, "正文\n" * 3000)
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert len(calls) > 1
+    assert all(call[0] == "message" for call in calls)
+    assert all(call[2]["message_thread_id"] == 456 for call in calls)
+
+
+def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):
+    calls = []
+
+    class FakeBot:
+        async def edit_message_text(self, **kwargs):
+            calls.append(("edit", kwargs["text"], kwargs))
+
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(("message", text, kwargs))
+            return SimpleNamespace(message_id=len(calls))
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.edit_reply_stream(
+            binding(tmp_path),
+            99,
+            "流式正文\n" * 2500,
+            final=True,
+        )
+
+    import asyncio
+
+    asyncio.run(run())
+
+    assert calls[0][0] == "edit"
+    assert any(call[0] == "message" for call in calls[1:])
+    assert all(utf16_len(call[1]) <= TG_SPLIT for call in calls)
+    assert all(
+        call[2].get("message_thread_id") == 456
+        for call in calls[1:]
+        if call[0] == "message"
+    )
 
 
 def test_telegram_assistant_reply_can_explicitly_enable_link_preview(tmp_path):

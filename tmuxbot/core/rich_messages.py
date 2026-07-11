@@ -96,11 +96,14 @@ def build_reply_document(
 def render_telegram_document(
     document: ReplyDocument,
     *,
-    full_output_threshold: int,
+    full_output_threshold: int | None,
 ) -> RenderedReply:
     rendered_document = document
     full_text = None
-    if utf16_len(document.source_text) > full_output_threshold:
+    if (
+        full_output_threshold is not None
+        and utf16_len(document.source_text) > full_output_threshold
+    ):
         full_text = _plain_text(document.source_text)
         preview = _truncate_by_lines(document.source_text, full_output_threshold // 2)
         preview = f"{preview}\n\n<i>完整输出已附为文件。</i>"
