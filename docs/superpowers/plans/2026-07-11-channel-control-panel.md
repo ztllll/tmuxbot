@@ -33,11 +33,11 @@
 - `save_binding_mention_policy(path, binding, value) -> None`
 - `render_panel_text(binding, frontend_default, runtime_mode) -> str`
 
-- [ ] Write failing pure tests for policy inheritance, Chinese panel text, command parsing, and YAML persistence.
-- [ ] Run `.venv/bin/pytest tests/test_control_panel.py -q` and confirm RED.
-- [ ] Implement the minimal policy and persistence module.
-- [ ] Run the targeted tests and confirm GREEN.
-- [ ] Commit with `git commit -m "feat: add binding control panel policy"`.
+- [x] Write failing pure tests for policy inheritance, Chinese panel text, command parsing, and YAML persistence.
+- [x] Run `.venv/bin/pytest tests/test_control_panel.py -q` and confirm RED.
+- [x] Implement the minimal policy and persistence module.
+- [x] Run the targeted tests and confirm GREEN.
+- [x] Commit with `git commit -m "feat: add binding control panel policy"`.
 
 ### Task 2: Telegram `/panel`
 
@@ -53,12 +53,12 @@
 - Callback prefix: `panel:<binding-token>:<action>`
 - Allowlisted command actions dispatch `/status`, `/screen`, `/new`, `/compact`, `/resume`, `/model`, `/esc`, `/cc`.
 
-- [ ] Write failing tests for Chinese keyboard structure, mention bypass, callback ACL, persistence, `/new` confirmation, and `/model` dispatch.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement Telegram handlers and panel callbacks.
-- [ ] Add `panel`, `settings`, and `mention` to both provider BotCommand menus.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit with `git commit -m "feat: add Telegram control panel"`.
+- [x] Write failing tests for Chinese keyboard structure, mention bypass, callback ACL, persistence, `/new` confirmation, and `/model` dispatch.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement Telegram handlers and panel callbacks.
+- [x] Add `panel`, `settings`, and `mention` to both provider BotCommand menus.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit with `git commit -m "feat: add Telegram control panel"`.
 
 ### Task 3: Feishu `/panel` and picker controls
 
@@ -74,11 +74,11 @@
 - Feishu panel callbacks use the same action names as Telegram.
 - `send_interaction_card()` emits explicit TUI navigation controls only for requested interaction cards.
 
-- [ ] Write failing tests for Chinese Card JSON 2.0 content, buttons, mention bypass, callback ACL, panel refresh, and native `/model` dispatch.
-- [ ] Run targeted tests and confirm RED.
-- [ ] Implement Feishu panel rendering, callbacks, and TUI interaction controls.
-- [ ] Run targeted tests and confirm GREEN.
-- [ ] Commit with `git commit -m "feat: add Feishu control panel"`.
+- [x] Write failing tests for Chinese Card JSON 2.0 content, buttons, mention bypass, callback ACL, panel refresh, and native `/model` dispatch.
+- [x] Run targeted tests and confirm RED.
+- [x] Implement Feishu panel rendering, callbacks, and TUI interaction controls.
+- [x] Run targeted tests and confirm GREEN.
+- [x] Commit with `git commit -m "feat: add Feishu control panel"`.
 
 ### Task 4: Research record, documentation, rollout
 
@@ -88,8 +88,8 @@
 - Modify: `README.md`
 - Modify: rollout verification documentation.
 
-- [ ] Record expanded multi-agent research without implementing orchestration code.
-- [ ] Document `/panel`, `/mention`, common actions, and model-picker semantics in Chinese.
+- [x] Record expanded multi-agent research without implementing orchestration code.
+- [x] Document `/panel`, `/mention`, common actions, and model-picker semantics in Chinese.
 - [ ] Run `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
 - [ ] Deploy locally and to hbhy while preserving tmux sessions.
 - [ ] Perform Telegram and Feishu live acceptance, commit, push, and synchronize deployments.
