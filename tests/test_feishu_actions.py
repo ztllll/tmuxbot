@@ -102,5 +102,5 @@ def test_feishu_card_action_rejects_malformed_values(tmp_path):
     assert scheduled == []
 
 
-def test_feishu_capabilities_advertise_native_actions():
-    assert FeishuFrontend.capabilities.supports_actions
+def test_feishu_capabilities_do_not_advertise_persistent_actions():
+    assert not FeishuFrontend.capabilities.supports_actions

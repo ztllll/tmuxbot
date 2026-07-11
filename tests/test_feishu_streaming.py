@@ -100,7 +100,7 @@ def test_feishu_streaming_session_disables_itself_after_api_failure():
     asyncio.run(run())
 
 
-def test_feishu_frontend_uses_cardkit_stream_and_closes_with_actions(tmp_path):
+def test_feishu_frontend_uses_cardkit_stream_and_closes_without_actions(tmp_path):
     calls = []
     frontend = FeishuFrontend.__new__(FeishuFrontend)
     frontend.streaming_enabled = True
@@ -140,8 +140,5 @@ def test_feishu_frontend_uses_cardkit_stream_and_closes_with_actions(tmp_path):
     assert calls[1][0:4] == ("update", "card-1", "reply_body_0", "正在检查")
     assert calls[2][0:2] == ("close", "card-1")
     assert calls[2][2]["config"]["streaming_mode"] is False
-    buttons = [
-        item for item in calls[2][2]["body"]["elements"] if item["tag"] == "button"
-    ]
-    assert len(buttons) == 4
+    assert not any(item["tag"] == "button" for item in calls[2][2]["body"]["elements"])
     assert frontend._streaming_cards == {}

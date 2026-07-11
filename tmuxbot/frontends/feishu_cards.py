@@ -20,14 +20,6 @@ _STATE_TEMPLATES = {
     "dead": "red",
 }
 
-_ACTION_SPECS = {
-    "screen": ("屏幕", "refresh", "primary"),
-    "status": ("状态", "status", "default"),
-    "cancel": ("取消", "esc", "default"),
-    "interrupt": ("强制中断", "confirm_ctrl_c", "danger"),
-}
-
-
 def build_feishu_card_v2(
     document: ReplyDocument,
     token: str,
@@ -53,7 +45,7 @@ def build_feishu_card_v2(
     action_specs = (
         (("确认中断", "ctrl_c", "danger"), ("取消", "refresh", "default"))
         if confirm_interrupt
-        else tuple(_ACTION_SPECS[action] for action in document.actions if action in _ACTION_SPECS)
+        else ()
     )
     for index, (label, action, button_type) in enumerate(action_specs):
         elements.append(_button_element(index, label, action, button_type, token))

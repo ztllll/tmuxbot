@@ -223,7 +223,7 @@ class FeishuFrontend(Frontend):
     capabilities = ChannelCapabilities(
         name="feishu",
         supports_edit=True,
-        supports_actions=True,
+        supports_actions=False,
         supports_threads=False,
         supports_cards=True,
         supports_images=True,
@@ -732,16 +732,6 @@ class FeishuFrontend(Frontend):
 
         if message_id is None:
             md = _html_to_feishu_md(rendered.chat_html)
-            if envelope.actions:
-                command_labels = {
-                    "screen": "/screen",
-                    "status": "/status",
-                    "cancel": "/esc",
-                    "interrupt": "/cc",
-                }
-                commands = [command_labels[a] for a in envelope.actions if a in command_labels]
-                if commands:
-                    md += "\n\n操作: " + " · ".join(commands)
             message_id = await asyncio.to_thread(
                 self._send_card_sync,
                 str(b.chat_id),
@@ -852,7 +842,6 @@ class FeishuFrontend(Frontend):
                 ReplyEnvelope(
                     title="回复",
                     body=html_text,
-                    actions=("screen", "status", "cancel", "interrupt"),
                 ),
             )
             card = build_feishu_card_v2(document, binding_token(b.name), streaming=False)
@@ -864,7 +853,6 @@ class FeishuFrontend(Frontend):
                     ReplyEnvelope(
                         title="回复",
                         body=html_text,
-                        actions=("screen", "status", "cancel", "interrupt"),
                     ),
                 )
             return

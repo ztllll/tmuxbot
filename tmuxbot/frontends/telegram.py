@@ -185,7 +185,7 @@ class TelegramFrontend(Frontend):
     capabilities = ChannelCapabilities(
         name="telegram",
         supports_edit=True,
-        supports_actions=True,
+        supports_actions=False,
         supports_threads=True,
         supports_cards=True,
         supports_images=True,
@@ -523,17 +523,6 @@ class TelegramFrontend(Frontend):
             full_output_threshold=TG_REPLY_FULL_OUTPUT_THRESHOLD,
             footer_text=footer_text,
         )
-        token = binding_token(b.name)
-        action_buttons = {
-            "screen": InlineKeyboardButton(text="屏幕", callback_data=f"tui:{token}:refresh"),
-            "status": InlineKeyboardButton(text="状态", callback_data=f"tui:{token}:status"),
-            "cancel": InlineKeyboardButton(text="取消", callback_data=f"tui:{token}:esc"),
-            "interrupt": InlineKeyboardButton(
-                text="强制中断", callback_data=f"tui:{token}:confirm_ctrl_c"
-            ),
-        }
-        buttons = [action_buttons[action] for action in envelope.actions if action in action_buttons]
-        markup = InlineKeyboardMarkup(inline_keyboard=[buttons]) if buttons else None
         link_preview_options = LinkPreviewOptions(
             is_disabled=not bool(envelope.metadata.get("link_preview", False))
         )
@@ -544,7 +533,6 @@ class TelegramFrontend(Frontend):
                     int(b.chat_id),
                     c,
                     message_thread_id=b.thread_id,
-                    reply_markup=markup if first_msg is None else None,
                     link_preview_options=link_preview_options,
                 )
             )

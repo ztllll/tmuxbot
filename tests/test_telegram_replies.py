@@ -70,7 +70,7 @@ assistant answer
     assert screen_footer_from_capture(raw) == "assistant answer"
 
 
-def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
+def test_telegram_assistant_reply_has_no_buttons_and_sends_full_output_file(tmp_path):
     calls = []
 
     class FakeBot:
@@ -109,17 +109,7 @@ def test_telegram_assistant_reply_sends_buttons_and_full_output_file(tmp_path):
     assert calls[0][0] == "message"
     assert calls[0][3]["message_thread_id"] == 456
     assert calls[0][3]["link_preview_options"].is_disabled is True
-    markup = calls[0][3]["reply_markup"]
-    labels = [button.text for row in markup.inline_keyboard for button in row]
-    assert labels == ["屏幕", "状态", "取消", "强制中断"]
-    callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
-    token = binding_token("alpha")
-    assert callbacks == [
-        f"tui:{token}:refresh",
-        f"tui:{token}:status",
-        f"tui:{token}:esc",
-        f"tui:{token}:confirm_ctrl_c",
-    ]
+    assert calls[0][3].get("reply_markup") is None
     assert calls[1][0] == "document"
     assert calls[1][2] == "assistant-alpha.txt"
 

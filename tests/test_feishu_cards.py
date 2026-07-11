@@ -29,7 +29,7 @@ def binding(tmp_path: Path) -> Binding:
     )
 
 
-def test_build_feishu_card_v2_has_structured_header_summary_body_footer_and_buttons(tmp_path):
+def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(tmp_path):
     b = binding(tmp_path)
     document = build_reply_document(
         b,
@@ -64,23 +64,7 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_footer_and_butt
     assert "```bash\necho ok\n```" in markdown
     assert any(element["tag"] == "note" for element in elements)
 
-    buttons = [element for element in elements if element["tag"] == "button"]
-    assert [button["text"]["content"] for button in buttons] == [
-        "屏幕",
-        "状态",
-        "取消",
-        "强制中断",
-    ]
-    assert [button["behaviors"][0]["value"]["action"] for button in buttons] == [
-        "refresh",
-        "status",
-        "esc",
-        "confirm_ctrl_c",
-    ]
-    assert all(
-        button["behaviors"][0]["value"]["token"] == binding_token(b.name)
-        for button in buttons
-    )
+    assert not any(element["tag"] == "button" for element in elements)
 
 
 def test_build_feishu_interrupt_confirmation_card_uses_confirmed_action(tmp_path):
