@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -97,17 +97,134 @@ def test_repository_raises_clear_error_when_permissions_cannot_be_secured(
 ):
     path = tmp_path / "control.sqlite3"
     path.touch(mode=0o644)
-    real_chmod = Path.chmod
+    database_inode = path.stat().st_ino
+    real_fchmod = os.fchmod
 
-    def deny_database_chmod(target, mode, *, follow_symlinks=True):
-        if os.fspath(target) == os.fspath(path):
+    def deny_database_chmod(descriptor, mode):
+        if os.fstat(descriptor).st_ino == database_inode:
             raise PermissionError("operation not permitted")
-        real_chmod(target, mode, follow_symlinks=follow_symlinks)
+        real_fchmod(descriptor, mode)
 
-    monkeypatch.setattr(Path, "chmod", deny_database_chmod)
+    monkeypatch.setattr(os, "fchmod", deny_database_chmod)
 
     with pytest.raises(RuntimeError, match="secure SQLite storage permissions.*control.sqlite3"):
         ControlPlaneRepository(path).migrate()
+
+
+def test_repository_rejects_symlink_data_directory(tmp_path):
+    actual_data_dir = tmp_path / "actual-data"
+    actual_data_dir.mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.symlink_to(actual_data_dir, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="data directory must not be a symbolic link"):
+        ControlPlaneRepository(data_dir / "control.sqlite3").migrate()
+
+
+def test_repository_rejects_symlink_database_without_modifying_target(tmp_path):
+    target = tmp_path / "target.sqlite3"
+    target.write_bytes(b"not a database")
+    target.chmod(0o644)
+    path = tmp_path / "control.sqlite3"
+    path.symlink_to(target)
+
+    with pytest.raises(RuntimeError, match="refusing symbolic link.*control.sqlite3"):
+        ControlPlaneRepository(path).migrate()
+
+    assert target.read_bytes() == b"not a database"
+    assert _mode(target) == 0o644
+
+
+def test_repository_rejects_symlink_sidecar_without_modifying_target(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    target = tmp_path / "sidecar-target"
+    target.write_text("do not touch")
+    target.chmod(0o644)
+    path.with_name(path.name + "-wal").symlink_to(target)
+
+    with pytest.raises(RuntimeError, match="refusing symbolic link.*-wal"):
+        ControlPlaneRepository(path).migrate()
+
+    assert target.read_text() == "do not touch"
+    assert _mode(target) == 0o644
+
+
+def test_repository_rejects_non_regular_sidecar(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    path.with_name(path.name + "-shm").mkdir()
+
+    with pytest.raises(RuntimeError, match="not a regular file.*-shm"):
+        ControlPlaneRepository(path).migrate()
+
+
+def test_repository_ignores_sidecar_deleted_before_secure_open(tmp_path, monkeypatch):
+    path = tmp_path / "control.sqlite3"
+    real_open = os.open
+    raced_sidecars = []
+
+    def delete_sidecars_before_open(target, flags, mode=0o777):
+        if os.fspath(target).endswith(("-wal", "-shm")):
+            raced_sidecars.append(os.fspath(target))
+            raise FileNotFoundError(os.fspath(target))
+        return real_open(target, flags, mode)
+
+    monkeypatch.setattr(os, "open", delete_sidecars_before_open)
+
+    ControlPlaneRepository(path).migrate()
+
+    assert {Path(item).suffix for item in raced_sidecars} == {".sqlite3-wal", ".sqlite3-shm"}
+
+
+def test_repository_permission_failure_before_commit_rolls_back_write(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    ControlPlaneRepository(path).migrate()
+
+    class FailingBeforeCommitRepository(ControlPlaneRepository):
+        active_connection = None
+
+        def _connect(self):
+            connection = super()._connect()
+            self.active_connection = connection
+            return connection
+
+        def _secure_storage_permissions(self):
+            if self.active_connection is not None and self.active_connection.in_transaction:
+                raise RuntimeError("simulated chmod failure")
+            super()._secure_storage_permissions()
+
+    repo = FailingBeforeCommitRepository(path)
+
+    with pytest.raises(RuntimeError, match="simulated chmod failure"):
+        repo.set_setting("must.rollback", "unsafe")
+
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT value FROM settings WHERE key = 'must.rollback'").fetchone() is None
+
+
+def test_repository_preserves_original_sqlite_error_when_permission_check_would_fail(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "control.sqlite3"
+    repo = ControlPlaneRepository(path)
+    secure_calls = 0
+    real_secure = repo._secure_storage_permissions
+
+    def fail_after_connect():
+        nonlocal secure_calls
+        secure_calls += 1
+        if secure_calls >= 2:
+            raise RuntimeError("must not mask sqlite error")
+        real_secure()
+
+    repo._secure_storage_permissions = fail_after_connect  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        repository_module,
+        "MIGRATIONS",
+        ((1, "INSERT INTO missing(value) VALUES ('x');"),),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table: missing"):
+        repo.migrate()
 
 
 def test_repository_migrates_repeatedly_and_appends_event_idempotently(tmp_path):

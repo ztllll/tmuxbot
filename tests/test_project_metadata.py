@@ -1,8 +1,10 @@
-import sys
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import tmuxbot
+import yaml
 from tmuxbot.__main__ import run
 
 if sys.version_info >= (3, 11):
@@ -36,16 +38,20 @@ def _sync_extras(command: str) -> set[str]:
 
 
 def test_standard_development_install_includes_all_test_extras():
-    makefile = Path("Makefile").read_text()
-    command = re.search(r"^install-dev:\n\t(.+)$", makefile, re.MULTILINE)
+    result = subprocess.run(
+        ["make", "-n", "install-dev"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
-    assert command is not None
-    assert _sync_extras(command.group(1)) == {"dev", "web", "feishu"}
+    assert _sync_extras(result.stdout) == {"dev", "web", "feishu"}
 
 
 def test_ci_install_includes_all_test_extras():
-    workflow = Path(".github/workflows/ci.yml").read_text()
-    command = re.search(r"- name: Install\n\s+run: (.+)$", workflow, re.MULTILINE)
+    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    install_step = next(
+        step for step in workflow["jobs"]["check"]["steps"] if step.get("name") == "Install"
+    )
 
-    assert command is not None
-    assert _sync_extras(command.group(1)) == {"dev", "web", "feishu"}
+    assert _sync_extras(install_step["run"]) == {"dev", "web", "feishu"}

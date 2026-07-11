@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sqlite3
+import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,38 +34,49 @@ class ControlPlaneRepository:
             raise
 
     def _prepare_storage(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        _set_private_mode(self.path.parent, 0o700)
         try:
-            descriptor = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-        except OSError as exc:
-            raise RuntimeError(f"unable to prepare private SQLite database {self.path}: {exc}") from exc
+            parent_info = self.path.parent.lstat()
+        except FileNotFoundError:
+            self.path.parent.mkdir(parents=True, mode=0o700)
         else:
-            os.close(descriptor)
-        self._secure_storage_permissions()
+            if stat.S_ISLNK(parent_info.st_mode):
+                raise RuntimeError(
+                    f"SQLite data directory must not be a symbolic link: {self.path.parent}"
+                )
+        _secure_data_directory(self.path.parent)
+        _secure_regular_file(self.path, create=True)
+        for sidecar in self._sidecars():
+            _secure_regular_file(sidecar, missing_ok=True)
 
     def _secure_storage_permissions(self) -> None:
-        _set_private_mode(self.path.parent, 0o700)
-        for path in (
-            self.path,
+        _secure_data_directory(self.path.parent)
+        _secure_regular_file(self.path)
+        for sidecar in self._sidecars():
+            _secure_regular_file(sidecar, missing_ok=True)
+
+    def _sidecars(self) -> tuple[Path, Path]:
+        return (
             self.path.with_name(f"{self.path.name}-wal"),
             self.path.with_name(f"{self.path.name}-shm"),
-        ):
-            if path.exists():
-                _set_private_mode(path, 0o600)
+        )
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         connection = self._connect()
         try:
-            with connection:
+            try:
                 yield connection
-        finally:
+            except BaseException:
+                connection.rollback()
+                raise
             try:
                 self._secure_storage_permissions()
-            finally:
-                connection.close()
-                self._secure_storage_permissions()
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+        finally:
+            connection.close()
 
     def migrate(self) -> None:
         versions = [version for version, _sql in MIGRATIONS]
@@ -94,7 +107,6 @@ class ControlPlaneRepository:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (version, int(time.time())),
                 )
-            db.commit()
 
     def append_event(self, event: RunEvent) -> bool:
         with self._connection() as db:
@@ -178,10 +190,59 @@ class ControlPlaneRepository:
             db.execute("DELETE FROM web_sessions WHERE token_hash = ?", (token_hash,))
 
 
-def _set_private_mode(path: Path, mode: int) -> None:
+def _secure_data_directory(path: Path) -> None:
     try:
-        path.chmod(mode)
-        actual_mode = path.stat().st_mode & 0o777
+        path_info = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"unable to inspect SQLite data directory {path}: {exc}") from exc
+    if stat.S_ISLNK(path_info.st_mode):
+        raise RuntimeError(f"SQLite data directory must not be a symbolic link: {path}")
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"unable to open private SQLite data directory {path}: {exc}") from exc
+    try:
+        descriptor_info = os.fstat(descriptor)
+        if not stat.S_ISDIR(descriptor_info.st_mode):
+            raise RuntimeError(f"SQLite data directory is not a directory: {path}")
+        _set_descriptor_mode(descriptor, path, 0o700)
+    finally:
+        os.close(descriptor)
+
+
+def _secure_regular_file(
+    path: Path, *, create: bool = False, missing_ok: bool = False
+) -> None:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if create:
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileNotFoundError:
+        if missing_ok:
+            return
+        raise RuntimeError(f"SQLite storage file disappeared while securing permissions: {path}")
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise RuntimeError(f"refusing symbolic link for SQLite storage file: {path}") from exc
+        if exc.errno == errno.EISDIR:
+            raise RuntimeError(f"SQLite storage path is not a regular file: {path}") from exc
+        raise RuntimeError(f"unable to open SQLite storage file securely {path}: {exc}") from exc
+    try:
+        descriptor_info = os.fstat(descriptor)
+        if not stat.S_ISREG(descriptor_info.st_mode):
+            raise RuntimeError(f"SQLite storage path is not a regular file: {path}")
+        _set_descriptor_mode(descriptor, path, 0o600)
+    finally:
+        os.close(descriptor)
+
+
+def _set_descriptor_mode(descriptor: int, path: Path, mode: int) -> None:
+    try:
+        os.fchmod(descriptor, mode)
+        actual_mode = stat.S_IMODE(os.fstat(descriptor).st_mode)
     except OSError as exc:
         raise RuntimeError(
             f"unable to secure SQLite storage permissions for {path}: {exc}"
