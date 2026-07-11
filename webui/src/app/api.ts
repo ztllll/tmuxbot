@@ -214,3 +214,45 @@ export async function configureChannel(
     "/api/channels/configure", csrfToken, body,
   );
 }
+
+export type TeamRunSnapshot = {
+  run: { run_id: string; goal: string; state: string };
+  agents: Array<{ agent_id: string; role: string; managed_session_id: string }>;
+  tasks: Array<{ task_id: string; title: string; goal: string; state: string; attempt: number; assignee_agent_id?: string | null }>;
+};
+
+export async function createTeamRun(
+  input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string },
+  csrfToken: string,
+): Promise<TeamRunSnapshot> {
+  return writeJson("/api/team-runs", csrfToken, {
+    run_id: input.runId, goal: input.goal, idempotency_key: `create-${input.runId}`,
+    agents: [
+      { role: "coordinator", managed_session_id: input.coordinator },
+      { role: "implementer", managed_session_id: input.implementer },
+      { role: "reviewer", managed_session_id: input.reviewer },
+    ],
+    tasks: [{ task_id: "implementation", title: "实现与验证", goal: input.goal, role: "implementer", dependencies: [], requires_write: true, max_attempts: 2 }],
+  });
+}
+
+export async function commandTeamRun(runId: string, command: "start" | "pause" | "resume", csrfToken: string) {
+  return writeJson<TeamRunSnapshot>(`/api/team-runs/${encodeURIComponent(runId)}/${command}`, csrfToken, { idempotency_key: `${command}-${Date.now()}` });
+}
+
+export async function completeTeamTask(runId: string, artifactUri: string, csrfToken: string) {
+  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/implementation/complete`, csrfToken, {
+    agent_id: `${runId}:implementer`, idempotency_key: `complete-${Date.now()}`,
+    artifacts: [{ kind: "implementation_evidence", uri: artifactUri, metadata: { source: "operator-confirmed" } }],
+  });
+}
+
+export async function reviewTeamTask(runId: string, verdict: "approved" | "rejected", notes: string, csrfToken: string) {
+  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/implementation/review`, csrfToken, {
+    reviewer_agent_id: `${runId}:reviewer`, verdict, notes, idempotency_key: `review-${Date.now()}`,
+  });
+}
+
+export async function getTeamRun(runId: string): Promise<TeamRunSnapshot> {
+  return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}`, { credentials: "same-origin" }));
+}

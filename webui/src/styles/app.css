@@ -140,6 +140,25 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .terminal-actions button { width: auto; min-width: 104px; }
 .danger-action { border: 1px solid #d46a6a; background: #8c2f36; color: #fff; padding: 10px 14px; font-weight: 700; cursor: pointer; }
 .terminal-surface { height: 440px; padding: 10px 8px; overflow: hidden; }
+.teamrun-panel { width: min(1440px, calc(100% - 48px)); margin: 0 auto 54px; background: #f7f8f9; border-top: 3px solid var(--circuit-blue); box-shadow: 0 18px 50px rgba(23, 33, 43, 0.08); }
+.teamrun-panel > header { display: flex; align-items: end; justify-content: space-between; padding: 22px 26px 18px; border-bottom: 1px solid #c8d0d7; }
+.teamrun-panel header span, .run-goal span { color: var(--circuit-blue); font: 700 0.68rem/1 var(--font-mono); letter-spacing: 0.14em; }
+.teamrun-panel h2 { margin: 7px 0 0; }
+.run-state { padding: 7px 10px; border-left: 4px solid var(--work-amber); background: rgba(213, 150, 32, 0.12); font: 700 0.75rem/1 var(--font-mono); text-transform: uppercase; }
+.run-state.is-completed { border-color: var(--outcome-green); background: rgba(24, 134, 107, 0.12); }
+.teamrun-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 24px 26px 28px; }
+.teamrun-form label { display: grid; gap: 6px; }
+.teamrun-form label span { font-size: 0.82rem; font-weight: 700; }
+.teamrun-form select, .teamrun-form textarea { width: 100%; border: 1px solid #aeb8c1; border-radius: 2px; background: #fff; color: var(--ink); padding: 10px; font: inherit; }
+.teamrun-form .goal-field { grid-column: 1 / -1; }
+.teamrun-form textarea { min-height: 92px; resize: vertical; }
+.teamrun-form > button, .teamrun-form > small { grid-column: 1 / -1; }
+.run-console { padding: 24px 26px 28px; display: grid; gap: 18px; }
+.run-goal { display: grid; gap: 6px; }
+.task-track { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid #c8d0d7; background: #fff; }
+.task-track > div { display: grid; gap: 3px; }
+.run-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.run-actions button { width: auto; }
 
 @media (max-width: 920px) {
   .workbench { width: min(100% - 24px, 720px); }
@@ -150,5 +169,8 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
   .terminal-dock header { align-items: stretch; flex-direction: column; }
   .terminal-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .terminal-surface { height: 360px; }
+  .teamrun-panel { width: calc(100% - 24px); }
+  .teamrun-form { grid-template-columns: 1fr; }
+  .teamrun-form .goal-field, .teamrun-form > button, .teamrun-form > small { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

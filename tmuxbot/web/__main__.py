@@ -17,6 +17,8 @@ from tmuxbot.web.auth import AuthService
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
 from tmuxbot.web.terminal import TerminalService
+from tmuxbot.teamrun.scheduler import TeamRunScheduler
+from tmuxbot.teamrun.tmux_sender import TmuxManagedSender
 
 
 def create_automatic_setup_grant(
@@ -86,6 +88,9 @@ def build_app():
             settings, repository, S.bindings
         )
         options["runtime_paths"] = paths
+        options["teamrun_scheduler"] = TeamRunScheduler(
+            repository, TmuxManagedSender(repository)
+        )
     app = create_app(
         settings,
         repository,

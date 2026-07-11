@@ -11,6 +11,7 @@ import {
   type ProviderProfile,
 } from "../../app/api";
 import TerminalDock from "../terminal/TerminalDock";
+import TeamRunPanel from "../teamrun/TeamRunPanel";
 
 type Props = {
   csrfToken: string;
@@ -142,6 +143,7 @@ export default function ControlWorkbench({
       </div>
     </section>
     {terminalSession && <TerminalDock session={terminalSession} csrfToken={csrfToken} onClose={() => setTerminalSession(null)} />}
+    <TeamRunPanel sessions={managedSessions} csrfToken={csrfToken} />
     </>
   );
 }

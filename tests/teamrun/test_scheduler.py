@@ -208,7 +208,12 @@ def test_only_independent_reviewer_can_accept_and_unlock_dependency(tmp_path):
 
     assert accepted.state is TeamTaskState.ACCEPTED
     assert repo.get_team_run("run-1").tasks[1].state is TeamTaskState.WORKING
-    assert [call[1]["task_id"] for call in sender.calls] == ["implement", "follow-up"]
+    assert [call[1]["task_id"] for call in sender.calls] == [
+        "implement",
+        "implement",
+        "follow-up",
+    ]
+    assert sender.calls[1][1]["kind"] == "independent_review"
 
 
 def test_rejected_review_is_bounded_then_requires_operator(tmp_path):

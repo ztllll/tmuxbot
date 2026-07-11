@@ -147,7 +147,7 @@ class TeamRunScheduler:
         artifacts: list[ArtifactInput],
         idempotency_key: str,
     ) -> TeamTask:
-        return self.repository.complete_team_task(
+        task = self.repository.complete_team_task(
             run_id,
             task_id,
             agent_id=agent_id,
@@ -155,6 +155,27 @@ class TeamRunScheduler:
             idempotency_key=idempotency_key,
             now=self.clock(),
         )
+        snapshot = self.repository.get_team_run(run_id)
+        reviewer = next(agent for agent in snapshot.agents if agent.role is AgentRole.REVIEWER)
+        self.sender.send(
+            reviewer.managed_session_id,
+            {
+                "kind": "independent_review",
+                "run_id": run_id,
+                "task_id": task_id,
+                "goal": task.goal,
+                "artifacts": [
+                    {"kind": item.kind, "uri": item.uri, "metadata": dict(item.metadata)}
+                    for item in artifacts
+                ],
+                "instructions": [
+                    "只读审查实现与证据",
+                    "明确给出 approved 或 rejected 及原因",
+                    "不得修改共享项目目录",
+                ],
+            },
+        )
+        return task
 
     def review_task(
         self,
