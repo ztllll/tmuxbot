@@ -46,7 +46,7 @@ class RunEvent:
     sequence: int | None = None
 
     def __post_init__(self) -> None:
-        if self.occurred_at.tzinfo is None:
+        if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None:
             raise ValueError("occurred_at must be timezone-aware")
         object.__setattr__(self, "payload", MappingProxyType(dict(self.payload)))
 

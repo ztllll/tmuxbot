@@ -20,10 +20,19 @@ class WebSettings:
     def from_env(cls) -> "WebSettings":
         project_dir = Path(__file__).resolve().parents[2]
         data_dir = Path(os.getenv("TMUXBOT_DATA_DIR") or project_dir / "data")
+        port_value = os.getenv("TMUXBOT_WEB_PORT", "8765").strip()
+        try:
+            port = int(port_value)
+        except ValueError as exc:
+            raise ValueError(
+                "TMUXBOT_WEB_PORT must be an integer from 1 to 65535"
+            ) from exc
+        if not 1 <= port <= 65_535:
+            raise ValueError("TMUXBOT_WEB_PORT must be an integer from 1 to 65535")
         return cls(
-            host=os.getenv("TMUXBOT_WEB_HOST", "127.0.0.1"),
-            port=int(os.getenv("TMUXBOT_WEB_PORT", "8765")),
+            host=os.getenv("TMUXBOT_WEB_HOST", "127.0.0.1").strip(),
+            port=port,
             database_path=data_dir / "control-plane.sqlite3",
-            secure_cookie=os.getenv("TMUXBOT_WEB_SECURE_COOKIE", "").lower()
+            secure_cookie=os.getenv("TMUXBOT_WEB_SECURE_COOKIE", "").strip().lower()
             in TRUE_VALUES,
         )

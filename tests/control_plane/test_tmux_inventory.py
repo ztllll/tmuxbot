@@ -3,7 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from tmuxbot.control_plane.models import SessionClass, TmuxPaneRecord
+from tmuxbot.control_plane.models import (
+    SessionClass,
+    SessionInventoryItem,
+    TmuxPaneRecord,
+)
 from tmuxbot.control_plane.tmux_inventory import (
     TMUX_FORMAT,
     TmuxInventory,
@@ -71,6 +75,54 @@ def test_classify_inventory_marks_unbound_unignored_pane_as_orphan():
     assert item.classification == SessionClass.ORPHAN
     assert item.binding_name is None
     assert item.provider is None
+
+
+def test_classify_inventory_prefers_managed_when_target_is_also_ignored():
+    pane = TmuxPaneRecord("alpha:0.1", "alpha", 0, 1, "python", "/repo", 4321)
+    binding = Binding("main", 1, None, "alpha", 0, 1, Path("/repo"), backend="codex")
+
+    [item] = classify_inventory([pane], [binding], ignored_targets={"alpha:0.1"})
+
+    assert item.classification == SessionClass.MANAGED
+    assert item.binding_name == "main"
+    assert item.provider == "codex"
+
+
+def test_classify_inventory_does_not_mutate_any_binding_field():
+    binding = Binding(
+        name="codex-main",
+        chat_id="oc_chat",
+        thread_id=42,
+        tmux_session="alpha",
+        tmux_window=3,
+        tmux_pane=2,
+        cwd=Path("/repo"),
+        backend="codex",
+        bot_token_env="TG_CODEX_BOT_TOKEN",
+        channel="feishu",
+        mention_required=True,
+        provider_session_id="provider-session",
+        transcript_path=Path("/repo/transcript.jsonl"),
+        last_session_id="legacy-session",
+    )
+    before = vars(binding).copy()
+    pane = TmuxPaneRecord("alpha:3.2", "alpha", 3, 2, "python", "/repo", 4321)
+
+    classify_inventory([pane], [binding], ignored_targets=set())
+
+    assert vars(binding) == before
+
+
+def test_session_inventory_metadata_is_defensively_copied_and_read_only():
+    metadata = {"source": "tmux"}
+    pane = TmuxPaneRecord("alpha:0.1", "alpha", 0, 1, "python", "/repo", 4321)
+    item = SessionInventoryItem(pane, SessionClass.MANAGED, metadata=metadata)
+
+    metadata["source"] = "changed"
+
+    assert item.metadata == {"source": "tmux"}
+    with pytest.raises(TypeError):
+        item.metadata["source"] = "changed"  # type: ignore[index]
 
 
 def test_tmux_inventory_uses_only_read_only_list_panes_command(monkeypatch):
