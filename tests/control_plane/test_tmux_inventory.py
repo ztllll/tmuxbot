@@ -1,4 +1,3 @@
-import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -226,7 +225,7 @@ def test_tmux_inventory_uses_configured_total_timeout(monkeypatch):
     assert runner.calls[0][1]["timeout"] == 1.25
 
 
-def test_tmux_inventory_preserves_newline_tab_old_separator_and_non_utf8_bytes(
+def test_tmux_inventory_preserves_text_framing_and_replaces_invalid_bytes(
     monkeypatch,
 ):
     raw_cwd = b"/repo\nwith\told-separator-\x1f-and-byte-\xff"
@@ -237,7 +236,22 @@ def test_tmux_inventory_preserves_newline_tab_old_separator_and_non_utf8_bytes(
 
     assert len(panes) == 1
     assert panes[0].command == "python\tworker"
-    assert panes[0].cwd == os.fsdecode(raw_cwd)
+    assert panes[0].cwd == "/repo\nwith\told-separator-\x1f-and-byte-\ufffd"
+    assert not any(0xD800 <= ord(character) <= 0xDFFF for character in panes[0].cwd)
+    panes[0].cwd.encode("utf-8")
+
+
+def test_tmux_inventory_requires_ascii_numeric_fields(monkeypatch):
+    responses = one_pane_responses()
+    responses[2] = completed(stdout=b"\xff\n")
+    runner = FakeRunner(responses)
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory().list_panes()
+
+    assert raised.value.code == "command_failed"
+    assert raised.value.detail == "tmux inventory output was malformed"
 
 
 def test_tmux_inventory_enforces_one_total_deadline(monkeypatch):

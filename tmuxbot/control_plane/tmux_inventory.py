@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Iterable
 
@@ -32,6 +32,10 @@ class TmuxInventoryError(RuntimeError):
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}")
+
+
+def _decode_field(value: bytes) -> str:
+    return value.decode(sys.getfilesystemencoding(), errors="replace")
 
 
 class TmuxInventory:
@@ -156,15 +160,15 @@ class TmuxInventory:
                 )
             raw_fields.append(self._remove_required_final_newline(output))
 
-        session, window, pane, command, cwd, pid = map(os.fsdecode, raw_fields)
-        try:
-            window_index = int(window)
-            pane_index = int(pane)
-            pane_pid = int(pid)
-        except ValueError as exc:
+        session = _decode_field(raw_fields[0])
+        command = _decode_field(raw_fields[3])
+        cwd = _decode_field(raw_fields[4])
+        numeric_fields = (raw_fields[1], raw_fields[2], raw_fields[5])
+        if any(re.fullmatch(rb"\d+", value) is None for value in numeric_fields):
             raise TmuxInventoryError(
                 "command_failed", "tmux inventory output was malformed"
-            ) from exc
+            )
+        window_index, pane_index, pane_pid = map(int, numeric_fields)
         return TmuxPaneRecord(
             target=f"{session}:{window_index}.{pane_index}",
             session_name=session,

@@ -713,3 +713,36 @@ def test_real_tmux_inventory_no_server_returns_200_empty_list(monkeypatch, tmp_p
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_real_tmux_inventory_invalid_bytes_are_json_safe(monkeypatch, tmp_path):
+    outputs = iter(
+        [
+            b"%7\n",
+            b"alpha\n",
+            b"0\n",
+            b"1\n",
+            b"python-\xff\n",
+            b"/repo/\xfe\n",
+            b"4321\n",
+        ]
+    )
+    monkeypatch.setattr(
+        "tmuxbot.control_plane.tmux_inventory.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=next(outputs), stderr=b""
+        ),
+    )
+    client, _, _ = _client(
+        tmp_path,
+        inventory=TmuxInventory(),
+        raise_server_exceptions=False,
+    )
+    _setup(client)
+
+    response = client.get("/api/tmux/sessions")
+
+    assert response.status_code == 200
+    [pane] = response.json()
+    assert pane["command"] == "python-\ufffd"
+    assert pane["cwd"] == "/repo/\ufffd"
