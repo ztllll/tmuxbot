@@ -18,9 +18,11 @@ class WebSettings:
     setup_token: str | None = None
 
     @classmethod
-    def from_env(cls) -> "WebSettings":
-        project_dir = Path(__file__).resolve().parents[2]
-        data_dir = Path(os.getenv("TMUXBOT_DATA_DIR") or project_dir / "data")
+    def from_env(cls, *, database_path: Path | None = None) -> "WebSettings":
+        if database_path is None:
+            from tmuxbot.paths import RuntimePaths
+
+            database_path = RuntimePaths.discover(os.environ).database_file
         port_value = os.getenv("TMUXBOT_WEB_PORT", "8765").strip()
         try:
             port = int(port_value)
@@ -42,7 +44,7 @@ class WebSettings:
         return cls(
             host=os.getenv("TMUXBOT_WEB_HOST", "127.0.0.1").strip(),
             port=port,
-            database_path=data_dir / "control-plane.sqlite3",
+            database_path=database_path,
             secure_cookie=os.getenv("TMUXBOT_WEB_SECURE_COOKIE", "").strip().lower()
             in TRUE_VALUES,
             setup_token=setup_token,

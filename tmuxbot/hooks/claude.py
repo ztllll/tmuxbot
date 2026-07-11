@@ -23,9 +23,12 @@ SUPPORTED_HOOK_EVENTS = frozenset(
 
 
 def default_hook_spool_path() -> Path:
-    project_dir = Path(__file__).resolve().parents[2]
-    data_dir = Path(os.getenv("TMUXBOT_DATA_DIR") or (project_dir / "data"))
-    return data_dir / "claude-hooks.jsonl"
+    from tmuxbot.paths import RuntimePaths
+
+    return RuntimePaths.discover(
+        os.environ,
+        legacy_project_dir=Path(__file__).resolve().parents[2],
+    ).hook_spool_file
 
 
 def validate_hook_payload(payload: object) -> dict:

@@ -24,6 +24,14 @@ def test_web_settings_are_local_and_secure_by_default(monkeypatch, tmp_path: Pat
     assert settings.setup_token is None
 
 
+def test_web_settings_accept_discovered_database_path(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("TMUXBOT_DATA_DIR", raising=False)
+
+    settings = WebSettings.from_env(database_path=tmp_path / "xdg/web.sqlite3")
+
+    assert settings.database_path == tmp_path / "xdg/web.sqlite3"
+
+
 def test_web_settings_preserve_five_positional_argument_compatibility(tmp_path: Path):
     settings = WebSettings("127.0.0.1", 8765, tmp_path / "web.sqlite3", False, 7200)
 

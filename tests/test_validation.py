@@ -48,6 +48,10 @@ def test_accepts_valid_telegram_and_feishu_bindings():
     )
 
 
+def test_allows_no_bindings_when_explicitly_requested():
+    validate_bindings([], require_nonempty=False)
+
+
 def test_rejects_duplicate_source_session_and_cwd():
     assert_invalid(
         [

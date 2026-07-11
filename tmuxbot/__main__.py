@@ -23,6 +23,7 @@ from tmuxbot.heartbeat import HEARTBEAT_INTERVAL, heartbeat_typing_loop
 from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
+from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
@@ -39,15 +40,6 @@ except ImportError:
 # ★ Boss 架构原则: 一个 bot ↔ 一个 backend (CLI 类型) ↔ N 个 tmux 子线程
 # 不同 backend 必须用不同 bot token, 避免协议串扰
 TOKEN_TO_BACKEND = dict(TELEGRAM_TOKEN_BACKENDS)
-
-# 路径可被 env 覆盖, 支持同机多实例 (如 claude-feishu / codex-feishu 各一进程,
-# 因 lark-oapi 模块级全局 loop 不支持单进程跑多个飞书 app 的 ws client)
-PROJECT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.getenv("TMUXBOT_DATA_DIR") or (PROJECT_DIR / "data"))
-ENV_FILE = Path(os.getenv("TMUXBOT_ENV") or (PROJECT_DIR / ".env"))
-BINDINGS_FILE = Path(os.getenv("TMUXBOT_BINDINGS") or (PROJECT_DIR / "bindings.yaml"))
-OFFSETS_FILE = DATA_DIR / "offsets.json"
-LOCK_FILE = DATA_DIR / "tmuxbot.lock"
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -70,9 +62,12 @@ def _telegram_group_mention_only(token_env: str) -> bool:
     return _env_flag(*names)
 
 
-def acquire_lock() -> int:
-    DATA_DIR.mkdir(exist_ok=True)
-    fd = os.open(LOCK_FILE, os.O_CREAT | os.O_WRONLY, 0o644)
+def acquire_lock(paths: RuntimePaths | None = None) -> int:
+    paths = paths or RuntimePaths.discover(
+        os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
+    )
+    paths.ensure_private_directories()
+    fd = os.open(paths.lock_file, os.O_CREAT | os.O_WRONLY, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -83,9 +78,13 @@ def acquire_lock() -> int:
     return fd
 
 
-async def main() -> None:
-    acquire_lock()
-    load_config(ENV_FILE, BINDINGS_FILE, OFFSETS_FILE)
+async def main(paths: RuntimePaths | None = None) -> None:
+    paths = paths or RuntimePaths.discover(
+        os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
+    )
+    paths.ensure_private_directories()
+    acquire_lock(paths)
+    load_config(paths.env_file, paths.bindings_file, paths.offsets_file)
     if _env_flag("TMUXBOT_CLAUDE_HOOKS"):
         install_claude_hooks()
         log.info("managed Claude hooks installed")
@@ -133,8 +132,8 @@ async def main() -> None:
         backend = backends_pool[backend_name]
         fe = TelegramFrontend(
             token=token, state=S, backend=backend, bindings=bs,
-            env_file=ENV_FILE, bindings_file=BINDINGS_FILE,
-            offsets_file=OFFSETS_FILE,
+            env_file=paths.env_file, bindings_file=paths.bindings_file,
+            offsets_file=paths.offsets_file,
             project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
             bot_token_env=token_env,
             group_only_when_mentioned=_telegram_group_mention_only(token_env),
@@ -197,8 +196,8 @@ async def main() -> None:
                     bindings=bs,
                     boss_open_ids=boss_open_ids,
                     group_only_when_mentioned=_mention_only,
-                    offsets_file=OFFSETS_FILE,
-                    bindings_file=BINDINGS_FILE,
+                    offsets_file=paths.offsets_file,
+                    bindings_file=paths.bindings_file,
                     bot_token_env=env_key,
                     project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
                 )
@@ -250,7 +249,7 @@ async def main() -> None:
             if not tmux_has_session(b.tmux_session):
                 log.warning(f"[{b.name}] tmux session not found, creating")
                 tmux_new_session(b.tmux_session, b.cwd)
-            S.fire(jsonl_poll_loop(b, fe.backend, fe, S, OFFSETS_FILE))
+            S.fire(jsonl_poll_loop(b, fe.backend, fe, S, paths.offsets_file))
         S.fire(heartbeat_typing_loop(S, fe))
     S.fire(lifecycle_watch_loop(frontends, S))
     log.info(
@@ -293,7 +292,7 @@ async def main() -> None:
                 await fe.stop()
             except Exception:
                 pass
-        save_offsets(OFFSETS_FILE, S.offsets, force=True)
+        save_offsets(paths.offsets_file, S.offsets, force=True)
         log.info("bye")
 
 

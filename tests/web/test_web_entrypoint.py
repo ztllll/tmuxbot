@@ -50,12 +50,12 @@ def test_build_app_loads_config_migrates_database_and_wires_dependencies(
     def load_runtime_env(path, *, override):
         calls.append(("load_dotenv", path, override))
 
-    def load_runtime_config(*paths):
-        calls.append(("load_config", paths))
+    def load_runtime_config(*paths, **options):
+        calls.append(("load_config", paths, options))
 
-    def settings_from_loaded_env():
+    def settings_from_loaded_env(*, database_path):
         assert [call[0] for call in calls] == ["load_dotenv", "load_config"]
-        calls.append(("settings",))
+        calls.append(("settings", database_path))
         return settings
 
     monkeypatch.setattr(web_main.WebSettings, "from_env", settings_from_loaded_env)
@@ -89,8 +89,12 @@ def test_build_app_loads_config_migrates_database_and_wires_dependencies(
     assert web_main.build_app() == (settings, app)
     assert calls == [
         ("load_dotenv", env_file, False),
-        ("load_config", (env_file, bindings_file, data_dir / "offsets.json")),
-        ("settings",),
+        (
+            "load_config",
+            (env_file, bindings_file, data_dir / "offsets.json"),
+            {"allow_missing_bindings": True, "allow_empty_bindings": True},
+        ),
+        ("settings", data_dir / "control-plane.sqlite3"),
         ("repository", settings.database_path),
         ("migrate",),
         ("create_app", (settings, repositories[0], inventory, ["binding"])),
@@ -114,9 +118,13 @@ def test_build_app_uses_data_and_bindings_paths_from_custom_env_file(
     monkeypatch.delenv("TMUXBOT_DATA_DIR", raising=False)
     monkeypatch.delenv("TMUXBOT_BINDINGS", raising=False)
     loaded_paths = []
-    monkeypatch.setattr(web_main, "load_config", lambda *paths: loaded_paths.append(paths))
+    monkeypatch.setattr(
+        web_main, "load_config", lambda *paths, **options: loaded_paths.append(paths)
+    )
     settings = types.SimpleNamespace(database_path=tmp_path / "web.sqlite3")
-    monkeypatch.setattr(web_main.WebSettings, "from_env", lambda: settings)
+    monkeypatch.setattr(
+        web_main.WebSettings, "from_env", lambda **options: settings
+    )
     monkeypatch.setattr(web_main.ControlPlaneRepository, "migrate", lambda self: None)
     monkeypatch.setattr(web_main, "create_app", lambda *args: object())
 
@@ -144,9 +152,13 @@ def test_build_app_preserves_external_paths_over_custom_env_file(
     monkeypatch.setenv("TMUXBOT_DATA_DIR", str(external_data_dir))
     monkeypatch.setenv("TMUXBOT_BINDINGS", str(external_bindings_file))
     loaded_paths = []
-    monkeypatch.setattr(web_main, "load_config", lambda *paths: loaded_paths.append(paths))
+    monkeypatch.setattr(
+        web_main, "load_config", lambda *paths, **options: loaded_paths.append(paths)
+    )
     settings = types.SimpleNamespace(database_path=tmp_path / "web.sqlite3")
-    monkeypatch.setattr(web_main.WebSettings, "from_env", lambda: settings)
+    monkeypatch.setattr(
+        web_main.WebSettings, "from_env", lambda **options: settings
+    )
     monkeypatch.setattr(web_main.ControlPlaneRepository, "migrate", lambda self: None)
     monkeypatch.setattr(web_main, "create_app", lambda *args: object())
 
@@ -165,7 +177,7 @@ def test_build_app_fails_fast_for_short_setup_token(monkeypatch, tmp_path: Path)
     env_file.write_text("TMUXBOT_WEB_SETUP_TOKEN=too-short\n", encoding="utf-8")
     monkeypatch.setenv("TMUXBOT_ENV", str(env_file))
     monkeypatch.delenv("TMUXBOT_WEB_SETUP_TOKEN", raising=False)
-    monkeypatch.setattr(web_main, "load_config", lambda *paths: None)
+    monkeypatch.setattr(web_main, "load_config", lambda *paths, **options: None)
 
     with pytest.raises(
         ValueError,

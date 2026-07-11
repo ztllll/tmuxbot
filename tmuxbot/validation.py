@@ -35,14 +35,16 @@ def _norm_path(path: Path) -> str:
         return str(path.expanduser().absolute())
 
 
-def validate_bindings(bindings: list[Binding]) -> None:
+def validate_bindings(
+    bindings: list[Binding], *, require_nonempty: bool = True
+) -> None:
     """Validate binding invariants.
 
     Raises:
         ConfigValidationError: if one or more binding errors are found.
     """
     errors: list[str] = []
-    if not bindings:
+    if require_nonempty and not bindings:
         errors.append("bindings.yaml must contain at least one binding")
 
     names: dict[str, Binding] = {}
