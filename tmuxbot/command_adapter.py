@@ -159,6 +159,7 @@ _TUI_ACTIONS: dict[str, tuple[str | None, str]] = {
     "esc": ("Escape", "Escape"),
     "ctrl_c": ("C-c", "Ctrl-C"),
     "refresh": (None, "Refresh"),
+    "model_session": ("s", "仅本会话"),
 }
 
 _SEMANTIC_ACTIONS: dict[str, SemanticAction] = {

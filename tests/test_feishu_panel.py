@@ -57,6 +57,20 @@ def test_feishu_interaction_card_has_remote_tui_controls(tmp_path):
     assert actions == ["up", "left", "enter", "right", "down", "esc", "refresh"]
 
 
+def test_feishu_claude_model_interaction_has_session_only_control():
+    card = build_feishu_interaction_card(
+        "模型选择器",
+        binding_token("alpha"),
+        session_model=True,
+    )
+    buttons = [e for e in card["body"]["elements"] if e["tag"] == "button"]
+    labels = [button["text"]["content"] for button in buttons]
+    actions = [button["behaviors"][0]["value"]["action"] for button in buttons]
+
+    assert "仅本会话" in labels
+    assert "model_session" in actions
+
+
 def test_feishu_send_control_panel_sends_card_json_v2(tmp_path):
     calls = []
     b = binding(tmp_path)

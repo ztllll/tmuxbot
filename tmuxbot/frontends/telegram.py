@@ -684,6 +684,16 @@ class TelegramFrontend(Frontend):
                 InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
             ],
         ])
+        if self.backend.name == "claude_code" and "/model" in html_text:
+            rows.insert(
+                1,
+                [
+                    InlineKeyboardButton(
+                        text="仅本会话",
+                        callback_data=f"tui:{token}:model_session",
+                    )
+                ],
+            )
         markup = InlineKeyboardMarkup(inline_keyboard=rows)
         return await self._tg_call(
             lambda: self.bot.send_message(

@@ -154,7 +154,12 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
     }
 
 
-def build_feishu_interaction_card(markdown_text: str, token: str) -> dict[str, Any]:
+def build_feishu_interaction_card(
+    markdown_text: str,
+    token: str,
+    *,
+    session_model: bool = False,
+) -> dict[str, Any]:
     specs = [
         ("↑", "up"),
         ("←", "left"),
@@ -164,6 +169,8 @@ def build_feishu_interaction_card(markdown_text: str, token: str) -> dict[str, A
         ("取消", "esc"),
         ("刷新", "refresh"),
     ]
+    if session_model:
+        specs.insert(5, ("仅本会话", "model_session"))
     elements: list[dict[str, Any]] = [
         {"tag": "markdown", "element_id": "tui_body", "content": markdown_text}
     ]

@@ -97,3 +97,28 @@ def test_telegram_panel_model_action_dispatches_native_model_command(tmp_path, m
     asyncio.run(frontend.execute_panel_command(b, -100, None, "cmd_model"))
 
     assert calls[0][0][6] == "/model"
+
+
+def test_telegram_claude_model_interaction_offers_session_only_button(tmp_path):
+    calls = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(kwargs["reply_markup"])
+            return SimpleNamespace(message_id=2)
+
+    frontend = TelegramFrontend.__new__(TelegramFrontend)
+    frontend.bot = FakeBot()
+    frontend.backend = SimpleNamespace(name="claude_code")
+
+    async def tg_call(fn, max_retries=4):
+        return await fn()
+
+    frontend._tg_call = tg_call
+
+    asyncio.run(
+        frontend.send_interaction_card(-100, None, "🎛 /model 已注入", "alpha")
+    )
+
+    labels = [button.text for row in calls[0].inline_keyboard for button in row]
+    assert "仅本会话" in labels

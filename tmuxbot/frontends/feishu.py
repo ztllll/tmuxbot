@@ -956,6 +956,9 @@ class FeishuFrontend(Frontend):
             build_feishu_interaction_card(
                 html_to_feishu_markdown(html_text),
                 binding_token(binding_name),
+                session_model=(
+                    self.backend.name == "claude_code" and "/model" in html_text
+                ),
             )
         )
         message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), content)
@@ -1029,7 +1032,7 @@ class FeishuFrontend(Frontend):
         }
         allowed_actions = {
             "refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c",
-            "up", "down", "left", "right", "enter",
+            "up", "down", "left", "right", "enter", "model_session",
         } | panel_actions
         if action not in allowed_actions:
             return _card_action_response("error", "未知操作")
