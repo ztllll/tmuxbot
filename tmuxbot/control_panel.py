@@ -13,6 +13,16 @@ from tmuxbot.state import Binding
 
 
 _CONTROL_COMMANDS = frozenset({"/panel", "/settings", "/mention"})
+_PANEL_ACTION_COMMANDS = {
+    "cmd_status": "/status",
+    "cmd_screen": "/screen",
+    "cmd_new": "/new",
+    "cmd_compact": "/compact",
+    "cmd_resume": "/resume",
+    "cmd_model": "/model",
+    "cmd_esc": "/esc",
+    "cmd_cc": "/cc",
+}
 _PANEL_WRITE_LOCK = threading.Lock()
 
 
@@ -39,6 +49,10 @@ def parse_mention_command(text: str) -> bool | None | str:
     if value == "default":
         return None
     return "invalid"
+
+
+def panel_command_for_action(action: str) -> str | None:
+    return _PANEL_ACTION_COMMANDS.get(action)
 
 
 def effective_mention_required(binding: Binding, frontend_default: bool) -> bool:

@@ -63,6 +63,7 @@ from tmuxbot.core.rich_messages import sanitize_telegram_html
 from tmuxbot.control_panel import (
     effective_mention_required,
     is_control_command,
+    panel_command_for_action,
     parse_mention_command,
     render_panel_text,
     save_binding_mention_policy,
@@ -716,17 +717,7 @@ class TelegramFrontend(Frontend):
         thread_id: int | None,
         action: str,
     ) -> None:
-        commands = {
-            "cmd_status": "/status",
-            "cmd_screen": "/screen",
-            "cmd_new": "/new",
-            "cmd_compact": "/compact",
-            "cmd_resume": "/resume",
-            "cmd_model": "/model",
-            "cmd_esc": "/esc",
-            "cmd_cc": "/cc",
-        }
-        command = commands.get(action)
+        command = panel_command_for_action(action)
         if command is None:
             raise ValueError(f"unknown panel action: {action}")
         from tmuxbot.dispatch import dispatch_incoming_text

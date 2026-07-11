@@ -44,10 +44,20 @@ from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import build_reply_document
+from tmuxbot.control_panel import (
+    effective_mention_required,
+    is_control_command,
+    panel_command_for_action,
+    parse_mention_command,
+    render_panel_text,
+    save_binding_mention_policy,
+)
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.frontends.feishu_cards import (
     FeishuCardTooLarge,
+    build_feishu_control_panel,
     build_feishu_card_v2,
+    build_feishu_interaction_card,
     serialize_feishu_card,
 )
 from tmuxbot.frontends.feishu_cards import html_to_feishu_markdown
@@ -331,8 +341,19 @@ class FeishuFrontend(Frontend):
 
     def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
         incoming = self.normalize_incoming(msg, chat_type=chat_type)
+        if is_control_command(incoming.text):
+            return True
+        b = (
+            self.find_binding(str(incoming.source_id), None)
+            if hasattr(self, "bindings")
+            else None
+        )
+        required = effective_mention_required(
+            b,
+            self.group_only_when_mentioned,
+        ) if b is not None else self.group_only_when_mentioned
         return incoming_message_is_addressed(
-            incoming, require_addressing=self.group_only_when_mentioned
+            incoming, require_addressing=required
         )
 
     # ────────── 飞书 REST 发送 (同步, 在 asyncio.to_thread 里调) ──────────
@@ -930,8 +951,42 @@ class FeishuFrontend(Frontend):
     async def send_interaction_card(
         self, chat_id: int | str, thread_id: int | None, html_text: str, binding_name: str
     ) -> Any:
-        """飞书先降级为说明卡; 用户可用 /up /down /enter 等文本命令继续操作。"""
-        return await self.send_html(chat_id, thread_id, html_text)
+        """发送显式 TUI 控制卡；普通回复仍保持无按钮。"""
+        content = serialize_feishu_card(
+            build_feishu_interaction_card(
+                html_to_feishu_markdown(html_text),
+                binding_token(binding_name),
+            )
+        )
+        message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), content)
+        if message_id is None:
+            return None
+        self._remember_outbound_message(message_id)
+        self._remember_v2_message(message_id)
+        return _make_fake_msg(message_id)
+
+    async def send_control_panel(
+        self,
+        b: "Binding",
+        chat_id: int | str,
+        thread_id: int | None,
+    ) -> Any:
+        text = render_panel_text(
+            b,
+            frontend_default=self.group_only_when_mentioned,
+        )
+        content = serialize_feishu_card(
+            build_feishu_control_panel(
+                html_to_feishu_markdown(text),
+                binding_token(b.name),
+            )
+        )
+        message_id = await asyncio.to_thread(self._send_card_sync, str(chat_id), content)
+        if message_id is None:
+            return None
+        self._remember_outbound_message(message_id)
+        self._remember_v2_message(message_id)
+        return _make_fake_msg(message_id)
 
     def _on_card_action(self, event: Any) -> Any:
         data = getattr(event, "event", None)
@@ -957,9 +1012,68 @@ class FeishuFrontend(Frontend):
         if not chat_id or str(b.chat_id) != chat_id:
             return _card_action_response("error", "卡片与会话不匹配")
 
-        allowed_actions = {"refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c"}
+        panel_actions = {
+            "mention_on",
+            "mention_off",
+            "mention_default",
+            "refresh_panel",
+            "close_panel",
+            "cmd_status",
+            "cmd_screen",
+            "cmd_new",
+            "cmd_compact",
+            "cmd_resume",
+            "cmd_model",
+            "cmd_esc",
+            "cmd_cc",
+        }
+        allowed_actions = {
+            "refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c",
+            "up", "down", "left", "right", "enter",
+        } | panel_actions
         if action not in allowed_actions:
             return _card_action_response("error", "未知操作")
+        if action in {"mention_on", "mention_off", "mention_default"}:
+            value = {
+                "mention_on": False,
+                "mention_off": True,
+                "mention_default": None,
+            }[action]
+            try:
+                save_binding_mention_policy(self.bindings_file, b, value)
+            except Exception:
+                log.exception("[%s] 飞书面板保存 @ 策略失败", b.name)
+                return _card_action_response("error", "保存 @ 策略失败")
+            card = build_feishu_control_panel(
+                html_to_feishu_markdown(
+                    render_panel_text(
+                        b,
+                        frontend_default=self.group_only_when_mentioned,
+                    )
+                ),
+                token,
+            )
+            return _card_action_response("success", "@ 策略已更新", card=card)
+        if action == "refresh_panel":
+            card = build_feishu_control_panel(
+                html_to_feishu_markdown(
+                    render_panel_text(
+                        b,
+                        frontend_default=self.group_only_when_mentioned,
+                    )
+                ),
+                token,
+            )
+            return _card_action_response("success", "面板已刷新", card=card)
+        if action == "close_panel":
+            closed = build_feishu_card_v2(
+                build_reply_document(
+                    b,
+                    ReplyEnvelope(title="控制面板", body="控制面板已关闭。"),
+                ),
+                token,
+            )
+            return _card_action_response("success", "面板已关闭", card=closed)
         if action == "confirm_ctrl_c":
             confirmation = build_reply_document(
                 b,
@@ -997,6 +1111,20 @@ class FeishuFrontend(Frontend):
         future.add_done_callback(done)
 
     async def _execute_card_action(self, b: "Binding", chat_id: str, action: str) -> None:
+        panel_command = panel_command_for_action(action)
+        if panel_command is not None:
+            from tmuxbot.dispatch import dispatch_incoming_text
+
+            await dispatch_incoming_text(
+                self,
+                self.backend,
+                b,
+                self.state,
+                chat_id,
+                None,
+                panel_command,
+            )
+            return
         if action == "status":
             await self.send_light_status_summary(b, chat_id, None)
             return
@@ -1561,6 +1689,29 @@ class FeishuFrontend(Frontend):
             text = incoming.text
 
             if not text:
+                return
+
+            if is_control_command(text):
+                if text.split(maxsplit=1)[0].split("@", 1)[0] in {"/panel", "/settings"}:
+                    await self.send_control_panel(b, chat_id, None)
+                    return
+                parsed = parse_mention_command(text)
+                if parsed == "invalid":
+                    await self.send_html(
+                        chat_id,
+                        None,
+                        "用法: <code>/mention on|off|default|status</code>\n"
+                        "on = 无需 @；off = 必须 @；default = 继承部署默认。",
+                    )
+                    return
+                if parsed != "status":
+                    await asyncio.to_thread(
+                        save_binding_mention_policy,
+                        self.bindings_file,
+                        b,
+                        parsed,
+                    )
+                await self.send_control_panel(b, chat_id, None)
                 return
 
             # ── /projects: 列 base 下目录 (已绑定群也能用, 纯信息不进 dispatch) ──

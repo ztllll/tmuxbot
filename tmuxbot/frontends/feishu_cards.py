@@ -106,6 +106,88 @@ def serialize_feishu_card(card: dict[str, Any], *, max_bytes: int = 30_000) -> s
     return serialized
 
 
+def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]:
+    specs = [
+        ("无需 @", "mention_on", "primary"),
+        ("必须 @", "mention_off", "default"),
+        ("继承默认", "mention_default", "default"),
+        ("状态", "cmd_status", "default"),
+        ("屏幕", "cmd_screen", "default"),
+        ("新会话", "cmd_new", "danger"),
+        ("压缩上下文", "cmd_compact", "default"),
+        ("恢复会话", "cmd_resume", "default"),
+        ("切换模型", "cmd_model", "primary"),
+        ("Esc", "cmd_esc", "default"),
+        ("Ctrl-C", "cmd_cc", "danger"),
+        ("刷新", "refresh_panel", "default"),
+        ("关闭", "close_panel", "default"),
+    ]
+    elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "element_id": "panel_body", "content": markdown_text}
+    ]
+    for index, (label, action, button_type) in enumerate(specs):
+        button = _button_element(index, label, action, button_type, token)
+        button["element_id"] = f"panel_action_{index}"
+        if action == "cmd_new":
+            button["confirm"] = {
+                "title": {"tag": "plain_text", "content": "确认创建新会话？"},
+                "text": {
+                    "tag": "plain_text",
+                    "content": "这会在当前 tmux CLI 中执行 /new。",
+                },
+            }
+        elements.append(button)
+    return {
+        "schema": "2.0",
+        "config": {
+            "summary": {"content": "tmuxbot 控制面板"},
+            "update_multi": True,
+            "width_mode": "fill",
+            "enable_forward": False,
+        },
+        "header": {
+            "title": {"tag": "plain_text", "content": "tmuxbot 控制面板"},
+            "subtitle": {"tag": "plain_text", "content": "中文 · tmux 原生 CLI"},
+            "template": "blue",
+        },
+        "body": {"direction": "vertical", "vertical_spacing": "8px", "elements": elements},
+    }
+
+
+def build_feishu_interaction_card(markdown_text: str, token: str) -> dict[str, Any]:
+    specs = [
+        ("↑", "up"),
+        ("←", "left"),
+        ("确认", "enter"),
+        ("→", "right"),
+        ("↓", "down"),
+        ("取消", "esc"),
+        ("刷新", "refresh"),
+    ]
+    elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "element_id": "tui_body", "content": markdown_text}
+    ]
+    for index, (label, action) in enumerate(specs):
+        button = _button_element(index, label, action, "primary" if action == "enter" else "default", token)
+        button["element_id"] = f"tui_action_{index}"
+        elements.append(button)
+    return {
+        "schema": "2.0",
+        "config": {
+            "summary": {"content": "TUI 交互控制"},
+            "update_multi": True,
+            "width_mode": "fill",
+            "enable_forward": False,
+        },
+        "header": {
+            "title": {"tag": "plain_text", "content": "TUI 交互控制"},
+            "subtitle": {"tag": "plain_text", "content": "操作当前 tmux CLI"},
+            "template": "yellow",
+        },
+        "body": {"direction": "vertical", "vertical_spacing": "8px", "elements": elements},
+    }
+
+
 def _block_element(block: ReplyBlock, index: int) -> dict[str, Any]:
     return {
         "tag": "markdown",

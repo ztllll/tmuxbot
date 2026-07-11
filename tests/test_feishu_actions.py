@@ -38,6 +38,8 @@ def frontend(b: Binding):
     instance.boss_open_ids = {"ou_boss"}
     instance.backend = SimpleNamespace(format_status_footer=lambda status: None)
     instance._outbound_message_ids = set()
+    instance.bindings_file = None
+    instance.group_only_when_mentioned = True
     scheduled = []
     instance._schedule_card_action = lambda binding, chat_id, action: scheduled.append(
         (binding, chat_id, action)
@@ -104,3 +106,26 @@ def test_feishu_card_action_rejects_malformed_values(tmp_path):
 
 def test_feishu_capabilities_do_not_advertise_persistent_actions():
     assert not FeishuFrontend.capabilities.supports_actions
+
+
+def test_feishu_panel_updates_mention_policy_and_returns_refreshed_card(tmp_path):
+    b = binding(tmp_path)
+    b.mention_required = True
+    instance, scheduled = frontend(b)
+
+    response = instance._on_card_action(event(b, "mention_on"))
+
+    assert response.toast.type == "success"
+    assert b.mention_required is False
+    assert response.card.data["header"]["title"]["content"] == "tmuxbot 控制面板"
+    assert scheduled == []
+
+
+def test_feishu_panel_model_action_schedules_native_model_command(tmp_path):
+    b = binding(tmp_path)
+    instance, scheduled = frontend(b)
+
+    response = instance._on_card_action(event(b, "cmd_model"))
+
+    assert response.toast.type == "success"
+    assert scheduled == [(b, "oc_alpha", "cmd_model")]

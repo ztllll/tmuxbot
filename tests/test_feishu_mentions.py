@@ -35,3 +35,35 @@ def test_feishu_frontend_message_allowed_uses_shared_addressing():
     assert frontend._message_allowed_by_addressing("p2p", _msg())
     assert not frontend._message_allowed_by_addressing("group", _msg())
     assert frontend._message_allowed_by_addressing("group", _msg(parent_id="om_bot_reply"))
+
+
+def test_feishu_panel_control_bypasses_mention_requirement():
+    frontend = object.__new__(FeishuFrontend)
+    frontend.group_only_when_mentioned = True
+    frontend.app_id = "cli_app"
+    frontend.bot_open_id = "ou_bot"
+    frontend._outbound_message_ids = set()
+    frontend.bindings = [
+        SimpleNamespace(chat_id="oc_alpha", thread_id=None, mention_required=True)
+    ]
+    panel = SimpleNamespace(
+        chat_id="oc_alpha",
+        chat_type="group",
+        message_type="text",
+        content='{"text":"/panel"}',
+        mentions=[],
+        parent_id=None,
+        root_id=None,
+    )
+    status = SimpleNamespace(
+        chat_id="oc_alpha",
+        chat_type="group",
+        message_type="text",
+        content='{"text":"/status"}',
+        mentions=[],
+        parent_id=None,
+        root_id=None,
+    )
+
+    assert frontend._message_allowed_by_addressing("group", panel)
+    assert not frontend._message_allowed_by_addressing("group", status)
