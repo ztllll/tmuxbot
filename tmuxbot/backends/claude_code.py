@@ -555,6 +555,9 @@ class ClaudeCodeBackend(Backend):
 
     # 给 BotFather 注册菜单 (其他 backend 可以有不同清单)
     bot_commands = [
+        ("panel", "🎛 中文控制面板"),
+        ("settings", "⚙️ 打开控制面板"),
+        ("mention", "@ 群聊唤醒开关"),
         ("status", "ℹ️ 综合状态(含上下文/余量/缓存)"),
         ("info", "📊 累计 token + 缓存命中率(只读 jsonl)"),
         ("whoami", "👤 我的 user_id / chat_id"),

@@ -60,6 +60,13 @@ from tmuxbot.channels.telegram import (
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import sanitize_telegram_html
+from tmuxbot.control_panel import (
+    effective_mention_required,
+    is_control_command,
+    parse_mention_command,
+    render_panel_text,
+    save_binding_mention_policy,
+)
 from tmuxbot.frontends.base import Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
@@ -175,6 +182,55 @@ def _message_attachment(m: Message) -> tuple[str, str, int | None, str] | None:
 def safe_filename_fragment(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip(".-")
     return cleaned or "reply"
+
+
+def build_telegram_panel_markup(
+    binding: "Binding",
+    *,
+    confirm_new: bool = False,
+) -> InlineKeyboardMarkup:
+    token = binding_token(binding.name)
+    if confirm_new:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="确认创建新会话",
+                        callback_data=f"panel:{token}:cmd_new",
+                    ),
+                    InlineKeyboardButton(
+                        text="返回面板",
+                        callback_data=f"panel:{token}:refresh",
+                    ),
+                ]
+            ]
+        )
+    rows = [
+        [
+            InlineKeyboardButton(text="无需 @", callback_data=f"panel:{token}:mention_on"),
+            InlineKeyboardButton(text="必须 @", callback_data=f"panel:{token}:mention_off"),
+            InlineKeyboardButton(text="继承默认", callback_data=f"panel:{token}:mention_default"),
+        ],
+        [
+            InlineKeyboardButton(text="状态", callback_data=f"panel:{token}:cmd_status"),
+            InlineKeyboardButton(text="屏幕", callback_data=f"panel:{token}:cmd_screen"),
+        ],
+        [
+            InlineKeyboardButton(text="新会话", callback_data=f"panel:{token}:confirm_new"),
+            InlineKeyboardButton(text="压缩上下文", callback_data=f"panel:{token}:cmd_compact"),
+            InlineKeyboardButton(text="恢复会话", callback_data=f"panel:{token}:cmd_resume"),
+        ],
+        [InlineKeyboardButton(text="切换模型", callback_data=f"panel:{token}:cmd_model")],
+        [
+            InlineKeyboardButton(text="Esc", callback_data=f"panel:{token}:cmd_esc"),
+            InlineKeyboardButton(text="Ctrl-C", callback_data=f"panel:{token}:cmd_cc"),
+        ],
+        [
+            InlineKeyboardButton(text="刷新", callback_data=f"panel:{token}:refresh"),
+            InlineKeyboardButton(text="关闭", callback_data=f"panel:{token}:close"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ────────── TelegramFrontend ──────────
@@ -634,6 +690,58 @@ class TelegramFrontend(Frontend):
             )
         )
 
+    async def send_control_panel(
+        self,
+        b: "Binding",
+        chat_id: int,
+        thread_id: int | None,
+    ) -> Any:
+        text = render_panel_text(
+            b,
+            frontend_default=self.group_only_when_mentioned,
+        )
+        return await self._tg_call(
+            lambda: self.bot.send_message(
+                chat_id,
+                text,
+                message_thread_id=thread_id,
+                reply_markup=build_telegram_panel_markup(b),
+            )
+        )
+
+    async def execute_panel_command(
+        self,
+        b: "Binding",
+        chat_id: int,
+        thread_id: int | None,
+        action: str,
+    ) -> None:
+        commands = {
+            "cmd_status": "/status",
+            "cmd_screen": "/screen",
+            "cmd_new": "/new",
+            "cmd_compact": "/compact",
+            "cmd_resume": "/resume",
+            "cmd_model": "/model",
+            "cmd_esc": "/esc",
+            "cmd_cc": "/cc",
+        }
+        command = commands.get(action)
+        if command is None:
+            raise ValueError(f"unknown panel action: {action}")
+        from tmuxbot.dispatch import dispatch_incoming_text
+
+        await dispatch_incoming_text(
+            self,
+            self.backend,
+            b,
+            self.state,
+            chat_id,
+            thread_id,
+            command,
+            bot_username=self._bot_username,
+        )
+
     # ────────── ACL ──────────
     def _acl_ok(self, m: Message) -> bool:
         """全局 ACL: from_user 在白名单 **且** source (chat_id, thread_id) 已配置 binding。
@@ -648,8 +756,15 @@ class TelegramFrontend(Frontend):
 
     def _message_allowed_by_mention(self, m: Message) -> bool:
         incoming = self.normalize_incoming(m)
+        if is_control_command(incoming.text):
+            return True
+        b = self.find_binding(*source_key(m))
+        required = effective_mention_required(
+            b,
+            self.group_only_when_mentioned,
+        ) if b is not None else self.group_only_when_mentioned
         return incoming_message_is_addressed(
-            incoming, require_addressing=self.group_only_when_mentioned
+            incoming, require_addressing=required
         )
 
     async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
@@ -744,6 +859,41 @@ class TelegramFrontend(Frontend):
                         log.debug(f"send_chat_action err: {e}")
                     S.last_active[b.name] = time.time()
             return await handler(event, data)
+
+        async def _panel_binding(m: Message) -> "Binding | None":
+            if S.setup_mode:
+                return None
+            if not m.from_user or m.from_user.id != S.boss_user_id:
+                return None
+            return F_.find_binding(*source_key(m))
+
+        @dp.message(Command("panel", "settings"))
+        async def cmd_panel(m: Message):
+            b = await _panel_binding(m)
+            if b is None:
+                return
+            await F_.send_control_panel(b, m.chat.id, thread_id_of(m))
+
+        @dp.message(Command("mention"))
+        async def cmd_mention(m: Message):
+            b = await _panel_binding(m)
+            if b is None:
+                return
+            parsed = parse_mention_command(m.text or "/mention")
+            if parsed == "invalid":
+                await m.reply(
+                    "用法: <code>/mention on|off|default|status</code>\n"
+                    "on = 无需 @；off = 必须 @；default = 继承部署默认。"
+                )
+                return
+            if parsed != "status":
+                await asyncio.to_thread(
+                    save_binding_mention_policy,
+                    F_.bindings_file,
+                    b,
+                    parsed,
+                )
+            await F_.send_control_panel(b, m.chat.id, thread_id_of(m))
 
         # ─── /whoami ─────────
         @dp.message(Command("whoami"))
@@ -1060,6 +1210,84 @@ class TelegramFrontend(Frontend):
                 incoming.source_id, incoming.thread_id, incoming.text,
                 bot_username=F_._bot_username,
             )
+
+        @dp.callback_query(F.data.startswith("panel:"))
+        async def on_panel_callback(cq: CallbackQuery):
+            if S.setup_mode:
+                await cq.answer("setup 中")
+                return
+            if not cq.from_user or cq.from_user.id != S.boss_user_id:
+                await cq.answer("无权限", show_alert=True)
+                return
+            if cq.message is None:
+                await cq.answer("面板消息不存在", show_alert=True)
+                return
+            thread_id = getattr(cq.message, "message_thread_id", None)
+            source_binding = F_.find_binding(cq.message.chat.id, thread_id)
+            parts = (cq.data or "").split(":", 2)
+            if len(parts) != 3 or source_binding is None:
+                await cq.answer("面板已失效", show_alert=True)
+                return
+            _, token, action = parts
+            b = binding_by_token(F_.bindings, token)
+            if b is None or b is not source_binding:
+                await cq.answer("面板与会话不匹配", show_alert=True)
+                return
+
+            if action in {"mention_on", "mention_off", "mention_default"}:
+                value = {
+                    "mention_on": False,
+                    "mention_off": True,
+                    "mention_default": None,
+                }[action]
+                await asyncio.to_thread(
+                    save_binding_mention_policy,
+                    F_.bindings_file,
+                    b,
+                    value,
+                )
+                await cq.message.edit_text(
+                    render_panel_text(
+                        b,
+                        frontend_default=F_.group_only_when_mentioned,
+                    ),
+                    reply_markup=build_telegram_panel_markup(b),
+                )
+                await cq.answer("@ 策略已更新")
+                return
+            if action == "confirm_new":
+                await cq.message.edit_reply_markup(
+                    reply_markup=build_telegram_panel_markup(b, confirm_new=True)
+                )
+                await cq.answer("请再次确认")
+                return
+            if action == "refresh":
+                await cq.message.edit_text(
+                    render_panel_text(
+                        b,
+                        frontend_default=F_.group_only_when_mentioned,
+                    ),
+                    reply_markup=build_telegram_panel_markup(b),
+                )
+                await cq.answer("已刷新")
+                return
+            if action == "close":
+                try:
+                    await cq.message.delete()
+                finally:
+                    await cq.answer("面板已关闭")
+                return
+            try:
+                await F_.execute_panel_command(
+                    b,
+                    cq.message.chat.id,
+                    thread_id,
+                    action,
+                )
+            except ValueError:
+                await cq.answer("未知面板操作", show_alert=True)
+                return
+            await cq.answer("命令已发送到 tmux")
 
         # ─── picker callback ─────────
         @dp.callback_query(F.data.startswith("picker:"))

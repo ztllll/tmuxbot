@@ -42,13 +42,14 @@ def parse_mention_command(text: str) -> bool | None | str:
 
 
 def effective_mention_required(binding: Binding, frontend_default: bool) -> bool:
-    if binding.mention_required is None:
+    override = getattr(binding, "mention_required", None)
+    if override is None:
         return frontend_default
-    return binding.mention_required
+    return bool(override)
 
 
 def mention_policy_source(binding: Binding) -> str:
-    return "部署默认" if binding.mention_required is None else "binding 覆盖"
+    return "部署默认" if getattr(binding, "mention_required", None) is None else "binding 覆盖"
 
 
 def render_panel_text(

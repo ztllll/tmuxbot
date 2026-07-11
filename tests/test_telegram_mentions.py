@@ -77,3 +77,18 @@ def test_telegram_acl_allows_private_chat_without_mention_when_required():
     frontend._bot_id = 100
 
     assert frontend._acl_ok(_msg("hello", chat_type="private"))
+
+
+def test_telegram_acl_allows_panel_control_without_mention_when_required():
+    frontend = object.__new__(TelegramFrontend)
+    frontend.state = SimpleNamespace(setup_mode=False, boss_user_id=42)
+    frontend.bindings = [
+        SimpleNamespace(chat_id=-100, thread_id=None, mention_required=True)
+    ]
+    frontend.group_only_when_mentioned = True
+    frontend._bot_username = "tmuxbot"
+    frontend._bot_id = 100
+
+    assert frontend._acl_ok(_msg("/panel"))
+    assert frontend._acl_ok(_msg("/mention on"))
+    assert not frontend._acl_ok(_msg("/status"))
