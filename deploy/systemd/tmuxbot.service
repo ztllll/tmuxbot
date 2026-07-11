@@ -11,27 +11,25 @@
 # 重启:    systemctl --user restart tmuxbot
 # 停:      systemctl --user stop tmuxbot
 #
-# 这个 unit 默认假设项目在 ~/claude-project/tmuxbot
-# 如果项目在别处, 改 WorkingDirectory + ExecStart 两行的路径
+# 推荐通过 `tmuxbot install-service --now` 安装；本文件可手工复制。
 
 [Unit]
-Description=tmuxbot — Telegram ↔ tmux AI CLI bridge
+Description=tmuxbot WebUI and tmux bridge supervisor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/claude-project/tmuxbot
-ExecStart=/usr/bin/python3 tmuxbot.py
+EnvironmentFile=-%h/.config/tmuxbot/.env
+ExecStart=%h/.local/bin/tmuxbot serve
 Restart=always
 RestartSec=5s
-StandardOutput=append:%h/claude-project/tmuxbot/data/tmuxbot.log
-StandardError=append:%h/claude-project/tmuxbot/data/tmuxbot.log
+StandardOutput=journal
+StandardError=journal
 # 资源上限 — 多 backend / 多 binding 后可适当调高
 MemoryHigh=2G
 MemoryMax=4G
-# bot 自身死了 5s 后拉起 (Restart=always),
-# 但底层 claude TUI / tmux pane 自行管理,这里只管 bot 进程
+# 服务退出时 tmux session 保持存活。
 
 [Install]
 WantedBy=default.target

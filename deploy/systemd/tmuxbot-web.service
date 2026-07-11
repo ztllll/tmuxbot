@@ -11,8 +11,7 @@
 # 重启:    systemctl --user restart tmuxbot-web
 # 停:      systemctl --user stop tmuxbot-web
 #
-# 这个 unit 默认假设项目在 ~/claude-project/tmuxbot。
-# 如果项目在别处,改 WorkingDirectory、EnvironmentFile 和 ExecStart 的路径。
+# 兼容模式：仅启动 Web；新部署请使用 tmuxbot.service。
 
 [Unit]
 Description=tmuxbot Web control plane
@@ -20,9 +19,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/claude-project/tmuxbot
-EnvironmentFile=%h/claude-project/tmuxbot/.env
-ExecStart=%h/claude-project/tmuxbot/.venv/bin/tmuxbot web
+EnvironmentFile=-%h/.config/tmuxbot/.env
+ExecStart=%h/.local/bin/tmuxbot web
 Restart=on-failure
 RestartSec=3
 

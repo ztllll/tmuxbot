@@ -317,6 +317,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser = subparsers.add_parser("doctor", help="check local runtime readiness")
     doctor_parser.add_argument("--json", action="store_true", dest="as_json")
+    service_parser = subparsers.add_parser(
+        "install-service", help="install a systemd user service"
+    )
+    service_parser.add_argument("--now", action="store_true", dest="start_now")
     parser.set_defaults(command="bridge")
     return parser
 
@@ -342,6 +346,12 @@ def run(argv: list[str] | None = None) -> None:
         report = run_doctor(paths, os.environ)
         print(render_report(report, as_json=args.as_json))
         raise SystemExit(report.exit_code)
+    if args.command == "install-service":
+        from tmuxbot.service_install import install_service
+
+        unit = install_service(start_now=args.start_now)
+        print(f"已安装: {unit}")
+        return
     asyncio.run(main())
 
 

@@ -1463,6 +1463,13 @@ dev = [
 feishu = [
     { name = "lark-oapi" },
 ]
+full = [
+    { name = "fastapi" },
+    { name = "itsdangerous" },
+    { name = "lark-oapi" },
+    { name = "pwdlib", extra = ["argon2"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
 web = [
     { name = "fastapi" },
     { name = "itsdangerous" },
@@ -1473,10 +1480,14 @@ web = [
 [package.metadata]
 requires-dist = [
     { name = "aiogram", specifier = ">=3.13" },
+    { name = "fastapi", marker = "extra == 'full'", specifier = ">=0.116,<1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.116,<1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<1" },
+    { name = "itsdangerous", marker = "extra == 'full'", specifier = ">=2.2,<3" },
     { name = "itsdangerous", marker = "extra == 'web'", specifier = ">=2.2,<3" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = ">=1.4" },
+    { name = "lark-oapi", marker = "extra == 'full'", specifier = ">=1.4" },
+    { name = "pwdlib", extras = ["argon2"], marker = "extra == 'full'", specifier = ">=0.2,<1" },
     { name = "pwdlib", extras = ["argon2"], marker = "extra == 'web'", specifier = ">=0.2,<1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -1484,9 +1495,10 @@ requires-dist = [
     { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'full'", specifier = ">=0.35,<1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.35,<1" },
 ]
-provides-extras = ["web", "feishu", "dev"]
+provides-extras = ["web", "feishu", "full", "dev"]
 
 [[package]]
 name = "tomli"
