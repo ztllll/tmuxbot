@@ -18,11 +18,13 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
+from tmuxbot.control_plane.models import ProviderProfile
 from tmuxbot.control_plane.tmux_inventory import (
     TmuxInventory,
     TmuxInventoryError,
     classify_inventory,
 )
+from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
 from tmuxbot.state import Binding
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import PasswordRequest
@@ -44,6 +46,7 @@ def create_app(
     *,
     setup_grant: SetupGrant | None = None,
     bridge_status: Callable[[], Mapping[str, object]] | None = None,
+    provider_discovery: ProviderDiscovery | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -59,6 +62,7 @@ def create_app(
     auth = AuthService(repository, session_ttl_seconds=settings.session_ttl_seconds)
     app.state.setup_grant = setup_grant
     app.state.bridge_status = bridge_status
+    app.state.provider_discovery = provider_discovery or ProviderDiscovery()
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
@@ -274,6 +278,69 @@ def create_app(
             }
             for event in repository.list_events(after_sequence=after, limit=limit)
         ]
+
+    def serialize_provider(profile: ProviderProfile) -> dict[str, object]:
+        return {
+            "id": profile.id,
+            "binary_name": profile.binary_name,
+            "executable_path": profile.executable_path,
+            "version": profile.version,
+            "device": profile.device,
+            "inode": profile.inode,
+            "mtime_ns": profile.mtime_ns,
+            "discovered_at": profile.discovered_at,
+        }
+
+    @app.get("/api/providers")
+    def providers(
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        return [
+            serialize_provider(profile)
+            for profile in repository.list_provider_profiles()
+        ]
+
+    @app.post("/api/providers/scan")
+    def scan_providers(
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> list[dict[str, object]]:
+        stored = [
+            repository.upsert_provider_profile(candidate)
+            for candidate in app.state.provider_discovery.scan()
+        ]
+        return [serialize_provider(profile) for profile in stored]
+
+    @app.post("/api/providers/{provider_id}/probe")
+    def probe_provider(
+        provider_id: str,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        profile = repository.get_provider_profile(provider_id)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="provider not found")
+        try:
+            result = app.state.provider_discovery.probe(profile)
+        except ProviderDiscoveryError as exc:
+            if exc.code == "identity_changed":
+                raise HTTPException(
+                    status_code=409,
+                    detail="provider executable changed; rescan required",
+                ) from exc
+            raise HTTPException(status_code=400, detail="provider probe rejected") from exc
+        repository.record_probe_result(result)
+        if result.success:
+            repository.update_provider_version(profile.id, result.version)
+        return {
+            "id": result.id,
+            "provider_id": result.provider_id,
+            "success": result.success,
+            "version": result.version,
+            "error_code": result.error_code,
+            "exit_code": result.exit_code,
+            "duration_ms": result.duration_ms,
+            "output_truncated": result.output_truncated,
+            "observed_at": result.observed_at,
+        }
 
     @app.get("/api/system/status")
     def system_status(

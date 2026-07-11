@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import closing
@@ -10,7 +11,13 @@ from threading import Barrier, Event
 import pytest
 
 from tmuxbot.control_plane import repository as repository_module
-from tmuxbot.control_plane.models import RunEvent
+from tmuxbot.control_plane.models import (
+    ManagedSession,
+    ProjectRecord,
+    ProviderProfile,
+    ProviderProbeResult,
+    RunEvent,
+)
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 
 
@@ -372,7 +379,9 @@ def test_repository_migrates_repeatedly_and_appends_event_idempotently(tmp_path)
     }
     assert stored[0].occurred_at == event.occurred_at
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone() == (1,)
+        assert db.execute("SELECT COUNT(*) FROM schema_migrations").fetchone() == (
+            len(repository_module.MIGRATIONS),
+        )
 
 
 def test_repository_lists_events_after_sequence_in_sequence_order(tmp_path):
@@ -425,6 +434,198 @@ def test_repository_sets_setting_if_absent_atomically(tmp_path):
     assert sorted(results) == [False, True]
     assert first.get_setting("auth.cookie_key") in {"first", "second"}
     assert first.get_setting("auth.cookie_key") == second.get_setting("auth.cookie_key")
+
+
+def test_repository_upgrades_v1_database_with_provider_control_plane_tables(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    with sqlite3.connect(path) as db:
+        version_one_sql = repository_module.MIGRATIONS[0][1]
+        for statement in repository_module._migration_statements(version_one_sql):
+            db.execute(statement)
+        db.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+        )
+        db.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1)"
+        )
+
+    ControlPlaneRepository(path).migrate()
+
+    with sqlite3.connect(path) as db:
+        versions = db.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        tables = {
+            row[0]
+            for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert versions == [(1,), (2,)]
+    assert {
+        "provider_profiles",
+        "projects",
+        "managed_sessions",
+        "probe_results",
+    } <= tables
+
+
+def test_repository_provider_project_session_and_probe_crud(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    provider = ProviderProfile(
+        id="provider-codex",
+        binary_name="codex",
+        executable_path="/opt/bin/codex",
+        version=None,
+        device=8,
+        inode=101,
+        mtime_ns=202,
+        discovered_at=1_700_000_000,
+    )
+    project = ProjectRecord(
+        id="project-alpha",
+        name="Alpha",
+        root_path="/srv/alpha",
+        device=8,
+        inode=303,
+        mtime_ns=404,
+        created_at=1_700_000_001,
+    )
+    session = ManagedSession(
+        id="session-alpha-codex",
+        project_id=project.id,
+        provider_id=provider.id,
+        name="Codex 审核",
+        tmux_session="tmuxbot-alpha-codex",
+        tmux_window=0,
+        tmux_pane=0,
+        status="ready",
+        created_at=1_700_000_002,
+    )
+    probe = ProviderProbeResult(
+        id="probe-one",
+        provider_id=provider.id,
+        success=True,
+        version="codex 1.2.3",
+        error_code=None,
+        exit_code=0,
+        duration_ms=25,
+        output_truncated=False,
+        observed_at=1_700_000_003,
+    )
+
+    assert repo.upsert_provider_profile(provider) == provider
+    repo.update_provider_version(provider.id, "codex 1.2.3")
+    repo.create_project(project)
+    repo.create_managed_session(session)
+    repo.record_probe_result(probe)
+
+    [stored_provider] = repo.list_provider_profiles()
+    assert stored_provider.version == "codex 1.2.3"
+    assert repo.get_provider_profile(provider.id) == stored_provider
+    assert repo.list_projects() == [project]
+    assert repo.list_managed_sessions() == [session]
+    assert repo.list_probe_results(provider.id) == [probe]
+
+    renamed_project = replace(project, name="Alpha Renamed", mtime_ns=405)
+    renamed_session = replace(session, name="Codex Reviewer", status="stopped")
+    assert repo.update_project(renamed_project) is True
+    assert repo.update_managed_session(renamed_session) is True
+    assert repo.get_project(project.id) == renamed_project
+    assert repo.get_managed_session(session.id) == renamed_session
+
+    assert repo.delete_managed_session(session.id) is True
+    assert repo.delete_project(project.id) is True
+    assert repo.delete_provider_profile(provider.id) is True
+    assert repo.get_managed_session(session.id) is None
+    assert repo.get_project(project.id) is None
+    assert repo.get_provider_profile(provider.id) is None
+    assert repo.list_probe_results(provider.id) == []
+
+
+def test_repository_enforces_provider_and_path_uniqueness(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    first = ProviderProfile(
+        id="provider-one",
+        binary_name="claude",
+        executable_path="/opt/bin/claude",
+        version=None,
+        device=1,
+        inode=2,
+        mtime_ns=3,
+        discovered_at=4,
+    )
+    repo.upsert_provider_profile(first)
+
+    duplicate = ProviderProfile(
+        id="provider-two",
+        binary_name="claude",
+        executable_path="/opt/bin/claude",
+        version=None,
+        device=1,
+        inode=2,
+        mtime_ns=3,
+        discovered_at=5,
+    )
+
+    assert repo.upsert_provider_profile(duplicate).id == first.id
+    assert len(repo.list_provider_profiles()) == 1
+
+
+def test_provider_rescan_preserves_version_only_for_unchanged_identity(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    original = ProviderProfile(
+        id="provider-one",
+        binary_name="codex",
+        executable_path="/opt/bin/codex",
+        version="codex 1",
+        device=1,
+        inode=2,
+        mtime_ns=3,
+        discovered_at=4,
+    )
+    repo.upsert_provider_profile(original)
+    unchanged_scan = ProviderProfile(
+        id="new-id-ignored",
+        binary_name="codex",
+        executable_path="/opt/bin/codex",
+        version=None,
+        device=1,
+        inode=2,
+        mtime_ns=3,
+        discovered_at=5,
+    )
+
+    assert repo.upsert_provider_profile(unchanged_scan).version == "codex 1"
+
+    changed_scan = ProviderProfile(
+        id="another-id-ignored",
+        binary_name="codex",
+        executable_path="/opt/bin/codex",
+        version=None,
+        device=1,
+        inode=99,
+        mtime_ns=100,
+        discovered_at=6,
+    )
+    assert repo.upsert_provider_profile(changed_scan).version is None
+
+
+def test_provider_records_do_not_store_probe_output_or_secret_fields(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+
+    with sqlite3.connect(repo.path) as db:
+        provider_columns = {
+            row[1] for row in db.execute("PRAGMA table_info(provider_profiles)")
+        }
+        probe_columns = {row[1] for row in db.execute("PRAGMA table_info(probe_results)")}
+
+    forbidden = {"token", "secret", "password", "stdout", "stderr", "command", "argv"}
+    assert provider_columns.isdisjoint(forbidden)
+    assert probe_columns.isdisjoint(forbidden)
 
 
 def test_repository_rolls_back_failed_migration_and_can_retry(tmp_path, monkeypatch):

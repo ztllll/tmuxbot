@@ -13,7 +13,13 @@ from datetime import datetime
 from pathlib import Path
 
 from tmuxbot.control_plane.migrations import MIGRATIONS
-from tmuxbot.control_plane.models import RunEvent
+from tmuxbot.control_plane.models import (
+    ManagedSession,
+    ProjectRecord,
+    ProviderProfile,
+    ProviderProbeResult,
+    RunEvent,
+)
 
 log = logging.getLogger(__name__)
 
@@ -223,6 +229,257 @@ class ControlPlaneRepository:
     def delete_session(self, token_hash: str) -> None:
         with self._connection() as db:
             db.execute("DELETE FROM web_sessions WHERE token_hash = ?", (token_hash,))
+
+    def upsert_provider_profile(self, profile: ProviderProfile) -> ProviderProfile:
+        with self._connection() as db:
+            existing = db.execute(
+                "SELECT id FROM provider_profiles "
+                "WHERE binary_name = ? AND executable_path = ?",
+                (profile.binary_name, profile.executable_path),
+            ).fetchone()
+            provider_id = profile.id if existing is None else str(existing["id"])
+            db.execute(
+                "INSERT INTO provider_profiles "
+                "(id, binary_name, executable_path, version, device, inode, mtime_ns, discovered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(binary_name, executable_path) DO UPDATE SET "
+                "version=CASE WHEN provider_profiles.device=excluded.device "
+                "AND provider_profiles.inode=excluded.inode "
+                "AND provider_profiles.mtime_ns=excluded.mtime_ns "
+                "THEN COALESCE(excluded.version, provider_profiles.version) "
+                "ELSE excluded.version END, "
+                "device=excluded.device, inode=excluded.inode, "
+                "mtime_ns=excluded.mtime_ns, discovered_at=excluded.discovered_at",
+                (
+                    provider_id,
+                    profile.binary_name,
+                    profile.executable_path,
+                    profile.version,
+                    profile.device,
+                    profile.inode,
+                    profile.mtime_ns,
+                    profile.discovered_at,
+                ),
+            )
+        stored = self.get_provider_profile(provider_id)
+        assert stored is not None
+        return stored
+
+    def update_provider_version(self, provider_id: str, version: str | None) -> None:
+        with self._connection() as db:
+            db.execute(
+                "UPDATE provider_profiles SET version = ? WHERE id = ?",
+                (version, provider_id),
+            )
+
+    def get_provider_profile(self, provider_id: str) -> ProviderProfile | None:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM provider_profiles WHERE id = ?", (provider_id,)
+            ).fetchone()
+        return None if row is None else _provider_profile(row)
+
+    def list_provider_profiles(self) -> list[ProviderProfile]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM provider_profiles ORDER BY binary_name, executable_path"
+            ).fetchall()
+        return [_provider_profile(row) for row in rows]
+
+    def delete_provider_profile(self, provider_id: str) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "DELETE FROM provider_profiles WHERE id = ?", (provider_id,)
+            )
+            return cursor.rowcount == 1
+
+    def create_project(self, project: ProjectRecord) -> None:
+        with self._connection() as db:
+            db.execute(
+                "INSERT INTO projects "
+                "(id, name, root_path, device, inode, mtime_ns, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    project.id,
+                    project.name,
+                    project.root_path,
+                    project.device,
+                    project.inode,
+                    project.mtime_ns,
+                    project.created_at,
+                ),
+            )
+
+    def list_projects(self) -> list[ProjectRecord]:
+        with self._connection() as db:
+            rows = db.execute("SELECT * FROM projects ORDER BY created_at, id").fetchall()
+        return [_project_record(row) for row in rows]
+
+    def get_project(self, project_id: str) -> ProjectRecord | None:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+        return None if row is None else _project_record(row)
+
+    def update_project(self, project: ProjectRecord) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "UPDATE projects SET name = ?, root_path = ?, device = ?, inode = ?, "
+                "mtime_ns = ? WHERE id = ?",
+                (
+                    project.name,
+                    project.root_path,
+                    project.device,
+                    project.inode,
+                    project.mtime_ns,
+                    project.id,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def delete_project(self, project_id: str) -> bool:
+        with self._connection() as db:
+            cursor = db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+            return cursor.rowcount == 1
+
+    def create_managed_session(self, session: ManagedSession) -> None:
+        with self._connection() as db:
+            db.execute(
+                "INSERT INTO managed_sessions "
+                "(id, project_id, provider_id, name, tmux_session, tmux_window, "
+                "tmux_pane, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session.id,
+                    session.project_id,
+                    session.provider_id,
+                    session.name,
+                    session.tmux_session,
+                    session.tmux_window,
+                    session.tmux_pane,
+                    session.status,
+                    session.created_at,
+                ),
+            )
+
+    def list_managed_sessions(self) -> list[ManagedSession]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM managed_sessions ORDER BY created_at, id"
+            ).fetchall()
+        return [_managed_session(row) for row in rows]
+
+    def get_managed_session(self, session_id: str) -> ManagedSession | None:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM managed_sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        return None if row is None else _managed_session(row)
+
+    def update_managed_session(self, session: ManagedSession) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "UPDATE managed_sessions SET project_id = ?, provider_id = ?, name = ?, "
+                "tmux_session = ?, tmux_window = ?, tmux_pane = ?, status = ? WHERE id = ?",
+                (
+                    session.project_id,
+                    session.provider_id,
+                    session.name,
+                    session.tmux_session,
+                    session.tmux_window,
+                    session.tmux_pane,
+                    session.status,
+                    session.id,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def delete_managed_session(self, session_id: str) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "DELETE FROM managed_sessions WHERE id = ?", (session_id,)
+            )
+            return cursor.rowcount == 1
+
+    def record_probe_result(self, result: ProviderProbeResult) -> None:
+        with self._connection() as db:
+            db.execute(
+                "INSERT INTO probe_results "
+                "(id, provider_id, success, version, error_code, exit_code, duration_ms, "
+                "output_truncated, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    result.id,
+                    result.provider_id,
+                    int(result.success),
+                    result.version,
+                    result.error_code,
+                    result.exit_code,
+                    result.duration_ms,
+                    int(result.output_truncated),
+                    result.observed_at,
+                ),
+            )
+
+    def list_probe_results(self, provider_id: str) -> list[ProviderProbeResult]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM probe_results WHERE provider_id = ? "
+                "ORDER BY observed_at, id",
+                (provider_id,),
+            ).fetchall()
+        return [
+            ProviderProbeResult(
+                id=row["id"],
+                provider_id=row["provider_id"],
+                success=bool(row["success"]),
+                version=row["version"],
+                error_code=row["error_code"],
+                exit_code=row["exit_code"],
+                duration_ms=row["duration_ms"],
+                output_truncated=bool(row["output_truncated"]),
+                observed_at=row["observed_at"],
+            )
+            for row in rows
+        ]
+
+
+def _provider_profile(row: sqlite3.Row) -> ProviderProfile:
+    return ProviderProfile(
+        id=row["id"],
+        binary_name=row["binary_name"],
+        executable_path=row["executable_path"],
+        version=row["version"],
+        device=row["device"],
+        inode=row["inode"],
+        mtime_ns=row["mtime_ns"],
+        discovered_at=row["discovered_at"],
+    )
+
+
+def _project_record(row: sqlite3.Row) -> ProjectRecord:
+    return ProjectRecord(
+        id=row["id"],
+        name=row["name"],
+        root_path=row["root_path"],
+        device=row["device"],
+        inode=row["inode"],
+        mtime_ns=row["mtime_ns"],
+        created_at=row["created_at"],
+    )
+
+
+def _managed_session(row: sqlite3.Row) -> ManagedSession:
+    return ManagedSession(
+        id=row["id"],
+        project_id=row["project_id"],
+        provider_id=row["provider_id"],
+        name=row["name"],
+        tmux_session=row["tmux_session"],
+        tmux_window=row["tmux_window"],
+        tmux_pane=row["tmux_pane"],
+        status=row["status"],
+        created_at=row["created_at"],
+    )
 
 
 def _secure_data_directory(path: Path) -> None:
