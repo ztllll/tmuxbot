@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from tmuxbot.runtime.tmux_runtime import TmuxRuntime
 
 
@@ -28,21 +30,50 @@ class FakeTmux:
         self.operations.append(f"key:{key}")
 
 
-async def no_sleep(_delay: float) -> None:
-    await asyncio.sleep(0)
+def runtime_for(fake: FakeTmux, *, post_paste_delay: float = 0.5) -> TmuxRuntime:
+    async def record_sleep(delay: float) -> None:
+        fake.operations.append(f"sleep:{delay}")
+        await asyncio.sleep(0)
 
-
-def runtime_for(fake: FakeTmux) -> TmuxRuntime:
     return TmuxRuntime(
         capture_func=fake.capture,
         pane_command_func=fake.pane_command,
         paste_func=fake.paste,
         send_key_func=fake.send_key,
         busy_detector=lambda pane: pane == "busy",
-        sleep_func=no_sleep,
+        sleep_func=record_sleep,
         poll_interval=0.01,
         wait_timeout=1.0,
+        post_paste_delay=post_paste_delay,
     )
+
+
+def test_paste_settles_before_enter():
+    fake = FakeTmux()
+
+    asyncio.run(runtime_for(fake).send_text("pane", "line one\nline two"))
+
+    assert fake.operations == [
+        "inspect",
+        "paste:line one\nline two",
+        "sleep:0.5",
+        "key:Enter",
+    ]
+
+
+def test_without_enter_skips_settle_delay_and_key():
+    fake = FakeTmux()
+
+    asyncio.run(runtime_for(fake).send_text("pane", "draft", with_enter=False))
+
+    assert fake.operations == ["inspect", "paste:draft"]
+
+
+def test_negative_post_paste_delay_is_rejected():
+    fake = FakeTmux()
+
+    with pytest.raises(ValueError, match="post_paste_delay must be non-negative"):
+        runtime_for(fake, post_paste_delay=-0.1)
 
 
 def test_busy_pane_waits_before_paste():
@@ -53,9 +84,12 @@ def test_busy_pane_waits_before_paste():
 
     assert fake.operations == [
         "inspect",
+        "sleep:0.01",
         "inspect",
+        "sleep:0.01",
         "inspect",
         "paste:hello",
+        "sleep:0.5",
         "key:Enter",
     ]
 
@@ -77,12 +111,15 @@ def test_concurrent_messages_are_serialized():
     assert fake.operations == [
         "inspect",
         "paste:one",
+        "sleep:0.5",
         "key:Enter",
         "inspect",
         "paste:two",
+        "sleep:0.5",
         "key:Enter",
         "inspect",
         "paste:three",
+        "sleep:0.5",
         "key:Enter",
     ]
 

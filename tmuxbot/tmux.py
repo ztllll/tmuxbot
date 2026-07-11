@@ -14,6 +14,7 @@ from tmuxbot.runtime.tmux_runtime import TmuxRuntime
 TMUX = "tmux"
 IDLE_WAIT_MAX = 300.0
 IDLE_POLL_INTERVAL = 0.25
+POST_PASTE_DELAY = 0.5
 
 # claude / codex TUI busy 状态行 = 动词 + **括号包裹**的时间字段 (进行中标记):
 #   claude:  "✶ Doing… (4m 4s · ↓ 14.3k tokens)"   "Cooking up… (12s)"
@@ -109,4 +110,5 @@ _RUNTIME = TmuxRuntime(
     busy_detector=_is_tui_busy,
     poll_interval=IDLE_POLL_INTERVAL,
     wait_timeout=IDLE_WAIT_MAX,
+    post_paste_delay=POST_PASTE_DELAY,
 )

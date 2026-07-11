@@ -23,7 +23,10 @@ class TmuxRuntime:
         poll_interval: float = 0.25,
         wait_timeout: float = 300.0,
         capture_lines: int = 15,
+        post_paste_delay: float = 0.5,
     ) -> None:
+        if post_paste_delay < 0:
+            raise ValueError("post_paste_delay must be non-negative")
         self._capture = capture_func
         self._pane_command = pane_command_func
         self._paste = paste_func
@@ -33,6 +36,7 @@ class TmuxRuntime:
         self.poll_interval = poll_interval
         self.wait_timeout = wait_timeout
         self.capture_lines = capture_lines
+        self.post_paste_delay = post_paste_delay
         self._input_locks: dict[str, asyncio.Lock] = {}
 
     async def send_text(
@@ -54,6 +58,8 @@ class TmuxRuntime:
                     )
             await self._paste(target, text)
             if with_enter:
+                if self.post_paste_delay:
+                    await self._sleep(self.post_paste_delay)
                 self._send_key(target, "Enter")
 
     async def safe_launch(
