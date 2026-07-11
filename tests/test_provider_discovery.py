@@ -62,6 +62,28 @@ def test_probe_uses_exact_argv_without_shell_and_returns_version(tmp_path):
 
     assert result.success is True
     assert result.version == "codex 3.4.5"
+
+
+def test_tmux_probe_uses_native_version_flag(tmp_path):
+    executable = _executable(
+        tmp_path / "tmux", "test \"$1\" = -V || exit 9\nprintf 'tmux 3.4\n'\n"
+    )
+    info = executable.stat()
+    provider = ProviderProfile(
+        id="provider-tmux",
+        binary_name="tmux",
+        executable_path=str(executable),
+        version=None,
+        device=info.st_dev,
+        inode=info.st_ino,
+        mtime_ns=info.st_mtime_ns,
+        discovered_at=1,
+    )
+
+    result = ProviderDiscovery().probe(provider)
+
+    assert result.success is True
+    assert result.version == "tmux 3.4"
     assert result.exit_code == 0
     assert result.error_code is None
 

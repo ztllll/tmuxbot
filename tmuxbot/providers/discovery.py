@@ -64,8 +64,9 @@ class ProviderDiscovery:
     def probe(self, provider: ProviderProfile) -> ProviderProbeResult:
         self._verify_identity(provider)
         started = time.monotonic()
+        version_flag = "-V" if provider.binary_name == "tmux" else "--version"
         stdout, _stderr, exit_code, truncated, timed_out, unavailable = _run_bounded(
-            [provider.executable_path, "--version"],
+            [provider.executable_path, version_flag],
             timeout_seconds=self.timeout_seconds,
         )
         self._verify_identity(provider)
