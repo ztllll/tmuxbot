@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,7 +8,7 @@ from itsdangerous import TimestampSigner
 
 from tmuxbot.control_plane.models import RunEvent, TmuxPaneRecord
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.control_plane.tmux_inventory import TmuxInventoryError
+from tmuxbot.control_plane.tmux_inventory import TmuxInventory, TmuxInventoryError
 from tmuxbot.state import Binding
 from tmuxbot.web.app import BOOTSTRAP_COOKIE_NAME, COOKIE_NAME, create_app
 from tmuxbot.web.auth import AuthError, AuthService
@@ -694,3 +695,21 @@ def test_tmux_inventory_failure_returns_fixed_sanitized_503(tmp_path):
     assert response.status_code == 503
     assert response.json() == {"detail": "tmux inventory unavailable"}
     assert "/secret" not in response.text
+
+
+def test_real_tmux_inventory_no_server_returns_200_empty_list(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "tmuxbot.control_plane.tmux_inventory.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=b"",
+            stderr=b"no server running on /tmp/tmux-1000/default\n",
+        ),
+    )
+    client, _, _ = _client(tmp_path, inventory=TmuxInventory())
+    _setup(client)
+
+    response = client.get("/api/tmux/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == []

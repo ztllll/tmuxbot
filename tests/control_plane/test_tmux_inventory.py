@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,23 +11,18 @@ from tmuxbot.control_plane.models import (
     TmuxPaneRecord,
 )
 from tmuxbot.control_plane.tmux_inventory import (
-    TMUX_FIELD_SEPARATOR,
-    TMUX_FORMAT,
     TmuxInventory,
     TmuxInventoryError,
     classify_inventory,
-    parse_tmux_rows,
 )
 from tmuxbot.state import Binding
 
 
-def test_tmux_inventory_parses_exact_fields_and_classifies_without_mutation():
-    separator = TMUX_FIELD_SEPARATOR
-    rows = (
-        f"alpha{separator}0{separator}1{separator}python{separator}/repo{separator}4321\n"
-        f"other{separator}2{separator}0{separator}bash{separator}/tmp{separator}99\n"
-    )
-    panes = parse_tmux_rows(rows)
+def test_tmux_inventory_classifies_exact_fields_without_mutation():
+    panes = [
+        TmuxPaneRecord("alpha:0.1", "alpha", 0, 1, "python", "/repo", 4321),
+        TmuxPaneRecord("other:2.0", "other", 2, 0, "bash", "/tmp", 99),
+    ]
     binding = Binding(
         name="codex-main",
         chat_id=1,
@@ -132,74 +128,205 @@ def test_session_inventory_metadata_is_defensively_copied_and_read_only():
         item.metadata["source"] = "changed"  # type: ignore[index]
 
 
-@pytest.mark.parametrize(
-    ("timeout_seconds", "expected_timeout"), [(None, 3.0), (1.25, 1.25)]
-)
-def test_tmux_inventory_uses_only_read_only_list_panes_command_with_timeout(
-    monkeypatch, timeout_seconds, expected_timeout
-):
-    calls = []
+class FakeRunner:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return SimpleNamespace(
-            returncode=0,
-            stdout=TMUX_FIELD_SEPARATOR.join(
-                ["alpha", "0", "1", "python", "/repo", "4321"]
-            )
-            + "\n",
-            stderr="",
-        )
+    def __call__(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
-    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", fake_run)
 
-    inventory = (
-        TmuxInventory()
-        if timeout_seconds is None
-        else TmuxInventory(timeout_seconds=timeout_seconds)
-    )
-    panes = inventory.list_panes()
+def completed(returncode=0, stdout=b"", stderr=b""):
+    return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
-    assert panes[0].target == "alpha:0.1"
-    assert calls == [
-        (
-            ["tmux", "list-panes", "-a", "-F", TMUX_FORMAT],
-            {
-                "capture_output": True,
-                "text": True,
-                "check": False,
-                "timeout": expected_timeout,
-            },
-        )
+
+def one_pane_responses(*, cwd=b"/repo", command=b"python"):
+    return [
+        completed(stdout=b"%7\n"),
+        completed(stdout=b"alpha\n"),
+        completed(stdout=b"0\n"),
+        completed(stdout=b"1\n"),
+        completed(stdout=command + b"\n"),
+        completed(stdout=cwd + b"\n"),
+        completed(stdout=b"4321\n"),
     ]
+
+
+def test_tmux_inventory_uses_only_deadline_bound_read_only_byte_commands(monkeypatch):
+    runner = FakeRunner(one_pane_responses())
+    clock_values = iter([10.0, 10.0, 10.2, 10.4, 10.6, 10.8, 11.0, 11.2])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+    monkeypatch.setattr(
+        "tmuxbot.control_plane.tmux_inventory.time.monotonic",
+        lambda: next(clock_values),
+    )
+
+    panes = TmuxInventory().list_panes()
+
+    assert panes == [
+        TmuxPaneRecord("alpha:0.1", "alpha", 0, 1, "python", "/repo", 4321)
+    ]
+    assert [call[0] for call in runner.calls] == [
+        ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+        ["tmux", "display-message", "-t", "%7", "-p", "#{session_name}"],
+        ["tmux", "display-message", "-t", "%7", "-p", "#{window_index}"],
+        ["tmux", "display-message", "-t", "%7", "-p", "#{pane_index}"],
+        [
+            "tmux",
+            "display-message",
+            "-t",
+            "%7",
+            "-p",
+            "#{pane_current_command}",
+        ],
+        [
+            "tmux",
+            "display-message",
+            "-t",
+            "%7",
+            "-p",
+            "#{pane_current_path}",
+        ],
+        ["tmux", "display-message", "-t", "%7", "-p", "#{pane_pid}"],
+    ]
+    assert [call[1]["timeout"] for call in runner.calls] == pytest.approx(
+        [3.0, 2.8, 2.6, 2.4, 2.2, 2.0, 1.8]
+    )
+    assert [
+        {key: value for key, value in call[1].items() if key != "timeout"}
+        for call in runner.calls
+    ] == [
+        {"capture_output": True, "text": False, "check": False}
+        for _ in runner.calls
+    ]
+
+
+def test_tmux_inventory_uses_configured_total_timeout(monkeypatch):
+    runner = FakeRunner(
+        [
+            completed(
+                returncode=1,
+                stderr=b"no server running on /tmp/tmux-1000/default\n",
+            )
+        ]
+    )
+    clock_values = iter([5.0, 5.0])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+    monkeypatch.setattr(
+        "tmuxbot.control_plane.tmux_inventory.time.monotonic",
+        lambda: next(clock_values),
+    )
+
+    assert TmuxInventory(timeout_seconds=1.25).list_panes() == []
+    assert runner.calls[0][1]["timeout"] == 1.25
+
+
+def test_tmux_inventory_preserves_newline_tab_old_separator_and_non_utf8_bytes(
+    monkeypatch,
+):
+    raw_cwd = b"/repo\nwith\told-separator-\x1f-and-byte-\xff"
+    runner = FakeRunner(one_pane_responses(cwd=raw_cwd, command=b"python\tworker"))
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    panes = TmuxInventory().list_panes()
+
+    assert len(panes) == 1
+    assert panes[0].command == "python\tworker"
+    assert panes[0].cwd == os.fsdecode(raw_cwd)
+
+
+def test_tmux_inventory_enforces_one_total_deadline(monkeypatch):
+    runner = FakeRunner(one_pane_responses())
+    clock_values = iter([0.0, 0.0, 1.0, 2.0, 3.1])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+    monkeypatch.setattr(
+        "tmuxbot.control_plane.tmux_inventory.time.monotonic",
+        lambda: next(clock_values),
+    )
+
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory(timeout_seconds=3.0).list_panes()
+
+    assert raised.value.code == "timeout"
+    assert raised.value.detail == "tmux inventory command timed out"
+    assert len(runner.calls) == 3
+
+
+def test_tmux_inventory_returns_empty_for_exact_standard_no_server(monkeypatch):
+    runner = FakeRunner(
+        [
+            completed(
+                returncode=1,
+                stderr=b"no server running on /tmp/tmux-1000/default\n",
+            )
+        ]
+    )
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    assert TmuxInventory().list_panes() == []
 
 
 @pytest.mark.parametrize(
     "stderr",
     [
-        "no server running on /tmp/tmux-1000/default",
-        "can't find server",
-        "no tmux server found",
+        b"prefix: no server running on /tmp/tmux-1000/default\n",
+        b"no server running on /tmp/tmux-1000/default: socket error\n",
+        b"no server running on /tmp/tmux-1000/default extra text\n",
+        b"NO SERVER RUNNING ON /tmp/tmux-1000/default\n",
+        b"no server running on \n",
+        b"can't find server\n",
+        b"no tmux server found\n",
+        b"no server running on /tmp/tmux.sock\npermission denied\n",
+        b"no server running on /tmp/tmux.sock\nauthentication failed\n",
     ],
 )
-def test_tmux_inventory_returns_empty_only_for_explicit_no_server(monkeypatch, stderr):
-    monkeypatch.setattr(
-        "tmuxbot.control_plane.tmux_inventory.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=1, stdout="", stderr=stderr
-        ),
-    )
+def test_tmux_inventory_rejects_similar_but_nonstandard_no_server_text(
+    monkeypatch, stderr
+):
+    runner = FakeRunner([completed(returncode=1, stderr=stderr)])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
 
-    assert TmuxInventory().list_panes() == []
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory().list_panes()
+
+    assert raised.value.code in {"permission", "command_failed"}
+
+
+def test_tmux_inventory_rejects_malformed_pane_ids(monkeypatch):
+    runner = FakeRunner([completed(stdout=b"%7\nnot-a-pane\n")])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory().list_panes()
+
+    assert raised.value.code == "command_failed"
+    assert raised.value.detail == "tmux inventory output was malformed"
+
+
+def test_tmux_inventory_reports_pane_disappearing_during_field_read(monkeypatch):
+    runner = FakeRunner(
+        [
+            completed(stdout=b"%7\n"),
+            completed(returncode=1, stderr=b"can't find pane: %7\n"),
+        ]
+    )
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory().list_panes()
+
+    assert raised.value.code == "changed"
+    assert raised.value.detail == "tmux pane changed during inventory"
 
 
 def test_tmux_inventory_reports_missing_binary_without_leaking_path(monkeypatch):
-    def missing_binary(*args, **kwargs):
-        raise FileNotFoundError(2, "not found", "/secret/bin/tmux")
-
-    monkeypatch.setattr(
-        "tmuxbot.control_plane.tmux_inventory.subprocess.run", missing_binary
-    )
+    runner = FakeRunner([FileNotFoundError(2, "not found", "/secret/bin/tmux")])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
 
     with pytest.raises(TmuxInventoryError) as raised:
         TmuxInventory().list_panes()
@@ -210,12 +337,16 @@ def test_tmux_inventory_reports_missing_binary_without_leaking_path(monkeypatch)
 
 
 def test_tmux_inventory_reports_timeout_without_leaking_command_output(monkeypatch):
-    def times_out(*args, **kwargs):
-        raise subprocess.TimeoutExpired(
-            cmd=["tmux", "list-panes"], timeout=0.25, stderr="/secret/socket"
-        )
-
-    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", times_out)
+    runner = FakeRunner(
+        [
+            subprocess.TimeoutExpired(
+                cmd=["tmux", "list-panes"],
+                timeout=0.25,
+                stderr=b"/secret/socket",
+            )
+        ]
+    )
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
 
     with pytest.raises(TmuxInventoryError) as raised:
         TmuxInventory(timeout_seconds=0.25).list_panes()
@@ -229,32 +360,27 @@ def test_tmux_inventory_reports_timeout_without_leaking_command_output(monkeypat
     ("failure", "expected_code", "expected_detail"),
     [
         (
-            SimpleNamespace(
+            completed(
                 returncode=1,
-                stdout="",
-                stderr=(
-                    "no server running on /secret/tmux.sock: Permission denied"
-                ),
+                stderr=b"no server running on /secret/tmux.sock: Permission denied\n",
             ),
             "permission",
             "tmux inventory access was denied",
         ),
         (
-            SimpleNamespace(
-                returncode=2, stdout="", stderr="unexpected /secret/socket failure"
+            completed(
+                returncode=2, stderr=b"unexpected /secret/socket failure\n"
             ),
             "command_failed",
-            "tmux inventory command failed with exit status 2",
+            "tmux inventory command failed",
         ),
     ],
 )
 def test_tmux_inventory_sanitizes_nonzero_command_errors(
     monkeypatch, failure, expected_code, expected_detail
 ):
-    monkeypatch.setattr(
-        "tmuxbot.control_plane.tmux_inventory.subprocess.run",
-        lambda *args, **kwargs: failure,
-    )
+    runner = FakeRunner([failure])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
 
     with pytest.raises(TmuxInventoryError) as raised:
         TmuxInventory().list_panes()
@@ -264,66 +390,30 @@ def test_tmux_inventory_sanitizes_nonzero_command_errors(
     assert "/secret" not in str(raised.value)
 
 
-def test_tmux_inventory_reports_permission_error_from_process_launch(monkeypatch):
-    def denied(*args, **kwargs):
-        raise PermissionError(13, "denied", "/secret/bin/tmux")
-
-    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", denied)
-
-    with pytest.raises(TmuxInventoryError) as raised:
-        TmuxInventory().list_panes()
-
-    assert raised.value.code == "permission"
-    assert raised.value.detail == "tmux inventory access was denied"
-    assert "/secret" not in str(raised.value)
-
-
-def test_tmux_inventory_parses_cwd_containing_tab():
-    separator = TMUX_FIELD_SEPARATOR
-
-    panes = parse_tmux_rows(
-        separator.join(["alpha", "0", "1", "python", "/repo\twork", "4321"])
-    )
-
-    assert panes[0].cwd == "/repo\twork"
-
-
-def test_tmux_inventory_rejects_embedded_newline_as_sanitized_command_failure(
-    monkeypatch,
-):
-    separator = TMUX_FIELD_SEPARATOR
-    output = separator.join(
-        ["alpha", "0", "1", "python", "/repo\nwork", "4321"]
-    )
-    monkeypatch.setattr(
-        "tmuxbot.control_plane.tmux_inventory.subprocess.run",
-        lambda *args, **kwargs: SimpleNamespace(
-            returncode=0, stdout=output, stderr=""
-        ),
-    )
-
-    with pytest.raises(TmuxInventoryError) as raised:
-        TmuxInventory().list_panes()
-
-    assert raised.value.code == "command_failed"
-    assert raised.value.detail == "tmux inventory output was malformed"
-
-
 @pytest.mark.parametrize(
-    "row",
+    ("failure", "expected_code", "expected_detail"),
     [
-        TMUX_FIELD_SEPARATOR.join(["alpha", "0", "1", "python", "/repo"]),
-        TMUX_FIELD_SEPARATOR.join(
-            ["alpha", "window", "1", "python", "/repo", "4321"]
+        (
+            PermissionError(13, "denied", "/secret/bin/tmux"),
+            "permission",
+            "tmux inventory access was denied",
         ),
-        TMUX_FIELD_SEPARATOR.join(
-            ["alpha", "0", "pane", "python", "/repo", "4321"]
-        ),
-        TMUX_FIELD_SEPARATOR.join(
-            ["alpha", "0", "1", "python", "/repo", "pid"]
+        (
+            OSError(5, "I/O error", "/secret/bin/tmux"),
+            "unavailable",
+            "tmux inventory command is unavailable",
         ),
     ],
 )
-def test_parse_tmux_rows_rejects_malformed_rows(row):
-    with pytest.raises(ValueError, match="malformed tmux row 1"):
-        parse_tmux_rows(row)
+def test_tmux_inventory_sanitizes_process_launch_errors(
+    monkeypatch, failure, expected_code, expected_detail
+):
+    runner = FakeRunner([failure])
+    monkeypatch.setattr("tmuxbot.control_plane.tmux_inventory.subprocess.run", runner)
+
+    with pytest.raises(TmuxInventoryError) as raised:
+        TmuxInventory().list_panes()
+
+    assert raised.value.code == expected_code
+    assert raised.value.detail == expected_detail
+    assert "/secret" not in str(raised.value)
