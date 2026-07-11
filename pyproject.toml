@@ -20,12 +20,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+web = [
+    "fastapi>=0.116,<1",
+    "uvicorn[standard]>=0.35,<1",
+    "pwdlib[argon2]>=0.2,<1",
+    "itsdangerous>=2.2,<3",
+]
 feishu = [
     "lark-oapi>=1.4",
 ]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "httpx>=0.28,<1",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
