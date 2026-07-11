@@ -460,7 +460,7 @@ def test_repository_upgrades_v1_database_with_provider_control_plane_tables(tmp_
             row[0]
             for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert versions == [(1,), (2,)]
+    assert versions == [(version,) for version, _sql in repository_module.MIGRATIONS]
     assert {
         "provider_profiles",
         "projects",

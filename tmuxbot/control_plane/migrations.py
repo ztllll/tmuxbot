@@ -78,4 +78,88 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON managed_sessions(project_id, created_at);
         """,
     ),
+    (
+        3,
+        """
+        CREATE TABLE team_runs (
+            run_id TEXT PRIMARY KEY,
+            goal TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (
+                state IN ('draft', 'running', 'paused', 'completed', 'failed',
+                          'operator_required', 'stopped')
+            ),
+            max_retries INTEGER NOT NULL CHECK (max_retries >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE team_agents (
+            agent_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            role TEXT NOT NULL CHECK (role IN ('coordinator', 'implementer', 'reviewer')),
+            managed_session_id TEXT NOT NULL,
+            UNIQUE(run_id, role),
+            UNIQUE(run_id, managed_session_id)
+        );
+        CREATE TABLE team_tasks (
+            task_id TEXT NOT NULL,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            goal TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('coordinator', 'implementer', 'reviewer')),
+            state TEXT NOT NULL CHECK (
+                state IN ('pending', 'ready', 'assigned', 'working', 'review',
+                          'accepted', 'blocked', 'failed', 'retrying', 'operator_required')
+            ),
+            dependencies_json TEXT NOT NULL,
+            requires_write INTEGER NOT NULL CHECK (requires_write IN (0, 1)),
+            max_attempts INTEGER NOT NULL CHECK (max_attempts >= 1),
+            attempt INTEGER NOT NULL CHECK (attempt >= 0),
+            assignee_agent_id TEXT REFERENCES team_agents(agent_id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id, task_id)
+        );
+        CREATE INDEX team_tasks_run_state_idx ON team_tasks(run_id, state);
+        CREATE TABLE mailbox_messages (
+            message_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            task_id TEXT,
+            sender_agent_id TEXT REFERENCES team_agents(agent_id),
+            recipient_agent_id TEXT REFERENCES team_agents(agent_id),
+            kind TEXT NOT NULL,
+            body_json TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            delivered_at TEXT,
+            UNIQUE(run_id, idempotency_key),
+            FOREIGN KEY(run_id, task_id) REFERENCES team_tasks(run_id, task_id)
+                ON DELETE CASCADE
+        );
+        CREATE TABLE artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL,
+            producer_agent_id TEXT NOT NULL REFERENCES team_agents(agent_id),
+            kind TEXT NOT NULL,
+            uri TEXT NOT NULL,
+            metadata_json TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, idempotency_key),
+            FOREIGN KEY(run_id, task_id) REFERENCES team_tasks(run_id, task_id)
+                ON DELETE CASCADE
+        );
+        CREATE TABLE write_leases (
+            lease_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL,
+            acquired_at TEXT NOT NULL,
+            released_at TEXT,
+            FOREIGN KEY(run_id, task_id) REFERENCES team_tasks(run_id, task_id)
+                ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX write_leases_one_active_per_run
+            ON write_leases(run_id) WHERE released_at IS NULL;
+        """,
+    ),
 )

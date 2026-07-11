@@ -20,6 +20,19 @@ from tmuxbot.control_plane.models import (
     ProviderProbeResult,
     RunEvent,
 )
+from tmuxbot.teamrun.domain import (
+    AgentRole,
+    MailboxMessage,
+    TeamArtifact,
+    TeamAgent,
+    TeamRun,
+    TeamRunSnapshot,
+    TeamRunState,
+    TeamTask,
+    TeamTaskState,
+    WriteLease,
+    validate_task_graph,
+)
 
 log = logging.getLogger(__name__)
 
@@ -229,6 +242,740 @@ class ControlPlaneRepository:
     def delete_session(self, token_hash: str) -> None:
         with self._connection() as db:
             db.execute("DELETE FROM web_sessions WHERE token_hash = ?", (token_hash,))
+
+    def create_team_run(
+        self,
+        run: TeamRun,
+        agents: list[TeamAgent],
+        tasks: list[TeamTask],
+        *,
+        event_id: str,
+    ) -> bool:
+        validate_task_graph(tasks)
+        if any(agent.run_id != run.run_id for agent in agents):
+            raise ValueError("all agents must belong to the run")
+        if any(task.run_id != run.run_id for task in tasks):
+            raise ValueError("all tasks must belong to the run")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return False
+            db.execute(
+                "INSERT INTO team_runs(run_id, goal, state, max_retries, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    run.run_id,
+                    run.goal,
+                    run.state.value,
+                    run.max_retries,
+                    run.created_at.isoformat(),
+                    run.updated_at.isoformat(),
+                ),
+            )
+            for agent in agents:
+                db.execute(
+                    "INSERT INTO team_agents(agent_id, run_id, role, managed_session_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    (agent.agent_id, agent.run_id, agent.role.value, agent.managed_session_id),
+                )
+            for task in tasks:
+                db.execute(
+                    "INSERT INTO team_tasks("
+                    "task_id, run_id, title, goal, role, state, dependencies_json, "
+                    "requires_write, max_attempts, attempt, assignee_agent_id, "
+                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        task.task_id,
+                        task.run_id,
+                        task.title,
+                        task.goal,
+                        task.role.value,
+                        task.state.value,
+                        json.dumps(list(task.dependencies)),
+                        int(task.requires_write),
+                        task.max_attempts,
+                        task.attempt,
+                        task.assignee_agent_id,
+                        task.created_at.isoformat(),
+                        task.updated_at.isoformat(),
+                    ),
+                )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamrun.created",
+                    aggregate_type="team_run",
+                    aggregate_id=run.run_id,
+                    payload={"goal": run.goal, "task_count": len(tasks)},
+                    occurred_at=run.created_at,
+                ),
+            )
+            return True
+
+    def get_team_run(self, run_id: str) -> TeamRunSnapshot:
+        with self._connection() as db:
+            run_row = db.execute(
+                "SELECT * FROM team_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run_row is None:
+                raise KeyError(run_id)
+            agent_rows = db.execute(
+                "SELECT * FROM team_agents WHERE run_id = ? "
+                "ORDER BY CASE role WHEN 'coordinator' THEN 1 WHEN 'implementer' THEN 2 ELSE 3 END",
+                (run_id,),
+            ).fetchall()
+            task_rows = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? ORDER BY created_at, rowid",
+                (run_id,),
+            ).fetchall()
+        return TeamRunSnapshot(
+            run=_run_from_row(run_row),
+            agents=tuple(_agent_from_row(row) for row in agent_rows),
+            tasks=tuple(_task_from_row(row) for row in task_rows),
+        )
+
+    def acquire_write_lease(
+        self, lease_id: str, run_id: str, task_id: str, *, now: datetime
+    ) -> bool:
+        with self._connection() as db:
+            try:
+                db.execute(
+                    "INSERT INTO write_leases(lease_id, run_id, task_id, acquired_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (lease_id, run_id, task_id, now.isoformat()),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "write_leases.run_id" in str(exc):
+                    return False
+                raise
+            return True
+
+    def release_write_lease(self, run_id: str, task_id: str, *, now: datetime) -> None:
+        with self._connection() as db:
+            db.execute(
+                "UPDATE write_leases SET released_at = ? "
+                "WHERE run_id = ? AND task_id = ? AND released_at IS NULL",
+                (now.isoformat(), run_id, task_id),
+            )
+
+    def get_active_write_lease(self, run_id: str) -> WriteLease | None:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM write_leases WHERE run_id = ? AND released_at IS NULL",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else _lease_from_row(row)
+
+    def list_mailbox(self, run_id: str) -> list[MailboxMessage]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM mailbox_messages WHERE run_id = ? ORDER BY created_at, rowid",
+                (run_id,),
+            ).fetchall()
+        return [_message_from_row(row) for row in rows]
+
+    def mark_mailbox_delivered(
+        self, run_id: str, idempotency_key: str, *, now: datetime
+    ) -> None:
+        with self._connection() as db:
+            db.execute(
+                "UPDATE mailbox_messages SET delivered_at = COALESCE(delivered_at, ?) "
+                "WHERE run_id = ? AND idempotency_key = ?",
+                (now.isoformat(), run_id, idempotency_key),
+            )
+
+    def list_artifacts(self, run_id: str, task_id: str | None = None) -> list[TeamArtifact]:
+        query = "SELECT * FROM artifacts WHERE run_id = ?"
+        params: tuple[object, ...] = (run_id,)
+        if task_id is not None:
+            query += " AND task_id = ?"
+            params += (task_id,)
+        query += " ORDER BY created_at, rowid"
+        with self._connection() as db:
+            rows = db.execute(query, params).fetchall()
+        return [_artifact_from_row(row) for row in rows]
+
+    def set_team_run_state(
+        self,
+        run_id: str,
+        *,
+        allowed: set[TeamRunState],
+        state: TeamRunState,
+        event_id: str,
+        now: datetime,
+        payload: dict[str, object] | None = None,
+    ) -> TeamRunState:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT state FROM team_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return TeamRunState(row["state"])
+            current = TeamRunState(row["state"])
+            if current not in allowed:
+                raise ValueError(f"cannot transition run from {current.value} to {state.value}")
+            db.execute(
+                "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                (state.value, now.isoformat(), run_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type=f"teamrun.{state.value}",
+                    aggregate_type="team_run",
+                    aggregate_id=run_id,
+                    payload=payload or {},
+                    occurred_at=now,
+                ),
+            )
+            return state
+
+    def refresh_task_readiness(self, run_id: str, *, now: datetime) -> list[TeamTask]:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? ORDER BY created_at, rowid",
+                (run_id,),
+            ).fetchall()
+            accepted = {
+                row["task_id"] for row in rows if row["state"] == TeamTaskState.ACCEPTED.value
+            }
+            changed: list[TeamTask] = []
+            for row in rows:
+                if row["state"] not in {
+                    TeamTaskState.PENDING.value,
+                    TeamTaskState.RETRYING.value,
+                }:
+                    continue
+                dependencies = tuple(json.loads(row["dependencies_json"]))
+                if not set(dependencies).issubset(accepted):
+                    continue
+                db.execute(
+                    "UPDATE team_tasks SET state = ?, updated_at = ? "
+                    "WHERE run_id = ? AND task_id = ?",
+                    (
+                        TeamTaskState.READY.value,
+                        now.isoformat(),
+                        run_id,
+                        row["task_id"],
+                    ),
+                )
+                event_id = f"teamrun:{run_id}:task:{row['task_id']}:ready:{row['attempt']}"
+                _append_event_db(
+                    db,
+                    RunEvent(
+                        event_id=event_id,
+                        event_type="teamtask.ready",
+                        aggregate_type="team_task",
+                        aggregate_id=row["task_id"],
+                        payload={"run_id": run_id, "dependencies": list(dependencies)},
+                        occurred_at=now,
+                    ),
+                )
+                changed_row = db.execute(
+                    "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                    (run_id, row["task_id"]),
+                ).fetchone()
+                changed.append(_task_from_row(changed_row))
+            return changed
+
+    def list_ready_tasks(self, run_id: str) -> list[TeamTask]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND state = ? "
+                "ORDER BY created_at, rowid",
+                (run_id, TeamTaskState.READY.value),
+            ).fetchall()
+        return [_task_from_row(row) for row in rows]
+
+    def get_team_task(self, run_id: str, task_id: str) -> TeamTask:
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(task_id)
+        return _task_from_row(row)
+
+    def claim_team_task(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        event_id: str,
+        now: datetime,
+    ) -> tuple[TeamTask, TeamAgent] | None:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run_row = db.execute(
+                "SELECT state FROM team_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if run_row is None:
+                raise KeyError(run_id)
+            if run_row["state"] != TeamRunState.RUNNING.value:
+                return None
+            task_row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if task_row is None:
+                raise KeyError(task_id)
+            if task_row["state"] != TeamTaskState.READY.value:
+                return None
+            agent_row = db.execute(
+                "SELECT * FROM team_agents WHERE run_id = ? AND role = ?",
+                (run_id, task_row["role"]),
+            ).fetchone()
+            if agent_row is None:
+                raise ValueError(f"run has no agent for role {task_row['role']!r}")
+            next_attempt = int(task_row["attempt"]) + 1
+            if task_row["requires_write"]:
+                try:
+                    db.execute(
+                        "INSERT INTO write_leases(lease_id, run_id, task_id, acquired_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (
+                            f"lease:{run_id}:{task_id}:{next_attempt}",
+                            run_id,
+                            task_id,
+                            now.isoformat(),
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    if "write_leases.run_id" in str(exc):
+                        return None
+                    raise
+            db.execute(
+                "UPDATE team_tasks SET state = ?, assignee_agent_id = ?, attempt = ?, "
+                "updated_at = ? WHERE run_id = ? AND task_id = ?",
+                (
+                    TeamTaskState.ASSIGNED.value,
+                    agent_row["agent_id"],
+                    next_attempt,
+                    now.isoformat(),
+                    run_id,
+                    task_id,
+                ),
+            )
+            dependencies = json.loads(task_row["dependencies_json"])
+            envelope = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "goal": task_row["goal"],
+                "constraints": [
+                    "shared-directory single writer",
+                    "publish evidence before review",
+                ],
+                "dependencies": dependencies,
+                "attempt": next_attempt,
+            }
+            db.execute(
+                "INSERT INTO mailbox_messages("
+                "message_id, run_id, task_id, sender_agent_id, recipient_agent_id, kind, "
+                "body_json, idempotency_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"message:{event_id}",
+                    run_id,
+                    task_id,
+                    None,
+                    agent_row["agent_id"],
+                    "task_dispatch",
+                    json.dumps(envelope, ensure_ascii=False, sort_keys=True),
+                    event_id,
+                    now.isoformat(),
+                ),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamtask.assigned",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={"run_id": run_id, "agent_id": agent_row["agent_id"]},
+                    occurred_at=now,
+                ),
+            )
+            updated = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            return _task_from_row(updated), _agent_from_row(agent_row)
+
+    def mark_team_task_working(
+        self, run_id: str, task_id: str, *, event_id: str, now: datetime
+    ) -> TeamTask:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if row["state"] == TeamTaskState.WORKING.value:
+                return _task_from_row(row)
+            if row["state"] != TeamTaskState.ASSIGNED.value:
+                raise ValueError("task is not assigned")
+            db.execute(
+                "UPDATE team_tasks SET state = ?, updated_at = ? "
+                "WHERE run_id = ? AND task_id = ?",
+                (TeamTaskState.WORKING.value, now.isoformat(), run_id, task_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamtask.working",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={"run_id": run_id},
+                    occurred_at=now,
+                ),
+            )
+        return self.get_team_task(run_id, task_id)
+
+    def complete_team_task(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        agent_id: str,
+        artifacts: list[tuple[str, str, dict[str, object]]],
+        idempotency_key: str,
+        now: datetime,
+    ) -> TeamTask:
+        if not artifacts:
+            raise ValueError("task completion requires evidence artifacts")
+        event_id = f"teamrun:{run_id}:complete:{idempotency_key}"
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return _task_from_row(row)
+            if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
+                raise ValueError("only the assigned working agent can complete the task")
+            for index, (kind, uri, metadata) in enumerate(artifacts):
+                db.execute(
+                    "INSERT INTO artifacts(artifact_id, run_id, task_id, producer_agent_id, "
+                    "kind, uri, metadata_json, idempotency_key, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        f"artifact:{run_id}:{idempotency_key}:{index}",
+                        run_id,
+                        task_id,
+                        agent_id,
+                        kind,
+                        uri,
+                        json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                        f"{idempotency_key}:{index}",
+                        now.isoformat(),
+                    ),
+                )
+            reviewer = db.execute(
+                "SELECT agent_id FROM team_agents WHERE run_id = ? AND role = ?",
+                (run_id, AgentRole.REVIEWER.value),
+            ).fetchone()
+            if reviewer is None:
+                raise ValueError("run has no independent reviewer")
+            db.execute(
+                "UPDATE team_tasks SET state = ?, updated_at = ? "
+                "WHERE run_id = ? AND task_id = ?",
+                (TeamTaskState.REVIEW.value, now.isoformat(), run_id, task_id),
+            )
+            db.execute(
+                "UPDATE write_leases SET released_at = ? WHERE run_id = ? AND task_id = ? "
+                "AND released_at IS NULL",
+                (now.isoformat(), run_id, task_id),
+            )
+            db.execute(
+                "INSERT INTO mailbox_messages(message_id, run_id, task_id, sender_agent_id, "
+                "recipient_agent_id, kind, body_json, idempotency_key, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"message:review:{event_id}",
+                    run_id,
+                    task_id,
+                    agent_id,
+                    reviewer["agent_id"],
+                    "review_requested",
+                    json.dumps(
+                        {"artifact_count": len(artifacts), "attempt": row["attempt"]},
+                        sort_keys=True,
+                    ),
+                    f"review:{idempotency_key}",
+                    now.isoformat(),
+                ),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamtask.review_requested",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={"run_id": run_id, "artifact_count": len(artifacts)},
+                    occurred_at=now,
+                ),
+            )
+        return self.get_team_task(run_id, task_id)
+
+    def review_team_task(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        reviewer_agent_id: str,
+        verdict: str,
+        notes: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TeamTask:
+        if verdict not in {"approved", "rejected"}:
+            raise ValueError("verdict must be approved or rejected")
+        event_id = f"teamrun:{run_id}:review:{idempotency_key}"
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return _task_from_row(row)
+            reviewer = db.execute(
+                "SELECT role FROM team_agents WHERE run_id = ? AND agent_id = ?",
+                (run_id, reviewer_agent_id),
+            ).fetchone()
+            if (
+                reviewer is None
+                or reviewer["role"] != AgentRole.REVIEWER.value
+                or reviewer_agent_id == row["assignee_agent_id"]
+            ):
+                raise ValueError("task acceptance requires an independent reviewer")
+            if row["state"] != TeamTaskState.REVIEW.value:
+                raise ValueError("task is not awaiting review")
+            if verdict == "approved":
+                next_state = TeamTaskState.ACCEPTED
+            elif int(row["attempt"]) < int(row["max_attempts"]):
+                next_state = TeamTaskState.RETRYING
+            else:
+                next_state = TeamTaskState.OPERATOR_REQUIRED
+            db.execute(
+                "UPDATE team_tasks SET state = ?, updated_at = ? "
+                "WHERE run_id = ? AND task_id = ?",
+                (next_state.value, now.isoformat(), run_id, task_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type=f"teamtask.review_{verdict}",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={"run_id": run_id, "reviewer": reviewer_agent_id, "notes": notes},
+                    occurred_at=now,
+                ),
+            )
+            if next_state is TeamTaskState.OPERATOR_REQUIRED:
+                db.execute(
+                    "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                    (TeamRunState.OPERATOR_REQUIRED.value, now.isoformat(), run_id),
+                )
+            updated = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            return _task_from_row(updated)
+
+    def block_team_task(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        agent_id: str,
+        reason: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> TeamTask:
+        event_id = f"teamrun:{run_id}:blocked:{idempotency_key}"
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return _task_from_row(row)
+            if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
+                raise ValueError("only the assigned working agent can block the task")
+            db.execute(
+                "UPDATE team_tasks SET state = ?, updated_at = ? "
+                "WHERE run_id = ? AND task_id = ?",
+                (TeamTaskState.BLOCKED.value, now.isoformat(), run_id, task_id),
+            )
+            db.execute(
+                "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                (TeamRunState.OPERATOR_REQUIRED.value, now.isoformat(), run_id),
+            )
+            db.execute(
+                "UPDATE write_leases SET released_at = ? WHERE run_id = ? AND task_id = ? "
+                "AND released_at IS NULL",
+                (now.isoformat(), run_id, task_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamtask.blocked",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={"run_id": run_id, "agent_id": agent_id, "reason": reason},
+                    occurred_at=now,
+                ),
+            )
+            updated = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            return _task_from_row(updated)
+
+    def complete_run_if_accepted(self, run_id: str, *, now: datetime) -> bool:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT state FROM team_tasks WHERE run_id = ?", (run_id,)
+            ).fetchall()
+            if not rows or any(row["state"] != TeamTaskState.ACCEPTED.value for row in rows):
+                return False
+            db.execute(
+                "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                (TeamRunState.COMPLETED.value, now.isoformat(), run_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=f"teamrun:{run_id}:completed",
+                    event_type="teamrun.completed",
+                    aggregate_type="team_run",
+                    aggregate_id=run_id,
+                    payload={},
+                    occurred_at=now,
+                ),
+            )
+            return True
+
+    def stop_team_run(
+        self, run_id: str, *, reason: str, event_id: str, now: datetime
+    ) -> None:
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return
+            db.execute(
+                "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                (TeamRunState.STOPPED.value, now.isoformat(), run_id),
+            )
+            db.execute(
+                "UPDATE team_tasks SET state = ?, updated_at = ? WHERE run_id = ? "
+                "AND state IN (?, ?, ?)",
+                (
+                    TeamTaskState.BLOCKED.value,
+                    now.isoformat(),
+                    run_id,
+                    TeamTaskState.READY.value,
+                    TeamTaskState.ASSIGNED.value,
+                    TeamTaskState.WORKING.value,
+                ),
+            )
+            db.execute(
+                "UPDATE write_leases SET released_at = ? WHERE run_id = ? AND released_at IS NULL",
+                (now.isoformat(), run_id),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamrun.stopped",
+                    aggregate_type="team_run",
+                    aggregate_id=run_id,
+                    payload={"reason": reason},
+                    occurred_at=now,
+                ),
+            )
+
+    def list_team_runs(self) -> list[TeamRun]:
+        with self._connection() as db:
+            rows = db.execute("SELECT * FROM team_runs ORDER BY created_at, rowid").fetchall()
+        return [_run_from_row(row) for row in rows]
+
+    def reconcile_team_runs(self, *, now: datetime) -> list[str]:
+        operator_runs: list[str] = []
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            assigned = db.execute(
+                "SELECT run_id, task_id FROM team_tasks WHERE state = ?",
+                (TeamTaskState.ASSIGNED.value,),
+            ).fetchall()
+            for row in assigned:
+                db.execute(
+                    "UPDATE team_tasks SET state = ?, updated_at = ? "
+                    "WHERE run_id = ? AND task_id = ?",
+                    (
+                        TeamTaskState.OPERATOR_REQUIRED.value,
+                        now.isoformat(),
+                        row["run_id"],
+                        row["task_id"],
+                    ),
+                )
+                db.execute(
+                    "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
+                    (
+                        TeamRunState.OPERATOR_REQUIRED.value,
+                        now.isoformat(),
+                        row["run_id"],
+                    ),
+                )
+                _append_event_db(
+                    db,
+                    RunEvent(
+                        event_id=f"teamrun:{row['run_id']}:reconcile:{row['task_id']}",
+                        event_type="teamtask.dispatch_uncertain",
+                        aggregate_type="team_task",
+                        aggregate_id=row["task_id"],
+                        payload={"run_id": row["run_id"], "action": "operator_required"},
+                        occurred_at=now,
+                    ),
+                )
+                operator_runs.append(row["run_id"])
+        return operator_runs
+
 
     def upsert_provider_profile(self, profile: ProviderProfile) -> ProviderProfile:
         with self._connection() as db:
@@ -443,6 +1190,109 @@ class ControlPlaneRepository:
         ]
 
 
+
+def _run_from_row(row: sqlite3.Row) -> TeamRun:
+    return TeamRun(
+        run_id=row["run_id"],
+        goal=row["goal"],
+        state=TeamRunState(row["state"]),
+        max_retries=row["max_retries"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def _agent_from_row(row: sqlite3.Row) -> TeamAgent:
+    return TeamAgent(
+        agent_id=row["agent_id"],
+        run_id=row["run_id"],
+        role=AgentRole(row["role"]),
+        managed_session_id=row["managed_session_id"],
+    )
+
+
+def _task_from_row(row: sqlite3.Row) -> TeamTask:
+    return TeamTask(
+        task_id=row["task_id"],
+        run_id=row["run_id"],
+        title=row["title"],
+        goal=row["goal"],
+        role=AgentRole(row["role"]),
+        state=TeamTaskState(row["state"]),
+        dependencies=tuple(json.loads(row["dependencies_json"])),
+        requires_write=bool(row["requires_write"]),
+        max_attempts=row["max_attempts"],
+        attempt=row["attempt"],
+        assignee_agent_id=row["assignee_agent_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def _message_from_row(row: sqlite3.Row) -> MailboxMessage:
+    return MailboxMessage(
+        message_id=row["message_id"],
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        sender_agent_id=row["sender_agent_id"],
+        recipient_agent_id=row["recipient_agent_id"],
+        kind=row["kind"],
+        body=json.loads(row["body_json"]),
+        idempotency_key=row["idempotency_key"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        delivered_at=(
+            datetime.fromisoformat(row["delivered_at"])
+            if row["delivered_at"] is not None
+            else None
+        ),
+    )
+
+
+def _artifact_from_row(row: sqlite3.Row) -> TeamArtifact:
+    return TeamArtifact(
+        artifact_id=row["artifact_id"],
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        producer_agent_id=row["producer_agent_id"],
+        kind=row["kind"],
+        uri=row["uri"],
+        metadata=json.loads(row["metadata_json"]),
+        idempotency_key=row["idempotency_key"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _lease_from_row(row: sqlite3.Row) -> WriteLease:
+    return WriteLease(
+        lease_id=row["lease_id"],
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        acquired_at=datetime.fromisoformat(row["acquired_at"]),
+        released_at=(
+            datetime.fromisoformat(row["released_at"])
+            if row["released_at"] is not None
+            else None
+        ),
+    )
+
+
+def _append_event_db(db: sqlite3.Connection, event: RunEvent) -> bool:
+    cursor = db.execute(
+        "INSERT INTO run_events "
+        "(event_id, event_type, aggregate_type, aggregate_id, payload_json, occurred_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(event_id) DO NOTHING",
+        (
+            event.event_id,
+            event.event_type,
+            event.aggregate_type,
+            event.aggregate_id,
+            json.dumps(dict(event.payload), ensure_ascii=False, sort_keys=True),
+            event.occurred_at.isoformat(),
+        ),
+    )
+    return cursor.rowcount == 1
+
+
 def _provider_profile(row: sqlite3.Row) -> ProviderProfile:
     return ProviderProfile(
         id=row["id"],
@@ -480,6 +1330,7 @@ def _managed_session(row: sqlite3.Row) -> ManagedSession:
         status=row["status"],
         created_at=row["created_at"],
     )
+
 
 
 def _secure_data_directory(path: Path) -> None:
@@ -631,3 +1482,4 @@ def _is_sql_comment_only(sql: str) -> bool:
             continue
         return False
     return True
+

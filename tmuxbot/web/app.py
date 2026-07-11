@@ -46,12 +46,20 @@ from tmuxbot.control_plane.tmux_inventory import (
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
+from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask
+from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import (
     ManagedSessionCreateRequest,
     PasswordRequest,
     ProjectCreateRequest,
     ChannelConfigureRequest,
+    BlockTeamTaskRequest,
+    CompleteTeamTaskRequest,
+    CreateTeamRunRequest,
+    IdempotentCommandRequest,
+    ReviewTeamTaskRequest,
+    StopTeamRunRequest,
 )
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
@@ -81,6 +89,7 @@ def create_app(
     provider_discovery: ProviderDiscovery | None = None,
     terminal_service: TerminalService | None = None,
     runtime_paths: RuntimePaths | None = None,
+    teamrun_scheduler: TeamRunScheduler | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -99,6 +108,7 @@ def create_app(
     app.state.provider_discovery = provider_discovery or ProviderDiscovery()
     app.state.terminal_service = terminal_service
     app.state.runtime_paths = runtime_paths
+    app.state.teamrun_scheduler = teamrun_scheduler
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
@@ -839,6 +849,206 @@ def create_app(
                 finally:
                     await terminal.close()
 
+    def scheduler_service() -> TeamRunScheduler:
+        scheduler = app.state.teamrun_scheduler
+        if not isinstance(scheduler, TeamRunScheduler):
+            raise HTTPException(status_code=503, detail="teamrun scheduler unavailable")
+        return scheduler
+
+    def scheduler_call(operation):
+        try:
+            return operation()
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="team run or task not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/team-runs", status_code=status.HTTP_201_CREATED)
+    def create_team_run(
+        body: CreateTeamRunRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        roles = {AgentRole(item.role): item.managed_session_id for item in body.agents}
+        if len(roles) != len(body.agents):
+            raise HTTPException(status_code=409, detail="agent roles must be unique")
+        snapshot = scheduler_call(
+            lambda: scheduler_service().create_deterministic_run(
+                run_id=body.run_id,
+                goal=body.goal,
+                agents=roles,
+                tasks=[item.model_dump() for item in body.tasks],
+                idempotency_key=body.idempotency_key,
+            )
+        )
+        return _serialize_teamrun(snapshot)
+
+    @app.get("/api/team-runs/{run_id}")
+    def get_team_run(
+        run_id: str,
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> dict[str, object]:
+        snapshot = scheduler_call(
+            lambda: scheduler_service().repository.get_team_run(run_id)
+        )
+        return _serialize_teamrun(snapshot)
+
+    @app.get("/api/team-runs/{run_id}/mailbox")
+    def get_team_run_mailbox(
+        run_id: str,
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
+        return [
+            {
+                "message_id": message.message_id,
+                "task_id": message.task_id,
+                "sender_agent_id": message.sender_agent_id,
+                "recipient_agent_id": message.recipient_agent_id,
+                "kind": message.kind,
+                "body": dict(message.body),
+                "created_at": message.created_at.isoformat(),
+                "delivered_at": (
+                    message.delivered_at.isoformat() if message.delivered_at else None
+                ),
+            }
+            for message in scheduler_service().repository.list_mailbox(run_id)
+        ]
+
+    @app.get("/api/team-runs/{run_id}/artifacts")
+    def get_team_run_artifacts(
+        run_id: str,
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
+        return [
+            {
+                "artifact_id": artifact.artifact_id,
+                "task_id": artifact.task_id,
+                "producer_agent_id": artifact.producer_agent_id,
+                "kind": artifact.kind,
+                "uri": artifact.uri,
+                "metadata": dict(artifact.metadata),
+                "created_at": artifact.created_at.isoformat(),
+            }
+            for artifact in scheduler_service().repository.list_artifacts(run_id)
+        ]
+
+    @app.post("/api/team-runs/{run_id}/start")
+    def start_team_run(
+        run_id: str,
+        body: IdempotentCommandRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        return _serialize_teamrun(
+            scheduler_call(
+                lambda: scheduler_service().start(
+                    run_id, idempotency_key=body.idempotency_key
+                )
+            )
+        )
+
+    @app.post("/api/team-runs/{run_id}/pause")
+    def pause_team_run(
+        run_id: str,
+        body: IdempotentCommandRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        return _serialize_teamrun(
+            scheduler_call(
+                lambda: scheduler_service().pause(
+                    run_id, idempotency_key=body.idempotency_key
+                )
+            )
+        )
+
+    @app.post("/api/team-runs/{run_id}/resume")
+    def resume_team_run(
+        run_id: str,
+        body: IdempotentCommandRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        return _serialize_teamrun(
+            scheduler_call(
+                lambda: scheduler_service().resume(
+                    run_id, idempotency_key=body.idempotency_key
+                )
+            )
+        )
+
+    @app.post("/api/team-runs/{run_id}/stop")
+    def stop_team_run(
+        run_id: str,
+        body: StopTeamRunRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        return _serialize_teamrun(
+            scheduler_call(
+                lambda: scheduler_service().stop(
+                    run_id,
+                    reason=body.reason,
+                    idempotency_key=body.idempotency_key,
+                )
+            )
+        )
+
+    @app.post("/api/team-runs/{run_id}/tasks/{task_id}/complete")
+    def complete_team_task(
+        run_id: str,
+        task_id: str,
+        body: CompleteTeamTaskRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        task = scheduler_call(
+            lambda: scheduler_service().complete_task(
+                run_id,
+                task_id,
+                agent_id=body.agent_id,
+                artifacts=[
+                    ArtifactInput(item.kind, item.uri, item.metadata)
+                    for item in body.artifacts
+                ],
+                idempotency_key=body.idempotency_key,
+            )
+        )
+        return _serialize_team_task(task)
+
+    @app.post("/api/team-runs/{run_id}/tasks/{task_id}/review")
+    def review_team_task(
+        run_id: str,
+        task_id: str,
+        body: ReviewTeamTaskRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        task = scheduler_call(
+            lambda: scheduler_service().review_task(
+                run_id,
+                task_id,
+                reviewer_agent_id=body.reviewer_agent_id,
+                verdict=body.verdict,
+                notes=body.notes,
+                idempotency_key=body.idempotency_key,
+            )
+        )
+        return _serialize_team_task(task)
+
+    @app.post("/api/team-runs/{run_id}/tasks/{task_id}/blocked")
+    def block_team_task(
+        run_id: str,
+        task_id: str,
+        body: BlockTeamTaskRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        task = scheduler_call(
+            lambda: scheduler_service().block_task(
+                run_id,
+                task_id,
+                agent_id=body.agent_id,
+                reason=body.reason,
+                idempotency_key=body.idempotency_key,
+            )
+        )
+        return _serialize_team_task(task)
+
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
         if full_path in {"openapi.json", "docs", "redoc"} or full_path.startswith(
@@ -855,3 +1065,39 @@ def create_app(
         )
 
     return app
+
+
+def _serialize_team_task(task: TeamTask) -> dict[str, object]:
+    return {
+        "task_id": task.task_id,
+        "run_id": task.run_id,
+        "title": task.title,
+        "goal": task.goal,
+        "role": task.role.value,
+        "state": task.state.value,
+        "dependencies": list(task.dependencies),
+        "requires_write": task.requires_write,
+        "max_attempts": task.max_attempts,
+        "attempt": task.attempt,
+        "assignee_agent_id": task.assignee_agent_id,
+    }
+
+
+def _serialize_teamrun(snapshot: TeamRunSnapshot) -> dict[str, object]:
+    return {
+        "run": {
+            "run_id": snapshot.run.run_id,
+            "goal": snapshot.run.goal,
+            "state": snapshot.run.state.value,
+            "max_retries": snapshot.run.max_retries,
+        },
+        "agents": [
+            {
+                "agent_id": agent.agent_id,
+                "role": agent.role.value,
+                "managed_session_id": agent.managed_session_id,
+            }
+            for agent in snapshot.agents
+        ],
+        "tasks": [_serialize_team_task(task) for task in snapshot.tasks],
+    }
