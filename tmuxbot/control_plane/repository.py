@@ -24,6 +24,9 @@ class ControlPlaneRepository:
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
+    def _begin_migration(self, connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+
     def migrate(self) -> None:
         versions = [version for version, _sql in MIGRATIONS]
         if any(current <= previous for previous, current in zip(versions, versions[1:])):
@@ -32,7 +35,7 @@ class ControlPlaneRepository:
 
         db = self._connect()
         try:
-            db.execute("BEGIN IMMEDIATE")
+            self._begin_migration(db)
             db.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
@@ -152,5 +155,25 @@ def _migration_statements(sql: str) -> Iterator[str]:
             if statement:
                 yield statement
             buffer.clear()
-    if "".join(buffer).strip():
+    remainder = "".join(buffer).strip()
+    if remainder and not _is_sql_comment_only(remainder):
         raise ValueError("migration SQL must contain complete semicolon-terminated statements")
+
+
+def _is_sql_comment_only(sql: str) -> bool:
+    remainder = sql.lstrip()
+    while remainder:
+        if remainder.startswith("--"):
+            newline = remainder.find("\n")
+            if newline == -1:
+                return True
+            remainder = remainder[newline + 1 :].lstrip()
+            continue
+        if remainder.startswith("/*"):
+            comment_end = remainder.find("*/", 2)
+            if comment_end == -1:
+                return False
+            remainder = remainder[comment_end + 2 :].lstrip()
+            continue
+        return False
+    return True

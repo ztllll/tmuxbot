@@ -1,5 +1,5 @@
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier, Event
 
@@ -145,6 +145,7 @@ def test_repository_serializes_concurrent_migrations(tmp_path, monkeypatch):
     path = tmp_path / "control.sqlite3"
     migration_paused = Event()
     release_migration = Event()
+    second_begin_attempted = Event()
     monkeypatch.setattr(
         repository_module,
         "MIGRATIONS",
@@ -170,14 +171,20 @@ def test_repository_serializes_concurrent_migrations(tmp_path, monkeypatch):
             return connection
 
     first = PausingRepository(path)
-    second = PausingRepository(path)
+
+    class SignalingRepository(PausingRepository):
+        def _begin_migration(self, connection):
+            second_begin_attempted.set()
+            return super()._begin_migration(connection)
+
+    second = SignalingRepository(path)
     with ThreadPoolExecutor(max_workers=2) as pool:
         first_result = pool.submit(first.migrate)
         assert migration_paused.wait(timeout=5)
         second_result = pool.submit(second.migrate)
         try:
-            with pytest.raises(TimeoutError):
-                second_result.result(timeout=0.2)
+            assert second_begin_attempted.wait(timeout=5)
+            assert not second_result.done()
         finally:
             release_migration.set()
         first_result.result(timeout=5)
@@ -185,6 +192,22 @@ def test_repository_serializes_concurrent_migrations(tmp_path, monkeypatch):
 
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT version FROM schema_migrations").fetchall() == [(1,)]
+
+
+def test_repository_ignores_trailing_migration_comments(tmp_path, monkeypatch):
+    path = tmp_path / "control.sqlite3"
+    monkeypatch.setattr(
+        repository_module,
+        "MIGRATIONS",
+        ((1, "CREATE TABLE comment_tail(value TEXT); -- trailing migration comment"),),
+    )
+
+    ControlPlaneRepository(path).migrate()
+
+    with sqlite3.connect(path) as db:
+        assert db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'comment_tail'"
+        ).fetchone() == ("comment_tail",)
 
 
 def test_repository_upgrades_from_an_older_schema_version(tmp_path, monkeypatch):
