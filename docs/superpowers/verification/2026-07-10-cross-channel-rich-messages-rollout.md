@@ -38,9 +38,11 @@ Branch: `productization-prep`
 
 - Claude Feishu application: create-card, component content update, and final close all succeeded.
 - Enabled `FEISHU_STREAMING=1` only for the Claude Feishu application.
-- Codex Feishu application: CardKit correctly reported missing `cardkit:card:write`.
-- Kept `FEISHU_CODEX_STREAMING=0`; Codex continues using static Card JSON 2.0 without repeated permission failures.
-- Global streaming remains off, and Card JSON 2.0 remains explicitly enabled.
+- Codex Feishu application initially lacked `cardkit:card:write`; after the permission was
+  approved and published, create-card, component content update, and final close all succeeded.
+- Enabled `FEISHU_CODEX_STREAMING=1` after the live CardKit canary passed.
+- Global streaming remains off, while both Feishu applications use explicit per-app streaming
+  flags and Card JSON 2.0 remains explicitly enabled.
 
 ## Runtime boundary
 
