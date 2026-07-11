@@ -7,9 +7,9 @@ Make assistant replies render consistently across Codex and Claude while using t
 ## Scope
 
 - Introduce a channel-neutral reply document derived from the existing `ReplyEnvelope`.
-- Render that document as Telegram HTML plus inline keyboard actions.
-- Render it as a Feishu Card JSON 2.0 interactive card with header, summary, structured body, status note, and action buttons.
-- Add Feishu card-action callback handling for screen, status, cancel, and interrupt.
+- Render that document as clean Telegram HTML without persistent action buttons.
+- Render it as a Feishu Card JSON 2.0 card with header, summary, structured body, status color, and compact metadata.
+- Use slash commands as the sole operation entry point for new Telegram and Feishu messages.
 - Preserve long-output files, attachments, message replacement, thread behavior, and legacy Feishu-card fallback.
 - Promote referenced local documents and images to real channel attachments instead of exposing local filesystem paths.
 - Add optional Feishu streaming behind a capability/configuration gate after the static card path is stable.
@@ -37,9 +37,9 @@ No channel output becomes the input to another channel renderer. In particular, 
 
 The first implementation keeps the model intentionally small:
 
-- `ReplyDocument`: title, binding name, body blocks, optional status, actions, attachments, replacement key, and notification flag.
+- `ReplyDocument`: title, binding name, body blocks, optional display status, attachments, replacement key, notification flag, and legacy action metadata.
 - Blocks: paragraph, heading, fenced code, list, quote, and divider.
-- Actions: screen, status, cancel, and interrupt, using the existing canonical action names.
+- Legacy actions retain canonical names for old-message callback compatibility, but new renderers do not emit controls from them.
 
 The parser accepts the Markdown-shaped provider body already used by `ReplyEnvelope`. Unknown syntax remains a paragraph instead of being dropped. Provider identity and model details come from structured metadata/status, never from assumptions about the last output line.
 
@@ -76,7 +76,7 @@ This scanner is a compatibility fallback, not a substitute for structured attach
 Telegram keeps the current proven interaction model:
 
 - HTML for the initial implementation, with escaped text and balanced tags per split chunk.
-- Inline keyboard for supported actions; interrupt retains the existing confirmation step.
+- No persistent inline keyboard; users operate tmux through `/screen`, `/status`, `/esc`, `/cc`, and the existing command set.
 - Expandable blockquotes for verbose diagnostics where supported.
 - Link previews disabled by default for CLI output and enabled only through explicit metadata.
 - Long replies use a bounded preview plus the existing UTF-8 text attachment.
@@ -90,20 +90,20 @@ The preferred renderer emits Card JSON 2.0:
 - Header with title, provider tag, and state color.
 - `config.summary.content` containing a safe single-line preview for the conversation list.
 - Separate Markdown/code body components with stable `element_id` values.
-- Footer/status as a note component rather than italic Markdown.
-- Native buttons for screen, status, cancel, and interrupt.
+- Footer/status as grey notation-sized text rather than the Card JSON 2.0-deprecated note component.
+- No persistent buttons or overflow menus; slash commands keep the card visually clean.
 - Collapsible detail area for verbose tool/diagnostic content when present.
 - Serialized-size preflight. Cards approaching the 30 KB limit fall back to a summary card plus the full text file.
 
-State colors are blue for working, green for completed/idle, orange for waiting, red for failed/interrupted, and gray when no state is known.
+State colors are yellow for working, orange for waiting, green for completed/idle, red for blocked/dead/provider errors, blue for informational cards, and grey when no state is known. Streaming cards begin yellow and close green after a successful final reply.
 
 Card JSON 2.0 is gated by configuration/capability. The existing simple card remains the fallback for deployments that require clients older than Feishu 7.20.
 
-## Feishu Actions
+## Command-Only Actions
 
-Button values carry a compact binding token and canonical action, matching Telegram semantics. The callback handler validates the token against configured bindings and dispatches through the existing command adapter. Interrupt is a two-step interaction: the first action returns a confirmation card, and only the confirmation sends Ctrl-C to tmux.
+New Telegram and Feishu replies do not emit action buttons. Existing slash commands remain the canonical interface and continue dispatching through the shared command adapter into tmux. Channel capabilities advertise `supports_actions=False` so future renderers do not reintroduce persistent controls implicitly.
 
-Callbacks are idempotent where practical. Invalid, expired, or unauthorized tokens receive a short error response and never reach tmux.
+Previously sent Telegram keyboards and Feishu cards may still be clicked. Their callback handlers remain temporarily available for backward compatibility and retain binding-token, ACL, chat-correlation, and Ctrl-C confirmation checks.
 
 ## Streaming and Updates
 
@@ -112,7 +112,7 @@ Static Card JSON 2.0 ships first. Feishu streaming is a separate gated phase:
 - Create a card entity in streaming mode.
 - Update only the body component at a throttled rate of at most five application updates per second.
 - Require each streamed text update to extend the previous text prefix.
-- Close streaming before enabling action callbacks on the final card.
+- Close streaming by replacing the yellow working card with a green final card.
 - Fall back to normal whole-card PATCH when card entities or streaming are unavailable.
 
 Telegram continues sending finalized messages initially. Its new rich-message draft API will be evaluated only after framework support is verified.
@@ -120,7 +120,7 @@ Telegram continues sending finalized messages initially. Its new rich-message dr
 ## Compatibility and Failure Handling
 
 - Existing `ReplyEnvelope` producers remain source compatible.
-- Existing text commands remain available even after Feishu buttons are enabled.
+- Existing text commands remain the only operation entry point on new cards.
 - A renderer failure falls back to plain text or the legacy simple card rather than dropping the reply.
 - Unsupported blocks degrade to escaped text.
 - Attachment upload failures do not invalidate the main reply.
@@ -136,7 +136,8 @@ Telegram continues sending finalized messages initially. Its new rich-message dr
 - Size-boundary tests for card/file fallback.
 - Local attachment tests covering absolute paths, relative paths, Markdown image/link syntax, line-number suffixes, inline links, duplicate references, allowed-root rejection, missing files, and upload failures.
 - Cross-channel tests proving promoted images/files call the native Telegram and Feishu attachment APIs and never expose absolute paths in message text or captions.
-- Callback tests for every action, invalid tokens, authorization, and interrupt confirmation.
+- Regression tests proving new Telegram and Feishu replies contain no buttons while legacy callbacks remain safe.
+- State-color tests for working, waiting, completed/idle, error, informational, and unknown cards.
 - Contract tests proving Codex and Claude envelopes produce equivalent channel semantics.
 - Regression tests for attachments, threads, long output, edits, and legacy Feishu fallback.
 - End-to-end matrix checks for Codex/Claude × Telegram/Feishu while retaining tmux as the runtime.
@@ -145,8 +146,8 @@ Telegram continues sending finalized messages initially. Its new rich-message dr
 
 1. Add the neutral document/parser behind existing frontend behavior.
 2. Switch Telegram to the neutral renderer without changing visible semantics.
-3. Enable Feishu Card JSON 2.0 static cards and callbacks on the test deployment.
-4. Verify callbacks, long-output fallback, Claude endings, and legacy card fallback.
+3. Enable button-free Feishu Card JSON 2.0 cards on the test deployment.
+4. Verify slash commands, state colors, long-output fallback, Claude endings, and legacy card fallback.
 5. Enable Card JSON 2.0 on the hbhy Feishu deployment.
 6. Add and canary Feishu streaming separately.
 
@@ -155,9 +156,9 @@ Rollback is configuration-only: disable Card JSON 2.0/streaming and use the lega
 ## Success Criteria
 
 - Codex and Claude final replies render without relying on provider-specific trailing lines.
-- Telegram retains all current buttons, attachments, threads, and long-output behavior.
-- Feishu shows structured Card JSON 2.0 content and working native action buttons.
-- Interrupt requires confirmation on both channels.
+- Telegram retains attachments, threads, long-output behavior, and slash commands without persistent buttons.
+- Feishu shows structured Card JSON 2.0 content, state-aware header colors, and no persistent buttons.
+- New messages use `/cc` for explicit interrupt; legacy button-triggered interrupt still requires confirmation.
 - Oversized output is never silently truncated or rejected.
 - Existing referenced local documents and images are sent as native attachments on both channels, with no absolute local path exposed to recipients.
 - The full automated test suite passes, followed by live Telegram and Feishu acceptance tests against tmux-backed sessions.
