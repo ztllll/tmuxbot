@@ -1,14 +1,30 @@
+# tmuxbot Web control plane — systemd user service
+#
+# 安装:
+#   mkdir -p ~/.config/systemd/user
+#   ln -s ABS_PATH_TO_REPO/deploy/systemd/tmuxbot-web.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tmuxbot-web.service
+#   loginctl enable-linger $USER   # 让 service 在 logout 后继续跑
+#
+# 看 log:  journalctl --user -u tmuxbot-web -f
+# 重启:    systemctl --user restart tmuxbot-web
+# 停:      systemctl --user stop tmuxbot-web
+#
+# 这个 unit 默认假设项目在 ~/claude-project/tmuxbot。
+# 如果项目在别处,改 WorkingDirectory、EnvironmentFile 和 ExecStart 的路径。
+
 [Unit]
 Description=tmuxbot Web control plane
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pyadmin/claude-project/tmuxbot
-EnvironmentFile=/home/pyadmin/claude-project/tmuxbot/.env
-ExecStart=/home/pyadmin/claude-project/tmuxbot/.venv/bin/tmuxbot web
+WorkingDirectory=%h/claude-project/tmuxbot
+EnvironmentFile=%h/claude-project/tmuxbot/.env
+ExecStart=%h/claude-project/tmuxbot/.venv/bin/tmuxbot web
 Restart=on-failure
 RestartSec=3
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

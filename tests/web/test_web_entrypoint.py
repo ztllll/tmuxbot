@@ -107,3 +107,18 @@ def test_run_web_uses_configured_listener_without_trusting_proxy_headers(monkeyp
     assert calls == [
         ((app,), {"host": "127.0.0.1", "port": 8765, "proxy_headers": False})
     ]
+
+
+def test_systemd_unit_is_a_secret_free_user_service():
+    unit = Path("deploy/systemd/tmuxbot-web.service").read_text()
+    exec_start = next(
+        line for line in unit.splitlines() if line.startswith("ExecStart=")
+    )
+
+    assert "WantedBy=default.target" in unit
+    assert "multi-user.target" not in unit
+    assert "WorkingDirectory=%h/claude-project/tmuxbot" in unit
+    assert "EnvironmentFile=%h/claude-project/tmuxbot/.env" in unit
+    assert exec_start == "ExecStart=%h/claude-project/tmuxbot/.venv/bin/tmuxbot web"
+    assert "password" not in exec_start.lower()
+    assert "secret" not in exec_start.lower()
