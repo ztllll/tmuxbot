@@ -289,6 +289,34 @@ uv run tmuxbot web
 FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。Phase 1 仅包含
 认证后的只读 inventory/event API。默认只监听 `127.0.0.1:8765`。
 
+首次启动必须按以下顺序进行:
+
+1. 保持 listener 为 loopback,不要启动反向代理。
+2. 运行 `openssl rand -hex 32`,把输出写入本机 `.env` 的
+   `TMUXBOT_WEB_SETUP_TOKEN`。配置值少于 24 字符时进程会 fail-fast。
+3. 启动 Web 进程。Phase 1 没有 UI,先 GET status 取得 bootstrap CSRF cookie/token,
+   再携带 `X-CSRF-Token` 与 `X-Setup-Token` POST setup:
+
+```bash
+curl -sS -c /tmp/tmuxbot-web.cookies \
+  http://127.0.0.1:8765/api/auth/status
+export CSRF_TOKEN='<csrf_token from the previous response>'
+export SETUP_TOKEN='<TMUXBOT_WEB_SETUP_TOKEN from the local .env>'
+curl -sS -b /tmp/tmuxbot-web.cookies \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+  -H "X-Setup-Token: ${SETUP_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  --data '{"password":"replace-with-a-strong-password"}' \
+  http://127.0.0.1:8765/api/auth/setup
+```
+
+4. setup 成功后删除 `TMUXBOT_WEB_SETUP_TOKEN`,重启 Web 进程。
+5. 最后设置 secure cookie/public origin 并启用 TLS 反向代理。
+
+浏览器或未来 UI 也必须通过 header 提交一次性 setup secret。直接 peer 必须为
+loopback,且 setup secret 必须常量时间匹配;`X-Forwarded-For` 不参与授权。status
+返回的 bootstrap CSRF 不是授权,响应不会返回 setup secret。
+
 **禁止将该端口直接暴露到公网。** 需要远程访问时,使用 TLS 反向代理,
 设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 和精确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
 `deploy/systemd/tmuxbot-web.service` 通过 `EnvironmentFile` 读取配置与密钥,

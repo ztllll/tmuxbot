@@ -14,6 +14,7 @@ from tmuxbot.web.settings import WebSettings
 
 
 PASSWORD = "correct horse battery staple"
+SETUP_TOKEN = "0123456789abcdef0123456789abcdef"
 
 
 class FakeInventory:
@@ -26,12 +27,18 @@ class FakeInventory:
         return list(self.panes)
 
 
-def _settings(tmp_path: Path, *, secure_cookie: bool = False) -> WebSettings:
+def _settings(
+    tmp_path: Path,
+    *,
+    secure_cookie: bool = False,
+    setup_token: str | None = SETUP_TOKEN,
+) -> WebSettings:
     return WebSettings(
         host="127.0.0.1",
         port=8765,
         database_path=tmp_path / "control.sqlite3",
         secure_cookie=secure_cookie,
+        setup_token=setup_token,
         session_ttl_seconds=3600,
     )
 
@@ -43,8 +50,11 @@ def _client(
     inventory: FakeInventory | None = None,
     bindings: list[Binding] | None = None,
     client_host: str = "127.0.0.1",
+    setup_token: str | None = SETUP_TOKEN,
 ) -> tuple[TestClient, ControlPlaneRepository, FakeInventory]:
-    settings = _settings(tmp_path, secure_cookie=secure_cookie)
+    settings = _settings(
+        tmp_path, secure_cookie=secure_cookie, setup_token=setup_token
+    )
     repository = ControlPlaneRepository(settings.database_path)
     repository.migrate()
     fake_inventory = inventory or FakeInventory()
@@ -68,7 +78,10 @@ def _setup(client: TestClient) -> str:
     response = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
     assert response.status_code == 201
     return response.json()["csrf_token"]
@@ -80,13 +93,17 @@ def test_web_api_requires_auth_and_csrf(tmp_path):
     assert client.get("/api/health").json() == {"status": "ok"}
     status_response = client.get("/api/auth/status")
     assert status_response.json()["configured"] is False
+    assert status_response.json()["setup_available"] is True
     assert status_response.json()["csrf_token"]
+    assert SETUP_TOKEN not in status_response.text
     assert client.get("/api/events").status_code == 401
     assert client.get("/api/tmux/sessions").status_code == 401
 
     csrf = _setup(client)
 
-    assert client.get("/api/auth/status").json()["configured"] is True
+    configured_status = client.get("/api/auth/status").json()
+    assert configured_status["configured"] is True
+    assert configured_status["setup_available"] is False
     assert client.get("/api/events").status_code == 200
     assert client.get("/api/tmux/sessions").status_code == 200
     assert client.post("/api/auth/logout").status_code == 403
@@ -113,7 +130,10 @@ def test_setup_is_disabled_after_first_password(tmp_path):
     response = client.post(
         "/api/auth/setup",
         json={"password": "another correct password"},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert response.status_code == 409
@@ -136,6 +156,7 @@ def test_setup_rejects_lan_client_without_leaking_details(tmp_path):
         json={"password": submitted_password},
         headers={
             "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
             "X-Forwarded-For": "127.0.0.1",
         },
     )
@@ -144,6 +165,78 @@ def test_setup_rejects_lan_client_without_leaking_details(tmp_path):
     assert response.json() == {"detail": "setup is only allowed from loopback"}
     assert submitted_password not in response.text
     assert client.get("/api/auth/status").json()["configured"] is False
+
+
+def test_setup_is_unavailable_without_configured_secret(tmp_path):
+    client, _, _ = _client(tmp_path, setup_token=None)
+    status_response = client.get("/api/auth/status")
+    bootstrap_csrf = status_response.json()["csrf_token"]
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
+    )
+
+    assert status_response.json()["setup_available"] is False
+    assert SETUP_TOKEN not in status_response.text
+    assert SETUP_TOKEN not in str(status_response.headers)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "password setup is unavailable"}
+    assert SETUP_TOKEN not in response.text
+    assert SETUP_TOKEN not in str(response.headers)
+
+
+@pytest.mark.parametrize("setup_header", [None, "wrong-setup-token"])
+def test_loopback_proxy_peer_still_requires_configured_secret_header(
+    tmp_path, setup_header: str | None
+):
+    client, _, _ = _client(tmp_path)
+    bootstrap_csrf = _bootstrap(client)
+    headers = {
+        "X-CSRF-Token": bootstrap_csrf,
+        "X-Forwarded-For": "203.0.113.25",
+    }
+    if setup_header is not None:
+        headers["X-Setup-Token"] = setup_header
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "invalid setup authorization"}
+    assert SETUP_TOKEN not in response.text
+    assert client.get("/api/auth/status").json()["configured"] is False
+
+
+def test_setup_secret_uses_constant_time_comparison(tmp_path, monkeypatch):
+    client, _, _ = _client(tmp_path)
+    bootstrap_csrf = _bootstrap(client)
+    comparisons = []
+
+    def compare(candidate, expected):
+        comparisons.append((candidate, expected))
+        return candidate == expected
+
+    monkeypatch.setattr("tmuxbot.web.app.secrets.compare_digest", compare)
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": "wrong-setup-token",
+        },
+    )
+
+    assert response.status_code == 403
+    assert comparisons == [("wrong-setup-token", SETUP_TOKEN)]
 
 
 def test_configured_login_remains_available_to_lan_clients(tmp_path):
@@ -164,6 +257,30 @@ def test_configured_login_remains_available_to_lan_clients(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["csrf_token"]
+
+
+def test_login_works_after_setup_secret_is_removed_and_app_restarts(tmp_path):
+    setup_client, repository, inventory = _client(tmp_path)
+    _setup(setup_client)
+    restarted_client = TestClient(
+        create_app(
+            _settings(tmp_path, setup_token=None), repository, inventory, []
+        ),
+        base_url="http://testserver",
+        client=("127.0.0.1", 50000),
+    )
+    status_response = restarted_client.get("/api/auth/status")
+    bootstrap_csrf = status_response.json()["csrf_token"]
+
+    response = restarted_client.post(
+        "/api/auth/login",
+        json={"password": PASSWORD},
+        headers={"X-CSRF-Token": bootstrap_csrf},
+    )
+
+    assert status_response.json()["configured"] is True
+    assert status_response.json()["setup_available"] is False
+    assert response.status_code == 200
 
 
 def test_login_succeeds_and_failure_is_generic(tmp_path):
@@ -200,7 +317,10 @@ def test_password_validation_error_does_not_echo_submitted_password(tmp_path):
     response = client.post(
         "/api/auth/setup",
         json={"password": submitted_password},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert response.status_code == 422
@@ -211,18 +331,32 @@ def test_password_validation_error_does_not_echo_submitted_password(tmp_path):
 def test_setup_requires_bootstrap_double_submit_csrf(tmp_path):
     client, _, _ = _client(tmp_path)
 
-    missing = client.post("/api/auth/setup", json={"password": PASSWORD})
+    missing = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={"X-Setup-Token": SETUP_TOKEN},
+    )
     bootstrap_csrf = _bootstrap(client)
-    missing_header = client.post("/api/auth/setup", json={"password": PASSWORD})
+    missing_header = client.post(
+        "/api/auth/setup",
+        json={"password": PASSWORD},
+        headers={"X-Setup-Token": SETUP_TOKEN},
+    )
     wrong = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": "wrong-token"},
+        headers={
+            "X-CSRF-Token": "wrong-token",
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
     success = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert missing.status_code == 403
@@ -241,7 +375,10 @@ def test_setup_rejects_tampered_bootstrap_csrf_signature(tmp_path):
     response = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": tampered},
+        headers={
+            "X-CSRF-Token": tampered,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert response.status_code == 403
@@ -258,7 +395,10 @@ def test_setup_rejects_expired_bootstrap_csrf_signature(tmp_path, monkeypatch):
     response = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert response.status_code == 403
@@ -326,7 +466,10 @@ def test_session_cookie_has_required_security_attributes(
     response = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"X-CSRF-Token": bootstrap_csrf},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     cookie = response.headers["set-cookie"].lower()
@@ -344,7 +487,10 @@ def test_state_changing_request_rejects_foreign_origin(tmp_path):
     response = client.post(
         "/api/auth/setup",
         json={"password": PASSWORD},
-        headers={"Origin": "https://attacker.example"},
+        headers={
+            "Origin": "https://attacker.example",
+            "X-Setup-Token": SETUP_TOKEN,
+        },
     )
 
     assert response.status_code == 403
@@ -363,6 +509,7 @@ def test_configured_public_origin_is_accepted(tmp_path, monkeypatch):
         headers={
             "Origin": "https://tmuxbot.example",
             "X-CSRF-Token": bootstrap_csrf,
+            "X-Setup-Token": SETUP_TOKEN,
         },
     )
 

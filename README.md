@@ -125,6 +125,36 @@ tmuxbot web
 默认监听 `127.0.0.1:8765`,配置项见 `.env.example`。Phase 1 仅提供认证、只读 tmux
 inventory 和 event API,不含终端 PTY、会话 adopt/archive、调度器或前端页面。
 
+首次设置必须在启用反向代理前从本机完成。先用 `openssl rand -hex 32` 生成一次性
+secret,写入本机 `.env` 的 `TMUXBOT_WEB_SETUP_TOKEN`;少于 24 字符会令 Web 进程
+启动失败。Phase 1 尚无 Web UI,可先用 curl 完成设置:
+
+```bash
+# 1. 保持 Web 仅监听 loopback,且暂不启动反向代理
+openssl rand -hex 32
+# 把输出写入本机 .env: TMUXBOT_WEB_SETUP_TOKEN=<generated output>
+tmuxbot web
+
+# 2. 在另一个本机 shell 中执行。GET 会设置 cookie;从 JSON 复制 csrf_token
+curl -sS -c /tmp/tmuxbot-web.cookies \
+  http://127.0.0.1:8765/api/auth/status
+export CSRF_TOKEN='<csrf_token from the previous response>'
+export SETUP_TOKEN='<TMUXBOT_WEB_SETUP_TOKEN from the local .env>'
+
+# 3. setup 同时需要 CSRF 与一次性 setup secret
+curl -sS -b /tmp/tmuxbot-web.cookies \
+  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
+  -H "X-Setup-Token: ${SETUP_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  --data '{"password":"replace-with-a-strong-password"}' \
+  http://127.0.0.1:8765/api/auth/setup
+```
+
+设置完成后从 `.env` 删除 `TMUXBOT_WEB_SETUP_TOKEN` 并重启 Web 进程,再设置 secure
+cookie/public origin 并启用反向代理。浏览器或未来 UI 提交首次设置时也必须发送
+`X-Setup-Token`;bootstrap CSRF 本身不构成 setup 授权。不要把真实 setup secret
+写入仓库、文档示例或反向代理配置。
+
 **不要把 Web 端口直接暴露到公网。** 远程访问应通过带 TLS 和访问控制的反向代理,
 并设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 与准确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
 `deploy/systemd/tmuxbot-web.service` 提供独立 unit 示例;其中凭证只从 `.env` 读取,

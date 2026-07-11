@@ -56,6 +56,10 @@ def create_app(
 
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            origin = request.headers.get("origin")
+            if origin is not None and origin.rstrip("/") != allowed_origin.rstrip("/"):
+                return JSONResponse(status_code=403, content={"detail": "invalid origin"})
         if request.method == "POST" and request.url.path == "/api/auth/setup":
             client_host = request.client.host if request.client is not None else ""
             try:
@@ -67,10 +71,19 @@ def create_app(
                     status_code=403,
                     content={"detail": "setup is only allowed from loopback"},
                 )
-        if request.method not in {"GET", "HEAD", "OPTIONS"}:
-            origin = request.headers.get("origin")
-            if origin is not None and origin.rstrip("/") != allowed_origin.rstrip("/"):
-                return JSONResponse(status_code=403, content={"detail": "invalid origin"})
+            if settings.setup_token is None:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "password setup is unavailable"},
+                )
+            submitted_setup_token = request.headers.get("x-setup-token") or ""
+            if not secrets.compare_digest(
+                submitted_setup_token, settings.setup_token
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "invalid setup authorization"},
+                )
         return await call_next(request)
 
     def current_session(
@@ -151,7 +164,12 @@ def create_app(
     def auth_status(response: Response) -> dict[str, bool | str]:
         csrf_token = auth.issue_bootstrap_token()
         set_bootstrap_cookie(response, csrf_token)
-        return {"configured": auth.is_configured(), "csrf_token": csrf_token}
+        configured = auth.is_configured()
+        return {
+            "configured": configured,
+            "setup_available": not configured and settings.setup_token is not None,
+            "csrf_token": csrf_token,
+        }
 
     @app.post("/api/auth/setup", status_code=status.HTTP_201_CREATED)
     def setup_password(

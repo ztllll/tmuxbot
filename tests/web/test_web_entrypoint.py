@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 from tmuxbot.__main__ import build_parser
 from tmuxbot.__main__ import run
 
@@ -153,6 +155,22 @@ def test_build_app_preserves_external_paths_over_custom_env_file(
     assert loaded_paths == [
         (env_file, external_bindings_file, external_data_dir / "offsets.json")
     ]
+
+
+def test_build_app_fails_fast_for_short_setup_token(monkeypatch, tmp_path: Path):
+    from tmuxbot.web import __main__ as web_main
+
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("TMUXBOT_WEB_SETUP_TOKEN=too-short\n", encoding="utf-8")
+    monkeypatch.setenv("TMUXBOT_ENV", str(env_file))
+    monkeypatch.delenv("TMUXBOT_WEB_SETUP_TOKEN", raising=False)
+    monkeypatch.setattr(web_main, "load_config", lambda *paths: None)
+
+    with pytest.raises(
+        ValueError, match="TMUXBOT_WEB_SETUP_TOKEN must be at least 24 characters"
+    ):
+        web_main.build_app()
 
 
 def test_run_web_uses_configured_listener_without_trusting_proxy_headers(monkeypatch):

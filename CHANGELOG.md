@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- Web 首次设置同时要求 loopback peer 与一次性 `X-Setup-Token`,避免同机反向代理后的远程客户端抢占初始密码。
 - Telegram 多 bot 服务重启时即使 polling 已先停止,也保证关闭 aiogram HTTP session,不再残留 `Unclosed client session`。
 - 修复 Codex pane 前台命令为 standalone `codex` 时被 watchdog 误判并周期性注入启动命令的问题;未知前台进程不再注入 Claude/Codex 启动命令。
 - 修复输入在 pane busy 时先 paste 后等待导致多条命令堆积的问题;现在按 tmux target 排队并在粘贴前确认 idle 与前台进程。
