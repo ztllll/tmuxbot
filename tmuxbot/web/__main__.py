@@ -11,11 +11,12 @@ from tmuxbot.config import load_config
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.control_plane.tmux_inventory import TmuxInventory
 from tmuxbot.paths import RuntimePaths
-from tmuxbot.state import S
+from tmuxbot.state import Binding, S
 from tmuxbot.web.app import create_app
 from tmuxbot.web.auth import AuthService
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
+from tmuxbot.web.terminal import TerminalService
 
 
 def create_automatic_setup_grant(
@@ -32,6 +33,21 @@ def create_automatic_setup_grant(
     if auth.is_configured():
         return None
     return SetupGrant.generate(now=int(time.time()) if now is None else now)
+
+
+def build_terminal_service(
+    settings: WebSettings,
+    repository: ControlPlaneRepository,
+    bindings: list[Binding],
+) -> TerminalService:
+    targets = {binding.name: binding.tmux_target for binding in bindings}
+    configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
+    allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
+    return TerminalService(
+        repository=repository,
+        target_resolver=targets.get,
+        allowed_origin=allowed_origin,
+    )
 
 
 def build_app():
@@ -55,16 +71,20 @@ def build_app():
     repository = ControlPlaneRepository(settings.database_path)
     repository.migrate()
     setup_grant = create_automatic_setup_grant(settings, repository)
-    if setup_grant is None:
-        app = create_app(settings, repository, TmuxInventory(), S.bindings)
-    else:
-        app = create_app(
-            settings,
-            repository,
-            TmuxInventory(),
-            S.bindings,
-            setup_grant=setup_grant,
+    options = {}
+    if setup_grant is not None:
+        options["setup_grant"] = setup_grant
+    if isinstance(settings, WebSettings):
+        options["terminal_service"] = build_terminal_service(
+            settings, repository, S.bindings
         )
+    app = create_app(
+        settings,
+        repository,
+        TmuxInventory(),
+        S.bindings,
+        **options,
+    )
     return settings, app
 
 

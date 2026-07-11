@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import os
 import platform
@@ -12,13 +13,25 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from contextlib import suppress
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+)
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnect
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.control_plane.models import ManagedSession, ProjectRecord, ProviderProfile
@@ -37,6 +50,13 @@ from tmuxbot.web.schemas import (
 )
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
+from tmuxbot.web.terminal import (
+    TERMINAL_MAX_FRAME_BYTES,
+    TerminalConnection,
+    TerminalService,
+    TerminalTicket,
+    parse_resize_message,
+)
 
 
 COOKIE_NAME = "tmuxbot_session"
@@ -54,6 +74,7 @@ def create_app(
     setup_grant: SetupGrant | None = None,
     bridge_status: Callable[[], Mapping[str, object]] | None = None,
     provider_discovery: ProviderDiscovery | None = None,
+    terminal_service: TerminalService | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -70,6 +91,7 @@ def create_app(
     app.state.setup_grant = setup_grant
     app.state.bridge_status = bridge_status
     app.state.provider_discovery = provider_discovery or ProviderDiscovery()
+    app.state.terminal_service = terminal_service
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
@@ -145,6 +167,12 @@ def create_app(
         if csrf is None or not secrets.compare_digest(csrf, session.csrf_token):
             raise HTTPException(status_code=403, detail="invalid csrf token")
         return session
+
+    def require_terminal_service() -> TerminalService:
+        service = app.state.terminal_service
+        if not isinstance(service, TerminalService):
+            raise HTTPException(status_code=404, detail="terminal unavailable")
+        return service
 
     def bootstrap_csrf(
         cookie_token: str | None = Cookie(
@@ -547,6 +575,164 @@ def create_app(
             }
             for item in items
         ]
+
+    @app.post(
+        "/api/terminals/{managed_session_id}/ticket",
+        status_code=status.HTTP_201_CREATED,
+    )
+    def terminal_ticket(
+        managed_session_id: str,
+        session: AuthenticatedSession = Depends(csrf_session),
+        service: TerminalService = Depends(require_terminal_service),
+    ) -> dict[str, str | int]:
+        ticket = service.issue_ticket(
+            managed_session_id, session.token, now=int(time.time())
+        )
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="managed session not found")
+        return {"ticket": ticket.token, "expires_at": ticket.expires_at}
+
+    @app.post("/api/terminals/{managed_session_id}/takeover")
+    def terminal_takeover(
+        managed_session_id: str,
+        session: AuthenticatedSession = Depends(csrf_session),
+        service: TerminalService = Depends(require_terminal_service),
+    ) -> dict[str, str]:
+        outcome = service.start_takeover(managed_session_id, session.token)
+        if outcome == "missing":
+            raise HTTPException(status_code=404, detail="managed session not found")
+        if outcome in {"conflict", "not_connected"}:
+            raise HTTPException(status_code=409, detail="terminal already controlled")
+        return {"mode": "takeover"}
+
+    @app.delete("/api/terminals/{managed_session_id}/takeover")
+    def terminal_release(
+        managed_session_id: str,
+        session: AuthenticatedSession = Depends(csrf_session),
+        service: TerminalService = Depends(require_terminal_service),
+    ) -> dict[str, str]:
+        if not service.end_takeover(
+            managed_session_id, session.token, reason="api"
+        ):
+            raise HTTPException(status_code=409, detail="terminal is not controlled")
+        return {"mode": "observe"}
+
+    async def reject_terminal(websocket: WebSocket, code: int) -> None:
+        await websocket.accept()
+        await websocket.close(code=code)
+
+    async def terminal_output_loop(
+        websocket: WebSocket, terminal: TerminalConnection
+    ) -> None:
+        while True:
+            data = await terminal.read(TERMINAL_MAX_FRAME_BYTES)
+            if not data:
+                return
+            await websocket.send_bytes(data)
+
+    async def terminal_input_loop(
+        websocket: WebSocket,
+        terminal: TerminalConnection,
+        ticket: TerminalTicket,
+        session_token: str,
+        service: TerminalService,
+    ) -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is not None:
+                if len(data) > TERMINAL_MAX_FRAME_BYTES:
+                    await websocket.close(code=1009)
+                    return
+                if not service.can_input(ticket.managed_session_id, session_token):
+                    await websocket.send_json(
+                        {"type": "input_rejected", "reason": "observe_only"}
+                    )
+                    continue
+                await terminal.write(data)
+                continue
+            text = message.get("text")
+            if text is None or len(text.encode("utf-8")) > TERMINAL_MAX_FRAME_BYTES:
+                await websocket.send_json(
+                    {"type": "message_rejected", "reason": "invalid_frame"}
+                )
+                continue
+            resize = parse_resize_message(text)
+            if resize is None:
+                await websocket.send_json(
+                    {"type": "message_rejected", "reason": "invalid_frame"}
+                )
+                continue
+            rows, cols = resize
+            await terminal.resize(rows, cols)
+
+    @app.websocket("/api/terminals/ws")
+    async def terminal_websocket(websocket: WebSocket, ticket: str = Query(...)) -> None:
+        service = app.state.terminal_service
+        if not isinstance(service, TerminalService):
+            await reject_terminal(websocket, 4404)
+            return
+        origin = websocket.headers.get("origin")
+        if origin is None or origin.rstrip("/") != service.allowed_origin:
+            await reject_terminal(websocket, 4403)
+            return
+        session_token = websocket.cookies.get(COOKIE_NAME)
+        if session_token is None:
+            await reject_terminal(websocket, 4401)
+            return
+        try:
+            auth.authenticate(session_token, now=int(time.time()))
+        except AuthError:
+            await reject_terminal(websocket, 4401)
+            return
+        terminal_ticket = service.consume_ticket(
+            ticket, session_token, now=int(time.time())
+        )
+        if terminal_ticket is None:
+            await reject_terminal(websocket, 4403)
+            return
+        try:
+            terminal = await service.open_terminal(terminal_ticket)
+        except Exception:
+            await reject_terminal(websocket, 1011)
+            return
+        await websocket.accept()
+        service.connect(terminal_ticket.managed_session_id, session_token)
+        output_task = asyncio.create_task(terminal_output_loop(websocket, terminal))
+        input_task = asyncio.create_task(
+            terminal_input_loop(
+                websocket,
+                terminal,
+                terminal_ticket,
+                session_token,
+                service,
+            )
+        )
+        try:
+            done, pending = await asyncio.wait(
+                {output_task, input_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            for task in done | pending:
+                with suppress(asyncio.CancelledError, WebSocketDisconnect):
+                    await task
+        finally:
+            try:
+                service.end_takeover(
+                    terminal_ticket.managed_session_id,
+                    session_token,
+                    reason="disconnect",
+                )
+            finally:
+                try:
+                    service.disconnect(
+                        terminal_ticket.managed_session_id, session_token
+                    )
+                finally:
+                    await terminal.close()
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
