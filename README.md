@@ -115,14 +115,15 @@ bot crash 后 5 秒内自动拉起,无需手动守护。
 
 ## 当前能力
 
-- **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑/按钮回调)
+- **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
 - **双 bot 共存**:`@your_claude_bot` 接 claude_code,`@your_codex_bot` 接 codex
 - **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart`
 - **TUI 透传**:`/context` `/cost` `/usage` `/compact` `/clear` 等,抓屏结构化反馈
 - **工具调用聚合**:一个 turn 内的 tool_use 流式刷同一条 IM 消息,真说话单独 push 触发通知
 - **Codex 计划跟随**:`update_plan` 会维护一条可编辑的“当前计划”消息,TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态
 - **双向附件**:Telegram/飞书收到的图片/文件会下载到本机并以 `@path` 注入 TUI;AI 回复里的绝对/相对路径、Markdown 文件链接和图片链接会转成原生 IM 附件,聊天内容不暴露服务器绝对路径
-- **统一富消息**:Codex/Claude 共用 `ReplyDocument`;Telegram 使用 HTML/可展开引用/Inline Keyboard,飞书使用 Card JSON 2.0 header、summary、状态色、原生按钮和可选 CardKit 流式更新
+- **统一富消息**:Codex/Claude 共用 `ReplyDocument`;Telegram 使用 HTML/可展开引用且不附常驻按钮,飞书使用 Card JSON 2.0 header、summary、状态色和可选 CardKit 流式更新
+- **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
 - **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction

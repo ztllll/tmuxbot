@@ -290,12 +290,16 @@ async def on_tmux_event(
         # 新建 aggregator: 发首条 + 缓存 msg_id + 启动 idle watcher
         header = "💭 <b>工作中…</b>"
         initial_html = header + "\n" + body
-        msg = await frontend.send_status_html(
-            b.chat_id,
-            b.thread_id,
-            initial_html,
-            display_state="working",
-        )
+        send_status = getattr(frontend, "send_status_html", None)
+        if send_status is None:
+            msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
+        else:
+            msg = await send_status(
+                b.chat_id,
+                b.thread_id,
+                initial_html,
+                display_state="working",
+            )
         if msg is not None and hasattr(msg, "message_id"):
             state.tool_aggregator[b.name] = {
                 "msg_id": msg.message_id,
