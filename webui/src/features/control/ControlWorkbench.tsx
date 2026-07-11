@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import {
   createManagedSession,
   createProject,
+  configureChannel,
   probeProvider,
   scanProviders,
   type ManagedSession,
@@ -30,6 +31,12 @@ export default function ControlWorkbench({
   const [projectId, setProjectId] = useState("");
   const [providerId, setProviderId] = useState("");
   const [terminalSession, setTerminalSession] = useState<ManagedSession | null>(null);
+  const [channel, setChannel] = useState<"telegram" | "feishu">("telegram");
+  const [channelSession, setChannelSession] = useState("");
+  const [remoteChatId, setRemoteChatId] = useState("");
+  const [credentialId, setCredentialId] = useState("");
+  const [credentialSecret, setCredentialSecret] = useState("");
+  const [bossId, setBossId] = useState("");
 
   async function scan() {
     setBusy("scan");
@@ -71,6 +78,19 @@ export default function ControlWorkbench({
     finally { setBusy(null); }
   }
 
+  async function saveChannel(event: FormEvent) {
+    event.preventDefault(); setBusy("channel");
+    try {
+      const result = await configureChannel({
+        channel, managed_session_id: channelSession, remote_chat_id: remoteChatId,
+        credential_id: credentialId, credential_secret: credentialSecret || undefined,
+        boss_id: bossId, mention_required: false,
+      }, csrfToken);
+      setNotice(result.restart_required ? "通道与 binding 已安全写入。请重启 tmuxbot serve 让 bridge 载入新配置。" : "通道已生效。");
+    } catch { setNotice("通道配置失败：请检查凭据、Boss ID、chat ID 与受管会话。"); }
+    finally { setBusy(null); }
+  }
+
   const llmProviders = providers.filter((item) => item.binary_name !== "tmux");
   return (
     <>
@@ -107,6 +127,17 @@ export default function ControlWorkbench({
           <button className="primary-action" disabled={busy !== null}>启动 CLI 会话</button>
           <small>当前受管会话 {managedSessions.length} 个。启动采用项目目录与已验证 binary，不接受浏览器命令字符串。</small>
           {managedSessions.map((item) => <button key={item.id} type="button" className="session-row" onClick={() => setTerminalSession(item)}><span>{item.name}</span><code>{item.tmux_target}</code><strong>打开终端</strong></button>)}
+        </form>
+        <form className="workbench-unit control-form" onSubmit={saveChannel}>
+          <span className="unit-number">04 / CHANNEL</span><h3>接入消息通道</h3>
+          <label><span>通道</span><select value={channel} onChange={(e) => setChannel(e.target.value as "telegram" | "feishu")}><option value="telegram">Telegram</option><option value="feishu">飞书</option></select></label>
+          <label><span>受管会话</span><select value={channelSession} onChange={(e) => setChannelSession(e.target.value)} required><option value="">请选择</option>{managedSessions.map((s) => <option value={s.id} key={s.id}>{s.name}</option>)}</select></label>
+          <label><span>{channel === "telegram" ? "Bot Token" : "App ID"}</span><input type="password" value={credentialId} onChange={(e) => setCredentialId(e.target.value)} required /></label>
+          {channel === "feishu" && <label><span>App Secret</span><input type="password" value={credentialSecret} onChange={(e) => setCredentialSecret(e.target.value)} required /></label>}
+          <label><span>{channel === "telegram" ? "Boss User ID" : "Boss Open ID"}</span><input value={bossId} onChange={(e) => setBossId(e.target.value)} required /></label>
+          <label><span>{channel === "telegram" ? "Chat ID" : "Chat ID（oc_…）"}</span><input value={remoteChatId} onChange={(e) => setRemoteChatId(e.target.value)} required /></label>
+          <button className="primary-action" disabled={busy !== null}>保存通道配置</button>
+          <small>密钥仅写入本机 `0600` 配置文件，API 不会回显完整值。</small>
         </form>
       </div>
     </section>

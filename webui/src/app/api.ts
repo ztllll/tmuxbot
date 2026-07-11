@@ -197,3 +197,20 @@ export async function releaseTerminalTakeover(sessionId: string, csrfToken: stri
     { method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } },
   ));
 }
+
+export async function configureChannel(
+  body: {
+    channel: "telegram" | "feishu";
+    managed_session_id: string;
+    remote_chat_id: string;
+    credential_id: string;
+    credential_secret?: string;
+    boss_id: string;
+    mention_required: boolean;
+  },
+  csrfToken: string,
+) {
+  return writeJson<{ channel: string; configured: boolean; restart_required: boolean }>(
+    "/api/channels/configure", csrfToken, body,
+  );
+}

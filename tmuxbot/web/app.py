@@ -14,6 +14,9 @@ import uuid
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from contextlib import suppress
+import tempfile
+
+import yaml
 
 from fastapi import (
     Cookie,
@@ -41,12 +44,14 @@ from tmuxbot.control_plane.tmux_inventory import (
     classify_inventory,
 )
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
+from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import (
     ManagedSessionCreateRequest,
     PasswordRequest,
     ProjectCreateRequest,
+    ChannelConfigureRequest,
 )
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
@@ -75,6 +80,7 @@ def create_app(
     bridge_status: Callable[[], Mapping[str, object]] | None = None,
     provider_discovery: ProviderDiscovery | None = None,
     terminal_service: TerminalService | None = None,
+    runtime_paths: RuntimePaths | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -92,6 +98,7 @@ def create_app(
     app.state.bridge_status = bridge_status
     app.state.provider_discovery = provider_discovery or ProviderDiscovery()
     app.state.terminal_service = terminal_service
+    app.state.runtime_paths = runtime_paths
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
 
@@ -513,6 +520,97 @@ def create_app(
             "tmux_target": f"{tmux_session}:0.0",
             "status": managed.status,
         }
+
+    def require_runtime_paths() -> RuntimePaths:
+        paths = app.state.runtime_paths
+        if not isinstance(paths, RuntimePaths):
+            raise HTTPException(status_code=503, detail="runtime configuration unavailable")
+        return paths
+
+    def write_private_text(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as handle:
+            handle.write(content)
+            temp_path = Path(handle.name)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, path)
+
+    @app.get("/api/channels")
+    def channels(
+        _: AuthenticatedSession = Depends(current_session),
+        paths: RuntimePaths = Depends(require_runtime_paths),
+    ) -> list[dict[str, object]]:
+        env_text = paths.env_file.read_text(encoding="utf-8") if paths.env_file.is_file() else ""
+        return [
+            {"channel": "telegram", "configured": "TG_BOT_TOKEN=" in env_text or "TG_CODEX_BOT_TOKEN=" in env_text},
+            {"channel": "feishu", "configured": "FEISHU_APP_ID=" in env_text and "FEISHU_APP_SECRET=" in env_text},
+        ]
+
+    @app.post("/api/channels/configure", status_code=status.HTTP_201_CREATED)
+    def configure_channel(
+        body: ChannelConfigureRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+        paths: RuntimePaths = Depends(require_runtime_paths),
+    ) -> dict[str, object]:
+        managed = repository.get_managed_session(body.managed_session_id)
+        if managed is None:
+            raise HTTPException(status_code=404, detail="managed session not found")
+        provider = repository.get_provider_profile(managed.provider_id)
+        project = repository.get_project(managed.project_id)
+        if provider is None or project is None:
+            raise HTTPException(status_code=409, detail="managed session is incomplete")
+        values = (body.credential_id, body.credential_secret or "", body.boss_id, body.remote_chat_id)
+        if any("\n" in value or "\r" in value or "\0" in value for value in values):
+            raise HTTPException(status_code=400, detail="invalid channel value")
+        env_values: dict[str, str] = {}
+        if body.channel == "telegram":
+            if ":" not in body.credential_id or not body.boss_id.lstrip("-").isdigit():
+                raise HTTPException(status_code=400, detail="invalid Telegram credentials")
+            token_env = "TG_BOT_TOKEN" if provider.binary_name == "claude" else "TG_CODEX_BOT_TOKEN"
+            env_values[token_env] = body.credential_id
+            env_values["BOSS_USER_ID"] = body.boss_id
+            chat_id: int | str = int(body.remote_chat_id) if body.remote_chat_id.lstrip("-").isdigit() else body.remote_chat_id
+        else:
+            if not body.credential_secret:
+                raise HTTPException(status_code=400, detail="Feishu secret is required")
+            token_env = "FEISHU"
+            env_values.update({
+                "FEISHU_APP_ID": body.credential_id,
+                "FEISHU_APP_SECRET": body.credential_secret,
+                "FEISHU_BOSS_OPEN_IDS": body.boss_id,
+            })
+            chat_id = body.remote_chat_id
+        existing_lines = paths.env_file.read_text(encoding="utf-8").splitlines() if paths.env_file.is_file() else []
+        retained = [line for line in existing_lines if line.split("=", 1)[0].strip() not in env_values]
+        rendered_env = "\n".join([*retained, *(f"{key}={value}" for key, value in env_values.items())]).strip() + "\n"
+        raw = yaml.safe_load(paths.bindings_file.read_text(encoding="utf-8")) if paths.bindings_file.is_file() else {}
+        if not isinstance(raw, dict):
+            raw = {}
+        entries = raw.get("bindings")
+        if not isinstance(entries, list):
+            entries = []
+        binding_name = f"web-{body.channel}-{managed.id}"
+        entry = {
+            "name": binding_name,
+            "channel": body.channel,
+            "chat_id": chat_id,
+            "thread_id": None,
+            "bot_token_env": token_env,
+            "backend": "claude_code" if provider.binary_name == "claude" else "codex",
+            "tmux_session": managed.tmux_session,
+            "tmux_window": managed.tmux_window,
+            "tmux_pane": managed.tmux_pane,
+            "cwd": project.root_path,
+            "mention_required": body.mention_required,
+        }
+        entries = [item for item in entries if not isinstance(item, dict) or item.get("name") != binding_name]
+        entries.append(entry)
+        raw["bindings"] = entries
+        write_private_text(paths.env_file, rendered_env)
+        write_private_text(paths.bindings_file, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        return {"channel": body.channel, "configured": True, "binding_name": binding_name, "restart_required": True}
 
     @app.get("/api/system/status")
     def system_status(

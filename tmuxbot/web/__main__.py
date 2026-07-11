@@ -85,6 +85,7 @@ def build_app():
         options["terminal_service"] = build_terminal_service(
             settings, repository, S.bindings
         )
+        options["runtime_paths"] = paths
     app = create_app(
         settings,
         repository,
