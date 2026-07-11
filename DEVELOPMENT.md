@@ -292,7 +292,7 @@ FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。Phase 1 
 **禁止将该端口直接暴露到公网。** 需要远程访问时,使用 TLS 反向代理,
 设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 和精确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
 `deploy/systemd/tmuxbot-web.service` 通过 `EnvironmentFile` 读取配置与密钥,
-不在 `ExecStart` 中传递密码或 secret。根据实际安装位置修改 unit 内两个绝对路径。
+不在 `ExecStart` 中传递密码或 secret。根据实际安装位置修改 unit 内三处路径。
 
 ### 开发启动 (tmux session)
 

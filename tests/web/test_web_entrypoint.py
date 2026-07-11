@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 from pathlib import Path
@@ -44,15 +45,19 @@ def test_build_app_loads_config_migrates_database_and_wires_dependencies(
     settings = types.SimpleNamespace(database_path=tmp_path / "web.sqlite3")
     calls = []
 
+    def load_runtime_env(path, *, override):
+        calls.append(("load_dotenv", path, override))
+
     def load_runtime_config(*paths):
         calls.append(("load_config", paths))
 
     def settings_from_loaded_env():
-        assert calls and calls[0][0] == "load_config"
+        assert [call[0] for call in calls] == ["load_dotenv", "load_config"]
         calls.append(("settings",))
         return settings
 
     monkeypatch.setattr(web_main.WebSettings, "from_env", settings_from_loaded_env)
+    monkeypatch.setattr(web_main, "load_dotenv", load_runtime_env)
     monkeypatch.setattr(
         web_main,
         "load_config",
@@ -81,11 +86,72 @@ def test_build_app_loads_config_migrates_database_and_wires_dependencies(
 
     assert web_main.build_app() == (settings, app)
     assert calls == [
+        ("load_dotenv", env_file, False),
         ("load_config", (env_file, bindings_file, data_dir / "offsets.json")),
         ("settings",),
         ("repository", settings.database_path),
         ("migrate",),
         ("create_app", (settings, repositories[0], inventory, ["binding"])),
+    ]
+
+
+def test_build_app_uses_data_and_bindings_paths_from_custom_env_file(
+    monkeypatch, tmp_path: Path
+):
+    from tmuxbot.web import __main__ as web_main
+
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    data_dir = tmp_path / "custom-data"
+    bindings_file = tmp_path / "custom-bindings.yaml"
+    env_file = tmp_path / "custom.env"
+    env_file.write_text(
+        f"TMUXBOT_DATA_DIR={data_dir}\nTMUXBOT_BINDINGS={bindings_file}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TMUXBOT_ENV", str(env_file))
+    monkeypatch.delenv("TMUXBOT_DATA_DIR", raising=False)
+    monkeypatch.delenv("TMUXBOT_BINDINGS", raising=False)
+    loaded_paths = []
+    monkeypatch.setattr(web_main, "load_config", lambda *paths: loaded_paths.append(paths))
+    settings = types.SimpleNamespace(database_path=tmp_path / "web.sqlite3")
+    monkeypatch.setattr(web_main.WebSettings, "from_env", lambda: settings)
+    monkeypatch.setattr(web_main.ControlPlaneRepository, "migrate", lambda self: None)
+    monkeypatch.setattr(web_main, "create_app", lambda *args: object())
+
+    web_main.build_app()
+
+    assert loaded_paths == [(env_file, bindings_file, data_dir / "offsets.json")]
+
+
+def test_build_app_preserves_external_paths_over_custom_env_file(
+    monkeypatch, tmp_path: Path
+):
+    from tmuxbot.web import __main__ as web_main
+
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    env_data_dir = tmp_path / "env-data"
+    env_bindings_file = tmp_path / "env-bindings.yaml"
+    external_data_dir = tmp_path / "external-data"
+    external_bindings_file = tmp_path / "external-bindings.yaml"
+    env_file = tmp_path / "custom.env"
+    env_file.write_text(
+        f"TMUXBOT_DATA_DIR={env_data_dir}\nTMUXBOT_BINDINGS={env_bindings_file}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TMUXBOT_ENV", str(env_file))
+    monkeypatch.setenv("TMUXBOT_DATA_DIR", str(external_data_dir))
+    monkeypatch.setenv("TMUXBOT_BINDINGS", str(external_bindings_file))
+    loaded_paths = []
+    monkeypatch.setattr(web_main, "load_config", lambda *paths: loaded_paths.append(paths))
+    settings = types.SimpleNamespace(database_path=tmp_path / "web.sqlite3")
+    monkeypatch.setattr(web_main.WebSettings, "from_env", lambda: settings)
+    monkeypatch.setattr(web_main.ControlPlaneRepository, "migrate", lambda self: None)
+    monkeypatch.setattr(web_main, "create_app", lambda *args: object())
+
+    web_main.build_app()
+
+    assert loaded_paths == [
+        (env_file, external_bindings_file, external_data_dir / "offsets.json")
     ]
 
 

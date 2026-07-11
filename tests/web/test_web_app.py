@@ -42,6 +42,7 @@ def _client(
     secure_cookie: bool = False,
     inventory: FakeInventory | None = None,
     bindings: list[Binding] | None = None,
+    client_host: str = "127.0.0.1",
 ) -> tuple[TestClient, ControlPlaneRepository, FakeInventory]:
     settings = _settings(tmp_path, secure_cookie=secure_cookie)
     repository = ControlPlaneRepository(settings.database_path)
@@ -51,6 +52,7 @@ def _client(
     client = TestClient(
         create_app(settings, repository, fake_inventory, bindings or []),
         base_url=f"{scheme}://testserver",
+        client=(client_host, 50000),
     )
     return client, repository, fake_inventory
 
@@ -115,6 +117,53 @@ def test_setup_is_disabled_after_first_password(tmp_path):
     )
 
     assert response.status_code == 409
+
+
+@pytest.mark.parametrize("client_host", ["127.0.0.1", "127.255.255.254", "::1"])
+def test_setup_allows_ipv4_and_ipv6_loopback_clients(tmp_path, client_host):
+    client, _, _ = _client(tmp_path, client_host=client_host)
+
+    assert _setup(client)
+
+
+def test_setup_rejects_lan_client_without_leaking_details(tmp_path):
+    client, _, _ = _client(tmp_path, client_host="192.168.1.25")
+    submitted_password = "lan client secret password"
+    bootstrap_csrf = _bootstrap(client)
+
+    response = client.post(
+        "/api/auth/setup",
+        json={"password": submitted_password},
+        headers={
+            "X-CSRF-Token": bootstrap_csrf,
+            "X-Forwarded-For": "127.0.0.1",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "setup is only allowed from loopback"}
+    assert submitted_password not in response.text
+    assert client.get("/api/auth/status").json()["configured"] is False
+
+
+def test_configured_login_remains_available_to_lan_clients(tmp_path):
+    loopback_client, _, _ = _client(tmp_path)
+    _setup(loopback_client)
+    lan_client = TestClient(
+        loopback_client.app,
+        base_url="http://testserver",
+        client=("192.168.1.25", 50000),
+    )
+    bootstrap_csrf = _bootstrap(lan_client)
+
+    response = lan_client.post(
+        "/api/auth/login",
+        json={"password": PASSWORD},
+        headers={"X-CSRF-Token": bootstrap_csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["csrf_token"]
 
 
 def test_login_succeeds_and_failure_is_generic(tmp_path):

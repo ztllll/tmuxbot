@@ -8,6 +8,7 @@
 
 ### Added
 
+- Phase 1 Web foundation:独立 control plane 进程、首次设置与会话认证、SQLite 事件存储、只读 tmux inventory/event API。
 - Tmux Runtime V2:provider/channel 归一化契约、精确 session/transcript 绑定、安全串行输入队列、Claude hooks 本地 spool、`off|shadow|on` 灰度路由。
 - Claude/Codex × Telegram/飞书 2×2 回复 envelope 与真实临时 tmux pane E2E 覆盖;tmux 继续是唯一执行面。
 - 项目版本与发布治理基础:版本策略、发布流程、GitHub issue/PR 模板、CI/Dependabot 工作流、贡献/安全/支持文档。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import secrets
 import time
@@ -55,6 +56,17 @@ def create_app(
 
     @app.middleware("http")
     async def enforce_origin(request: Request, call_next):
+        if request.method == "POST" and request.url.path == "/api/auth/setup":
+            client_host = request.client.host if request.client is not None else ""
+            try:
+                is_loopback = ipaddress.ip_address(client_host).is_loopback
+            except ValueError:
+                is_loopback = False
+            if not is_loopback:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "setup is only allowed from loopback"},
+                )
         if request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
             if origin is not None and origin.rstrip("/") != allowed_origin.rstrip("/"):
