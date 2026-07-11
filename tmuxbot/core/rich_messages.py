@@ -48,6 +48,24 @@ class RenderedReply:
     full_text: str | None = None
 
 
+_TELEGRAM_STATE_BADGES = {
+    "working": "🟡 <b>工作中</b>",
+    "waiting": "🟠 <b>等待输入</b>",
+    "completed": "✅ <b>已完成</b>",
+    "idle": "✅ <b>已完成</b>",
+    "error": "🔴 <b>错误/阻塞</b>",
+    "blocked": "🔴 <b>错误/阻塞</b>",
+    "dead": "🔴 <b>错误/阻塞</b>",
+    "info": "🔵 <b>信息</b>",
+}
+
+
+def telegram_state_badge(state: str | None) -> str | None:
+    if state is None:
+        return None
+    return _TELEGRAM_STATE_BADGES.get(state, "⚪ <b>状态未知</b>")
+
+
 def build_reply_document(
     binding: Binding,
     envelope: ReplyEnvelope,
@@ -94,6 +112,9 @@ def render_telegram_document(
     )
     body = "\n\n".join(_render_telegram_block(block) for block in rendered_document.blocks)
     parts = [header]
+    state_badge = telegram_state_badge(rendered_document.state)
+    if state_badge:
+        parts.append(state_badge)
     if body:
         parts.append(body)
     if rendered_document.footer_text:

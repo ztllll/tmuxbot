@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import (
@@ -86,6 +88,39 @@ def test_render_telegram_document_uses_balanced_native_blocks(tmp_path):
     assert "<blockquote expandable>很长的细节</blockquote>" in result.chat_html
     assert '<pre><code class="language-python">print(1)</code></pre>' in result.chat_html
     assert result.chat_html.endswith("<i>Working</i>")
+
+
+@pytest.mark.parametrize(
+    ("display_state", "expected_badge"),
+    [
+        ("working", "🟡 <b>工作中</b>"),
+        ("waiting", "🟠 <b>等待输入</b>"),
+        ("completed", "✅ <b>已完成</b>"),
+        ("idle", "✅ <b>已完成</b>"),
+        ("error", "🔴 <b>错误/阻塞</b>"),
+        ("blocked", "🔴 <b>错误/阻塞</b>"),
+        ("dead", "🔴 <b>错误/阻塞</b>"),
+        ("info", "🔵 <b>信息</b>"),
+        ("unknown", "⚪ <b>状态未知</b>"),
+        (None, None),
+    ],
+)
+def test_render_telegram_document_shows_native_text_state_badge(
+    tmp_path, display_state, expected_badge
+):
+    metadata = {"display_state": display_state} if display_state is not None else {}
+    document = build_reply_document(
+        binding(tmp_path),
+        ReplyEnvelope(title="回复", body="正文", metadata=metadata),
+    )
+
+    result = render_telegram_document(document, full_output_threshold=8000)
+
+    if expected_badge is None:
+        assert "工作中" not in result.chat_html
+        assert "状态未知" not in result.chat_html
+    else:
+        assert f"\n\n{expected_badge}\n\n正文" in result.chat_html
 
 
 def test_reply_summary_removes_markup_and_never_uses_local_path(tmp_path):
