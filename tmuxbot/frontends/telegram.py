@@ -189,6 +189,7 @@ def build_telegram_panel_markup(
     binding: "Binding",
     *,
     confirm_new: bool = False,
+    confirm_restart: bool = False,
 ) -> InlineKeyboardMarkup:
     token = binding_token(binding.name)
     if confirm_new:
@@ -198,6 +199,21 @@ def build_telegram_panel_markup(
                     InlineKeyboardButton(
                         text="确认创建新会话",
                         callback_data=f"panel:{token}:cmd_new",
+                    ),
+                    InlineKeyboardButton(
+                        text="返回面板",
+                        callback_data=f"panel:{token}:refresh",
+                    ),
+                ]
+            ]
+        )
+    if confirm_restart:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="确认重启 CLI",
+                        callback_data=f"panel:{token}:cmd_restart",
                     ),
                     InlineKeyboardButton(
                         text="返回面板",
@@ -225,6 +241,12 @@ def build_telegram_panel_markup(
         [
             InlineKeyboardButton(text="Esc", callback_data=f"panel:{token}:cmd_esc"),
             InlineKeyboardButton(text="Ctrl-C", callback_data=f"panel:{token}:cmd_cc"),
+        ],
+        [
+            InlineKeyboardButton(
+                text="重启 CLI",
+                callback_data=f"panel:{token}:confirm_restart",
+            )
         ],
         [
             InlineKeyboardButton(text="刷新", callback_data=f"panel:{token}:refresh"),
@@ -1261,6 +1283,15 @@ class TelegramFrontend(Frontend):
                     reply_markup=build_telegram_panel_markup(b, confirm_new=True)
                 )
                 await cq.answer("请再次确认")
+                return
+            if action == "confirm_restart":
+                await cq.message.edit_reply_markup(
+                    reply_markup=build_telegram_panel_markup(
+                        b,
+                        confirm_restart=True,
+                    )
+                )
+                await cq.answer("请再次确认重启 CLI")
                 return
             if action == "refresh":
                 await cq.message.edit_text(

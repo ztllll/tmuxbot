@@ -119,6 +119,7 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
         ("切换模型", "cmd_model", "primary"),
         ("Esc", "cmd_esc", "default"),
         ("Ctrl-C", "cmd_cc", "danger"),
+        ("重启 CLI", "cmd_restart", "danger"),
         ("刷新", "refresh_panel", "default"),
         ("关闭", "close_panel", "default"),
     ]
@@ -134,6 +135,14 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
                 "text": {
                     "tag": "plain_text",
                     "content": "这会在当前 tmux CLI 中执行 /new。",
+                },
+            }
+        if action == "cmd_restart":
+            button["confirm"] = {
+                "title": {"tag": "plain_text", "content": "确认重启 CLI？"},
+                "text": {
+                    "tag": "plain_text",
+                    "content": "当前 tmux pane 会退出并重新启动 provider CLI。",
                 },
             }
         elements.append(button)

@@ -77,3 +77,48 @@ def test_ensure_binding_running_waits_for_existing_lock_when_requested():
         assert backend.calls == 2
 
     asyncio.run(run())
+
+
+def test_ensure_binding_running_rebinds_new_transcript_after_cli_restart(
+    tmp_path, monkeypatch
+):
+    old = tmp_path / "old.jsonl"
+    new = tmp_path / "new.jsonl"
+    old.write_text("old")
+    new.write_text("new")
+    commands = iter(["bash", "node"])
+    monkeypatch.setattr("tmuxbot.lifecycle.tmux_pane_command", lambda target: next(commands))
+
+    class RestartingBackend:
+        async def ensure_running(self, binding):
+            return None
+
+        def is_running_command(self, command):
+            return command == "node"
+
+        def find_active_jsonl(self, probe):
+            assert probe.provider_session_id is None
+            assert probe.transcript_path is None
+            return new
+
+        def session_identity(self, binding, transcript):
+            return SimpleNamespace(
+                session_id="new-session",
+                transcript_path=str(transcript),
+            )
+
+    b = binding()
+    b.provider_session_id = "old-session"
+    b.last_session_id = "old-session"
+    b.transcript_path = old
+    state = SimpleNamespace(ensure_locks={})
+
+    asyncio.run(
+        ensure_binding_running(
+            RestartingBackend(), b, state, reason="restart", wait=True
+        )
+    )
+
+    assert b.provider_session_id == "new-session"
+    assert b.last_session_id == "new-session"
+    assert b.transcript_path == new

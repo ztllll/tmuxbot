@@ -44,9 +44,14 @@ def test_feishu_control_panel_is_chinese_and_contains_common_actions(tmp_path):
     assert "必须 @" in labels
     assert "新会话" in labels
     assert "切换模型" in labels
+    assert "重启 CLI" in labels
     assert "cmd_model" in actions
     new_button = next(button for button in buttons if button["text"]["content"] == "新会话")
     assert new_button["confirm"]["title"]["content"] == "确认创建新会话？"
+    restart_button = next(
+        button for button in buttons if button["text"]["content"] == "重启 CLI"
+    )
+    assert restart_button["confirm"]["title"]["content"] == "确认重启 CLI？"
 
 
 def test_feishu_interaction_card_has_remote_tui_controls(tmp_path):

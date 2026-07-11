@@ -22,6 +22,7 @@ _PANEL_ACTION_COMMANDS = {
     "cmd_model": "/model",
     "cmd_esc": "/esc",
     "cmd_cc": "/cc",
+    "cmd_restart": "/restart",
 }
 _PANEL_WRITE_LOCK = threading.Lock()
 

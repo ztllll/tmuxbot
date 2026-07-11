@@ -29,8 +29,11 @@ Interactive controls:
 - Read-only actions: `/status`, `/screen`.
 - Session actions: `/new`, `/compact`, `/resume`.
 - Model action: `切换模型`.
+- Lifecycle action: `重启 CLI`, with a confirmation step before restarting the provider inside the existing tmux pane.
 - TUI controls: `/esc`, `/cc`.
 - Refresh and close panel.
+
+其中“重启 CLI”会先要求二次确认，再在现有 tmux pane 内重启 provider；不会脱离或替换 tmux 执行面。
 
 `/new` uses a confirmation step. Feishu uses the native button confirmation dialog; Telegram replaces the panel keyboard with explicit confirm/back buttons.
 
@@ -69,6 +72,8 @@ The in-memory binding is updated before the callback returns, so the policy chan
 
 - Pure tests for effective mention policy, command parsing, panel text, and atomic persistence.
 - Telegram tests for `/panel` keyboard shape, mention-policy callback ACL, and confirmation behavior.
+- Restart regression coverage verifies that a newly launched CLI session is rebound to its new transcript instead of continuing to tail the previous session file.
+- 重启回归测试确保新 CLI 会话会重新绑定到新 transcript，不再继续监听已经结束的旧会话文件。
 - Feishu tests for Card JSON 2.0 panel structure, callback updates, and interaction controls.
 - Provider-neutral tests proving model action dispatches `/model` rather than a hardcoded model string.
 - Full Ruff and pytest verification followed by live Telegram and Feishu acceptance without changing tmux session counts.
