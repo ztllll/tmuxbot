@@ -59,3 +59,10 @@ The rollout changed only channel rendering, attachment delivery, and card intera
 - Codex Feishu dynamic-state canary `om_x100b6a2d9a79d880c3cf33ee10efd4d` was created yellow and successfully patched green.
 - New replies now use slash commands as the sole operation entry point. Legacy callbacks remain only for already-sent messages.
 - Both Feishu services resumed all configured tailers after restart with no startup traceback.
+
+## 2026-07-11 Telegram state-badge update
+
+- Confirmed against the official Telegram Bot API that Telegram has no Feishu-equivalent colored card header or selectable message background.
+- Added text-native state badges: `🟡 工作中`, `🟠 等待输入`, `✅ 已完成`, `🔴 错误/阻塞`, `🔵 信息`, and `⚪ 状态未知`.
+- Missing state remains unrendered, and Telegram replies remain free of persistent buttons.
+- `ruff check tmuxbot tests` passed; `pytest -q` passed with 169 tests and one upstream lark-oapi deprecation warning.

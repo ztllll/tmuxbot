@@ -28,11 +28,11 @@
 - Consumes: `ReplyDocument.state: str | None`
 - Produces: `telegram_state_badge(state: str | None) -> str | None`
 
-- [ ] **Step 1: Write a parameterized failing test** covering working, waiting, completed, idle, error, blocked, dead, info, unknown, and `None`.
-- [ ] **Step 2: Run** `.venv/bin/pytest tests/test_rich_messages.py -q` and confirm the badge assertions fail because no status line exists.
-- [ ] **Step 3: Implement the minimal state mapping** and insert its result between the Telegram reply header and body.
-- [ ] **Step 4: Run** `.venv/bin/pytest tests/test_rich_messages.py tests/test_telegram_replies.py -q` and confirm all tests pass.
-- [ ] **Step 5: Commit** with `git commit -m "feat: show runtime state in Telegram replies"`.
+- [x] **Step 1: Write a parameterized failing test** covering working, waiting, completed, idle, error, blocked, dead, info, unknown, and `None`.
+- [x] **Step 2: Run** `.venv/bin/pytest tests/test_rich_messages.py -q` and confirm the badge assertions fail because no status line exists.
+- [x] **Step 3: Implement the minimal state mapping** and insert its result between the Telegram reply header and body.
+- [x] **Step 4: Run** `.venv/bin/pytest tests/test_rich_messages.py tests/test_telegram_replies.py -q` and confirm all tests pass.
+- [x] **Step 5: Commit** with `git commit -m "feat: show runtime state in Telegram replies"`.
 
 ### Task 2: Platform capability documentation / 平台能力文档
 
@@ -43,7 +43,7 @@
 **Interfaces:**
 - Documents the same mapping implemented by `telegram_state_badge()`.
 
-- [ ] **Step 1: Update README** with a concise Feishu-native versus Telegram-text comparison.
-- [ ] **Step 2: Update the Chinese design guide** with the Telegram mapping table and Bot API limitation.
-- [ ] **Step 3: Run** `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
+- [x] **Step 1: Update README** with a concise Feishu-native versus Telegram-text comparison.
+- [x] **Step 2: Update the Chinese design guide** with the Telegram mapping table and Bot API limitation.
+- [x] **Step 3: Run** `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
 - [ ] **Step 4: Commit and push** the documentation, then deploy without changing tmux session counts.

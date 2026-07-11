@@ -27,6 +27,21 @@ tmux 仍是唯一执行核心。Codex 和 Claude 继续运行在原有 tmux pane
 
 CardKit 流式卡片创建时固定显示黄色；成功结束时关闭为绿色。最终回复若检测到等待状态则为橙色，检测到阻塞或进程异常则为红色。
 
+## Telegram 的等价显示
+
+Telegram Bot API 没有飞书 Card JSON 2.0 的 `header.template`，机器人不能指定消息背景色或彩色标题栏。因此 Telegram 使用 Emoji 加粗文本表达相同语义：
+
+| 状态 | Telegram 显示 | 飞书对应颜色 |
+| --- | --- | --- |
+| `working` | `🟡 工作中` | 黄色 |
+| `waiting` | `🟠 等待输入` | 橙色 |
+| `completed` / `idle` | `✅ 已完成` | 绿色 |
+| `error` / `blocked` / `dead` | `🔴 错误/阻塞` | 红色 |
+| `info` | `🔵 信息` | 蓝色 |
+| 明确但无法识别的状态 | `⚪ 状态未知` | 灰色 |
+
+状态标识位于回复标题和正文之间。没有状态信息的普通消息不增加状态行。Telegram 仍可使用 HTML 富文本、可展开引用、消息编辑、typing 和 reaction，但这些能力不能提供飞书式原生卡片颜色。
+
 ## 渲染约束
 
 - `ReplyEnvelope.metadata["display_state"]` 可显式覆盖终端推导状态。
@@ -37,6 +52,7 @@ CardKit 流式卡片创建时固定显示黄色；成功结束时关闭为绿色
 ## 验收标准
 
 - Codex、Claude 在 Telegram、飞书的新增回复均无常驻按钮。
+- Telegram 已知状态使用 Emoji 加粗状态标识，未知或缺失状态保持兼容展示。
 - 飞书工作中、等待、完成、错误卡片分别显示黄色、橙色、绿色、红色。
 - 流式卡片从黄色开始，成功完成后变为绿色。
 - 附件、长文本文件、消息编辑和 tmux 会话保持原有行为。

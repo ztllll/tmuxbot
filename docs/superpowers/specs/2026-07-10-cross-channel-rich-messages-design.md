@@ -76,6 +76,7 @@ This scanner is a compatibility fallback, not a substitute for structured attach
 Telegram keeps the current proven interaction model:
 
 - HTML for the initial implementation, with escaped text and balanced tags per split chunk.
+- A compact text-native state badge between header and body: yellow-circle working, orange-circle waiting, check-mark completed/idle, red-circle error/blocked/dead, blue-circle information, and white-circle unknown. Telegram has no Feishu-equivalent API for selecting a colored card header or message background.
 - No persistent inline keyboard; users operate tmux through `/screen`, `/status`, `/esc`, `/cc`, and the existing command set.
 - Expandable blockquotes for verbose diagnostics where supported.
 - Link previews disabled by default for CLI output and enabled only through explicit metadata.
