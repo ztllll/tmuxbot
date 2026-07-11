@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from tmuxbot.attachments import attachment_prompt
 from tmuxbot.runtime.tmux_runtime import TmuxRuntime
 
 
@@ -59,6 +60,28 @@ def test_paste_settles_before_enter():
         "sleep:0.5",
         "key:Enter",
     ]
+
+
+@pytest.mark.parametrize("backend_name", ["claude_code", "codex"])
+def test_multiline_attachment_prompt_is_submitted_after_settle(tmp_path, backend_name):
+    image = tmp_path / "input.png"
+    image.write_bytes(b"png")
+    prompt = attachment_prompt("检查图片", [image], backend_name=backend_name)
+    fake = FakeTmux()
+
+    asyncio.run(runtime_for(fake).send_text("pane", prompt))
+
+    assert "\n" in prompt
+    assert fake.operations[-2:] == ["sleep:0.5", "key:Enter"]
+    assert fake.pasted == [prompt]
+
+
+def test_zero_post_paste_delay_submits_immediately_after_paste():
+    fake = FakeTmux()
+
+    asyncio.run(runtime_for(fake, post_paste_delay=0).send_text("pane", "prompt"))
+
+    assert fake.operations == ["inspect", "paste:prompt", "key:Enter"]
 
 
 def test_without_enter_skips_settle_delay_and_key():
