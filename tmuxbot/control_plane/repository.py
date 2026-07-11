@@ -24,9 +24,6 @@ class ControlPlaneRepository:
         connection.execute("PRAGMA journal_mode = WAL")
         return connection
 
-    def _begin_migration(self, connection: sqlite3.Connection) -> None:
-        connection.execute("BEGIN IMMEDIATE")
-
     def migrate(self) -> None:
         versions = [version for version, _sql in MIGRATIONS]
         if any(current <= previous for previous, current in zip(versions, versions[1:])):
@@ -35,7 +32,7 @@ class ControlPlaneRepository:
 
         db = self._connect()
         try:
-            self._begin_migration(db)
+            db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
