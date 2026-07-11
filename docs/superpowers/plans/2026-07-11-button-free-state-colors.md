@@ -33,11 +33,11 @@
 - New renderers ignore `ReplyEnvelope.actions`.
 - `TelegramFrontend.capabilities.supports_actions` and `FeishuFrontend.capabilities.supports_actions` become `False`.
 
-- [ ] Write failing tests asserting no Telegram `reply_markup`, no Feishu `button` elements, and both capabilities are false.
-- [ ] Run targeted tests and verify failures against current button-producing behavior.
-- [ ] Remove assistant-reply keyboard/card button generation while retaining old callback handlers.
-- [ ] Run targeted tests and verify pass.
-- [ ] Commit with `git commit -m "feat: remove persistent reply buttons"`.
+- [x] Write failing tests asserting no Telegram `reply_markup`, no Feishu `button` elements, and both capabilities are false.
+- [x] Run targeted tests and verify failures against current button-producing behavior.
+- [x] Remove assistant-reply keyboard/card button generation while retaining old callback handlers.
+- [x] Run targeted tests and verify pass.
+- [x] Commit with `git commit -m "feat: remove persistent reply buttons"`.
 
 ### Task 2: Add state-aware Feishu presentation / 增加飞书状态色
 
@@ -54,12 +54,12 @@
 - `ReplyEnvelope.metadata["display_state"]` overrides terminal-derived state.
 - Card template mapping: `working=yellow`, `waiting=orange`, `completed|idle=green`, `error|blocked|dead=red`, `info=blue`, fallback `grey`.
 
-- [ ] Write failing tests for every state color, streaming start yellow, streaming final green, and notation footer structure.
-- [ ] Run targeted tests and verify the current blue-working/note/grey-final behavior fails.
-- [ ] Implement display-state override, template mapping, streaming overrides, and `div` notation footer.
-- [ ] Mark final assistant replies completed unless normalized status is waiting/error; mark informational status cards info.
-- [ ] Run targeted tests and verify pass.
-- [ ] Commit with `git commit -m "feat: color Feishu cards by runtime state"`.
+- [x] Write failing tests for every state color, streaming start yellow, streaming final green, and notation footer structure.
+- [x] Run targeted tests and verify the current blue-working/note/grey-final behavior fails.
+- [x] Implement display-state override, template mapping, streaming overrides, and `div` notation footer.
+- [x] Mark final assistant replies completed unless normalized status is waiting/error; mark informational status cards info.
+- [x] Run targeted tests and verify pass.
+- [x] Commit with `git commit -m "feat: color Feishu cards by runtime state"`.
 
 ### Task 3: Bilingual documentation and rollout / 双语文档与部署
 
@@ -72,8 +72,8 @@
 - English implementation documents remain canonical for agents.
 - Chinese companion documents explain user-visible behavior and acceptance results.
 
-- [ ] Write the Chinese companion design and update README behavior descriptions.
-- [ ] Run `ruff check tmuxbot tests` and the full `pytest -q` suite.
-- [ ] Deploy locally and to both hbhy Feishu services without changing tmux sessions.
-- [ ] Send Telegram and Feishu acceptance messages and verify no buttons plus correct colors.
-- [ ] Record rollout evidence, commit, push, and synchronize hbhy.
+- [x] Write the Chinese companion design and update README behavior descriptions.
+- [x] Run `ruff check tmuxbot tests` and the full `pytest -q` suite.
+- [x] Deploy locally and to both hbhy Feishu services without changing tmux sessions.
+- [x] Send Telegram and Feishu acceptance messages and verify no buttons plus correct colors.
+- [x] Record rollout evidence, commit, push, and synchronize hbhy.

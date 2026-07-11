@@ -47,3 +47,15 @@ Branch: `productization-prep`
 ## Runtime boundary
 
 The rollout changed only channel rendering, attachment delivery, and card interaction handling. Provider execution remains inside the pre-existing tmux panes; no tmux session was replaced by a headless provider process.
+
+## 2026-07-11 button-free state-color update
+
+- Deployed code commit `ea4b4d7` from `productization-prep` locally and on hbhy.
+- `ruff check tmuxbot tests` passed; `pytest -q` passed with 159 tests and the same upstream lark-oapi deprecation warning.
+- Local `tmuxbot.service` restarted active; local tmux session count remained 6 before and after restart.
+- hbhy `tmuxbot.service` and `tmuxbot-codex.service` restarted active; remote tmux session count remained 21 before and after restart.
+- Telegram Codex acceptance message `1042` was delivered with `reply_markup=None`.
+- Claude Feishu acceptance message `om_x100b6a2d9de82cacc4908d1439ed2d0` and Codex Feishu acceptance message `om_x100b6a2d9df9dcb8c3793dd116c4fa7` were delivered as green Card JSON 2.0 cards with zero button elements.
+- Codex Feishu dynamic-state canary `om_x100b6a2d9a79d880c3cf33ee10efd4d` was created yellow and successfully patched green.
+- New replies now use slash commands as the sole operation entry point. Legacy callbacks remain only for already-sent messages.
+- Both Feishu services resumed all configured tailers after restart with no startup traceback.
