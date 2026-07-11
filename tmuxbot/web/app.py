@@ -610,7 +610,14 @@ def create_app(
         raw["bindings"] = entries
         write_private_text(paths.env_file, rendered_env)
         write_private_text(paths.bindings_file, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
-        return {"channel": body.channel, "configured": True, "binding_name": binding_name, "restart_required": True}
+        bridge_snapshot = app.state.bridge_status() if callable(app.state.bridge_status) else {}
+        restart_required = bridge_snapshot.get("state") == "running"
+        return {
+            "channel": body.channel,
+            "configured": True,
+            "binding_name": binding_name,
+            "restart_required": restart_required,
+        }
 
     @app.get("/api/system/status")
     def system_status(

@@ -93,3 +93,25 @@ def test_bridge_argv_and_setup_grant_not_in_child_environment(tmp_path: Path) ->
     assert observed
     assert observed[0][0] == [sys.executable, "-m", "tmuxbot", "bridge"]
     assert "TMUXBOT_SETUP_GRANT" not in observed[0][1]
+
+
+def test_readiness_loads_credentials_written_by_webui(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure_private_directories()
+    paths.env_file.write_text("TG_CODEX_BOT_TOKEN=123:abc\n", encoding="utf-8")
+    paths.bindings_file.write_text(
+        "bindings:\n"
+        "  - name: demo\n"
+        "    chat_id: 1\n"
+        "    thread_id: 0\n"
+        "    bot_token_env: TG_CODEX_BOT_TOKEN\n"
+        "    backend: codex\n"
+        "    tmux_session: demo\n"
+        "    cwd: /tmp\n",
+        encoding="utf-8",
+    )
+
+    readiness = inspect_bridge_readiness(paths, {})
+
+    assert readiness.runnable is True
+    assert readiness.frontend_count == 1

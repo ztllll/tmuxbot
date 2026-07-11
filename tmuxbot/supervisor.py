@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import dotenv_values
 
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
@@ -46,6 +47,11 @@ def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
 def inspect_bridge_readiness(
     paths: RuntimePaths, environ: Mapping[str, str]
 ) -> BridgeReadiness:
+    effective_environ = dict(environ)
+    if paths.env_file.is_file():
+        effective_environ.update(
+            {key: value for key, value in dotenv_values(paths.env_file).items() if value is not None}
+        )
     if not paths.bindings_file.exists():
         return BridgeReadiness(False, "bindings_missing", 0, 0)
     try:
@@ -61,12 +67,12 @@ def inspect_bridge_readiness(
     frontends: set[tuple[str, str]] = set()
     for binding in bindings:
         if binding.channel == "telegram":
-            token = environ.get(binding.bot_token_env, "")
+            token = effective_environ.get(binding.bot_token_env, "")
             if token and ":" in token:
                 frontends.add((binding.channel, binding.bot_token_env))
         else:
             key = binding.bot_token_env
-            if environ.get(f"{key}_APP_ID") and environ.get(f"{key}_APP_SECRET"):
+            if effective_environ.get(f"{key}_APP_ID") and effective_environ.get(f"{key}_APP_SECRET"):
                 frontends.add((binding.channel, key))
     if not frontends:
         return BridgeReadiness(False, "credentials_missing", len(bindings), 0)
@@ -127,6 +133,14 @@ class BridgeSupervisor:
                     break
 
                 child_env = dict(self.environ)
+                if self.paths.env_file.is_file():
+                    child_env.update(
+                        {
+                            key: value
+                            for key, value in dotenv_values(self.paths.env_file).items()
+                            if value is not None
+                        }
+                    )
                 for key in tuple(child_env):
                     if "SETUP_GRANT" in key:
                         child_env.pop(key, None)
