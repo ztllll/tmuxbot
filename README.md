@@ -111,6 +111,25 @@ systemctl --user stop tmuxbot
 
 bot crash 后 5 秒内自动拉起,无需手动守护。
 
+### Web control plane (Phase 1)
+
+Web control plane 是独立进程,不会启动 Telegram polling 或飞书 WebSocket。安装 Web
+依赖并单独启动:
+
+```bash
+pip install -e ".[web]"
+tmuxbot web
+# 等价入口: python -m tmuxbot.web
+```
+
+默认监听 `127.0.0.1:8765`,配置项见 `.env.example`。Phase 1 仅提供认证、只读 tmux
+inventory 和 event API,不含终端 PTY、会话 adopt/archive、调度器或前端页面。
+
+**不要把 Web 端口直接暴露到公网。** 远程访问应通过带 TLS 和访问控制的反向代理,
+并设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 与准确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
+`deploy/systemd/tmuxbot-web.service` 提供独立 unit 示例;其中凭证只从 `.env` 读取,
+不会出现在 `ExecStart` 命令行。
+
 ---
 
 ## 当前能力

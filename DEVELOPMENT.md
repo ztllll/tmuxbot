@@ -23,10 +23,12 @@ tmuxbot/                       ← 仓库根
 │   └── status.sh              ← 看进程 / session / 日志
 ├── deploy/
 │   └── systemd/
-│       └── tmuxbot.service    ← systemd user unit (Restart=always, MemoryMax=4G)
+│       ├── tmuxbot.service     ← IM bridge systemd user unit
+│       └── tmuxbot-web.service ← Web control plane 独立 unit
 ├── tmuxbot/                   ← Python package
 │   ├── __init__.py
 │   ├── __main__.py            ← 装配入口: backends + frontends + tailer/heartbeat
+│   ├── web/                   ← 独立 Web 进程、认证与只读 control-plane API
 │   ├── state.py               ← Binding + State + fire()
 │   ├── config.py              ← .env + bindings.yaml + offsets.json → State
 │   ├── utils.py               ← encode_cwd / cwidth / render_table / offsets debounced
@@ -272,6 +274,25 @@ Codex 的 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 路径不编码 cwd,bac
 ---
 
 ## 6. 部署
+
+### Web control plane 独立进程
+
+Web 进程与 Telegram/飞书 bridge 分开启动:
+
+```bash
+uv sync --extra dev --extra web
+uv run tmuxbot web
+# 等价: uv run python -m tmuxbot.web
+```
+
+启动流程为 `load_config()` → `WebSettings.from_env()` → SQLite migration →
+FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。Phase 1 仅包含
+认证后的只读 inventory/event API。默认只监听 `127.0.0.1:8765`。
+
+**禁止将该端口直接暴露到公网。** 需要远程访问时,使用 TLS 反向代理,
+设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 和精确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
+`deploy/systemd/tmuxbot-web.service` 通过 `EnvironmentFile` 读取配置与密钥,
+不在 `ExecStart` 中传递密码或 secret。根据实际安装位置修改 unit 内两个绝对路径。
 
 ### 开发启动 (tmux session)
 

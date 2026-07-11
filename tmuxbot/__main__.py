@@ -297,17 +297,30 @@ async def main() -> None:
         log.info("bye")
 
 
-def run(argv: list[str] | None = None) -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tmuxbot",
-        description="Telegram/Feishu <-> tmux AI CLI TUI bridge",
+        description="Telegram/Feishu/WebUI <-> tmux AI CLI control plane",
     )
     parser.add_argument(
         "--version",
         action="version",
         version=f"tmuxbot {__version__}",
     )
-    parser.parse_args(argv)
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.add_parser("bridge", help="run Telegram and Feishu bridge")
+    subparsers.add_parser("web", help="run the WebUI control plane")
+    parser.set_defaults(command="bridge")
+    return parser
+
+
+def run(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+    if args.command == "web":
+        from tmuxbot.web.__main__ import run_web
+
+        run_web()
+        return
     asyncio.run(main())
 
 
