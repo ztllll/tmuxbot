@@ -13,11 +13,14 @@ class FeishuCardTooLarge(ValueError):
 
 
 _STATE_TEMPLATES = {
-    "working": "blue",
+    "working": "yellow",
     "idle": "green",
+    "completed": "green",
     "waiting": "orange",
     "blocked": "red",
     "dead": "red",
+    "error": "red",
+    "info": "blue",
 }
 
 def build_feishu_card_v2(
@@ -31,14 +34,14 @@ def build_feishu_card_v2(
     if document.footer_text:
         elements.append(
             {
-                "tag": "note",
+                "tag": "div",
                 "element_id": "reply_status",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": document.footer_text,
-                    }
-                ],
+                "text": {
+                    "tag": "plain_text",
+                    "content": document.footer_text,
+                    "text_size": "notation",
+                    "text_color": "grey",
+                },
             }
         )
 
@@ -53,7 +56,10 @@ def build_feishu_card_v2(
     header: dict[str, Any] = {
         "title": {"tag": "plain_text", "content": document.title},
         "subtitle": {"tag": "plain_text", "content": document.binding_name},
-        "template": _STATE_TEMPLATES.get(document.state or "", "grey"),
+        "template": _STATE_TEMPLATES.get(
+            "working" if streaming else document.state or "",
+            "grey",
+        ),
         "padding": "12px 12px 12px 12px",
     }
     if document.provider:

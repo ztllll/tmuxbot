@@ -137,8 +137,48 @@ def test_feishu_frontend_uses_cardkit_stream_and_closes_without_actions(tmp_path
 
     assert calls[0][0:2] == ("create", "oc_alpha")
     assert calls[0][2]["config"]["streaming_mode"] is True
+    assert calls[0][2]["header"]["template"] == "yellow"
     assert calls[1][0:4] == ("update", "card-1", "reply_body_0", "正在检查")
     assert calls[2][0:2] == ("close", "card-1")
     assert calls[2][2]["config"]["streaming_mode"] is False
+    assert calls[2][2]["header"]["template"] == "green"
     assert not any(item["tag"] == "button" for item in calls[2][2]["body"]["elements"])
     assert frontend._streaming_cards == {}
+
+
+def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
+    cards = []
+    b = Binding(
+        name="alpha",
+        chat_id="oc_alpha",
+        thread_id=None,
+        tmux_session="alpha",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=Path(tmp_path),
+        backend="codex",
+        channel="feishu",
+    )
+    frontend = FeishuFrontend.__new__(FeishuFrontend)
+    frontend.bindings = [b]
+    frontend.card_v2_enabled = True
+    frontend._outbound_message_ids = set()
+    frontend._v2_message_ids = set()
+    frontend._v2_message_states = {}
+    frontend._send_card_sync = lambda chat_id, content: (
+        cards.append(("send", json.loads(content))) or "om-1"
+    )
+    frontend._patch_card_sync = lambda message_id, content: (
+        cards.append(("edit", json.loads(content))) or True
+    )
+
+    async def run():
+        message = await frontend.send_status_html(
+            b.chat_id, b.thread_id, "工作中", display_state="working"
+        )
+        await frontend.edit_html(b.chat_id, message.message_id, "仍在工作")
+
+    asyncio.run(run())
+
+    assert cards[0][1]["header"]["template"] == "yellow"
+    assert cards[1][1]["header"]["template"] == "yellow"

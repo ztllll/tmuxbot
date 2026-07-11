@@ -55,7 +55,12 @@ def build_reply_document(
 ) -> ReplyDocument:
     source = envelope.body
     provider = envelope.metadata.get("provider") or binding.backend
-    state = envelope.footer.state.value if envelope.footer is not None else None
+    display_state = envelope.metadata.get("display_state")
+    state = (
+        str(display_state)
+        if display_state
+        else envelope.footer.state.value if envelope.footer is not None else None
+    )
     return ReplyDocument(
         title=envelope.title or "回复",
         binding_name=binding.name,

@@ -50,7 +50,7 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert card["config"]["summary"]["content"].startswith("结论 完成 部署")
     assert card["header"]["title"]["content"] == "回复"
     assert card["header"]["subtitle"]["content"] == "alpha"
-    assert card["header"]["template"] == "blue"
+    assert card["header"]["template"] == "yellow"
     tags = [item["text"]["content"] for item in card["header"]["text_tag_list"]]
     assert tags == ["claude_code"]
 
@@ -62,9 +62,54 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert "## 结论" in markdown
     assert "完成 **部署**。" in markdown
     assert "```bash\necho ok\n```" in markdown
-    assert any(element["tag"] == "note" for element in elements)
+    assert not any(element["tag"] == "note" for element in elements)
+    status = next(element for element in elements if element["element_id"] == "reply_status")
+    assert status["tag"] == "div"
+    assert status["text"]["text_size"] == "notation"
+    assert status["text"]["text_color"] == "grey"
 
     assert not any(element["tag"] == "button" for element in elements)
+
+
+@pytest.mark.parametrize(
+    ("display_state", "template"),
+    [
+        ("working", "yellow"),
+        ("waiting", "orange"),
+        ("completed", "green"),
+        ("idle", "green"),
+        ("blocked", "red"),
+        ("dead", "red"),
+        ("error", "red"),
+        ("info", "blue"),
+        ("unknown", "grey"),
+    ],
+)
+def test_build_feishu_card_v2_maps_display_state_to_header_color(
+    tmp_path, display_state, template
+):
+    b = binding(tmp_path)
+    document = build_reply_document(
+        b,
+        ReplyEnvelope(
+            title="回复",
+            body="内容",
+            metadata={"display_state": display_state},
+        ),
+    )
+
+    card = build_feishu_card_v2(document, binding_token(b.name))
+
+    assert card["header"]["template"] == template
+
+
+def test_build_feishu_streaming_card_is_working_yellow(tmp_path):
+    b = binding(tmp_path)
+    document = build_reply_document(b, ReplyEnvelope(title="回复", body="正在处理"))
+
+    card = build_feishu_card_v2(document, binding_token(b.name), streaming=True)
+
+    assert card["header"]["template"] == "yellow"
 
 
 def test_build_feishu_interrupt_confirmation_card_uses_confirmed_action(tmp_path):

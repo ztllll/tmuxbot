@@ -272,6 +272,7 @@ class FeishuFrontend(Frontend):
         )
         self._outbound_message_ids: set[str] = set()
         self._v2_message_ids: set[str] = set()
+        self._v2_message_states: dict[str, str] = {}
         self._streaming_cards: dict[str, FeishuStreamingSession] = {}
         self.channel_adapter = FeishuChannelAdapter(
             bot_open_id=self.bot_open_id,
@@ -554,6 +555,22 @@ class FeishuFrontend(Frontend):
 
     async def send_html(self, chat_id: int | str, thread_id: int | None, html_text: str) -> Any:
         """发送 Card JSON 2.0；不可用时降级旧版 interactive card。"""
+        return await self.send_status_html(
+            chat_id,
+            thread_id,
+            html_text,
+            display_state="unknown",
+        )
+
+    async def send_status_html(
+        self,
+        chat_id: int | str,
+        thread_id: int | None,
+        html_text: str,
+        *,
+        display_state: str,
+    ) -> Any:
+        """发送带语义状态颜色的 Card JSON 2.0。"""
         md = _html_to_feishu_md(html_text)
         message_id = None
         used_v2 = False
@@ -561,7 +578,11 @@ class FeishuFrontend(Frontend):
         if binding is not None and getattr(self, "card_v2_enabled", True):
             document = build_reply_document(
                 binding,
-                ReplyEnvelope(title="tmuxbot", body=html_text),
+                ReplyEnvelope(
+                    title="tmuxbot",
+                    body=html_text,
+                    metadata={"display_state": display_state},
+                ),
             )
             card_json = serialize_feishu_card(
                 build_feishu_card_v2(document, binding_token(binding.name))
@@ -579,6 +600,9 @@ class FeishuFrontend(Frontend):
         self._remember_outbound_message(message_id)
         if used_v2:
             self._remember_v2_message(message_id)
+            if not hasattr(self, "_v2_message_states"):
+                self._v2_message_states = {}
+            self._v2_message_states[message_id] = display_state
         return _make_fake_msg(message_id)
 
     async def edit_html(self, chat_id: int | str, message_id: str, html_text: str) -> None:
@@ -588,7 +612,15 @@ class FeishuFrontend(Frontend):
             if binding is not None:
                 document = build_reply_document(
                     binding,
-                    ReplyEnvelope(title="tmuxbot", body=html_text),
+                    ReplyEnvelope(
+                        title="tmuxbot",
+                        body=html_text,
+                        metadata={
+                            "display_state": getattr(
+                                self, "_v2_message_states", {}
+                            ).get(message_id, "unknown")
+                        },
+                    ),
                 )
                 card_json = serialize_feishu_card(
                     build_feishu_card_v2(document, binding_token(binding.name))
@@ -842,6 +874,7 @@ class FeishuFrontend(Frontend):
                 ReplyEnvelope(
                     title="回复",
                     body=html_text,
+                    metadata={"display_state": "completed"},
                 ),
             )
             card = build_feishu_card_v2(document, binding_token(b.name), streaming=False)
@@ -853,6 +886,7 @@ class FeishuFrontend(Frontend):
                     ReplyEnvelope(
                         title="回复",
                         body=html_text,
+                        metadata={"display_state": "completed"},
                     ),
                 )
             return

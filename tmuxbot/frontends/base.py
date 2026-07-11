@@ -80,6 +80,17 @@ class Frontend(ABC):
         """发 TUI 交互卡。默认降级为普通 HTML, 支持按钮的前端可覆盖。"""
         return await self.send_html(chat_id, thread_id, html_text)
 
+    async def send_status_html(
+        self,
+        chat_id: int,
+        thread_id: int | None,
+        html_text: str,
+        *,
+        display_state: str,
+    ) -> Any:
+        """Send state-aware status content; unsupported channels render normal HTML."""
+        return await self.send_html(chat_id, thread_id, html_text)
+
     async def send_reply_stream_start(
         self, binding: "Binding", html_text: str
     ) -> Any:

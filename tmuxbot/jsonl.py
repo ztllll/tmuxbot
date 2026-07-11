@@ -290,7 +290,12 @@ async def on_tmux_event(
         # 新建 aggregator: 发首条 + 缓存 msg_id + 启动 idle watcher
         header = "💭 <b>工作中…</b>"
         initial_html = header + "\n" + body
-        msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
+        msg = await frontend.send_status_html(
+            b.chat_id,
+            b.thread_id,
+            initial_html,
+            display_state="working",
+        )
         if msg is not None and hasattr(msg, "message_id"):
             state.tool_aggregator[b.name] = {
                 "msg_id": msg.message_id,
@@ -326,12 +331,21 @@ async def _send_assistant_reply(
     except Exception:
         log.exception("[%s] provider status capture failed", b.name)
         status = None
+    if status is None:
+        display_state = "completed"
+    elif status.state.value in {"blocked", "dead"}:
+        display_state = "error"
+    elif status.state.value == "waiting":
+        display_state = "waiting"
+    else:
+        display_state = "completed"
     envelope = ReplyEnvelope(
         title="回复",
         body=clean_text,
         footer=status,
         attachments=tuple(str(a.path) for a in attachments),
         actions=("screen", "status", "cancel", "interrupt"),
+        metadata={"display_state": display_state},
     )
     await frontend.send_assistant_reply(b, envelope)
 

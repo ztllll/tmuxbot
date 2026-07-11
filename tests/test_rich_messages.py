@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import (
     build_reply_document,
@@ -52,6 +53,20 @@ def test_build_reply_document_parses_common_blocks_without_provider_tail_heurist
     assert document.blocks[-1].text == "claude-opus-4-7"
     assert document.provider == "codex"
     assert document.actions == ("screen", "status")
+
+
+def test_build_reply_document_display_state_overrides_terminal_state(tmp_path):
+    document = build_reply_document(
+        binding(tmp_path),
+        ReplyEnvelope(
+            title="回复",
+            body="完成",
+            footer=TerminalStatus(state=TerminalState.WORKING),
+            metadata={"display_state": "completed"},
+        ),
+    )
+
+    assert document.state == "completed"
 
 
 def test_render_telegram_document_uses_balanced_native_blocks(tmp_path):
