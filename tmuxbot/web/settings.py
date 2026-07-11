@@ -14,8 +14,8 @@ class WebSettings:
     port: int
     database_path: Path
     secure_cookie: bool
-    setup_token: str | None = None
     session_ttl_seconds: int = 86_400
+    setup_token: str | None = None
 
     @classmethod
     def from_env(cls) -> "WebSettings":
@@ -32,9 +32,12 @@ class WebSettings:
             raise ValueError("TMUXBOT_WEB_PORT must be an integer from 1 to 65535")
         setup_token_value = os.getenv("TMUXBOT_WEB_SETUP_TOKEN")
         setup_token = setup_token_value.strip() if setup_token_value is not None else None
-        if setup_token is not None and len(setup_token) < 24:
+        if setup_token is not None and (
+            len(setup_token) < 24 or not setup_token.isascii()
+        ):
             raise ValueError(
-                "TMUXBOT_WEB_SETUP_TOKEN must be at least 24 characters"
+                "TMUXBOT_WEB_SETUP_TOKEN must be an ASCII string "
+                "at least 24 characters long"
             )
         return cls(
             host=os.getenv("TMUXBOT_WEB_HOST", "127.0.0.1").strip(),

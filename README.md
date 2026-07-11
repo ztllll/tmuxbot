@@ -142,7 +142,7 @@ export CSRF_TOKEN='<csrf_token from the previous response>'
 export SETUP_TOKEN='<TMUXBOT_WEB_SETUP_TOKEN from the local .env>'
 
 # 3. setup 同时需要 CSRF 与一次性 setup secret
-curl -sS -b /tmp/tmuxbot-web.cookies \
+curl -sS -b /tmp/tmuxbot-web.cookies -c /tmp/tmuxbot-web.cookies \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -H "X-Setup-Token: ${SETUP_TOKEN}" \
   -H 'Content-Type: application/json' \

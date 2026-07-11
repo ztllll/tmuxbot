@@ -302,7 +302,7 @@ curl -sS -c /tmp/tmuxbot-web.cookies \
   http://127.0.0.1:8765/api/auth/status
 export CSRF_TOKEN='<csrf_token from the previous response>'
 export SETUP_TOKEN='<TMUXBOT_WEB_SETUP_TOKEN from the local .env>'
-curl -sS -b /tmp/tmuxbot-web.cookies \
+curl -sS -b /tmp/tmuxbot-web.cookies -c /tmp/tmuxbot-web.cookies \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -H "X-Setup-Token: ${SETUP_TOKEN}" \
   -H 'Content-Type: application/json' \

@@ -168,7 +168,8 @@ def test_build_app_fails_fast_for_short_setup_token(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(web_main, "load_config", lambda *paths: None)
 
     with pytest.raises(
-        ValueError, match="TMUXBOT_WEB_SETUP_TOKEN must be at least 24 characters"
+        ValueError,
+        match="TMUXBOT_WEB_SETUP_TOKEN must be an ASCII string at least 24 characters long",
     ):
         web_main.build_app()
 

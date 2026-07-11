@@ -24,6 +24,13 @@ def test_web_settings_are_local_and_secure_by_default(monkeypatch, tmp_path: Pat
     assert settings.setup_token is None
 
 
+def test_web_settings_preserve_five_positional_argument_compatibility(tmp_path: Path):
+    settings = WebSettings("127.0.0.1", 8765, tmp_path / "web.sqlite3", False, 7200)
+
+    assert settings.session_ttl_seconds == 7200
+    assert settings.setup_token is None
+
+
 def test_web_settings_parse_explicit_remote_deployment(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("TMUXBOT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TMUXBOT_WEB_HOST", "0.0.0.0")
@@ -61,14 +68,18 @@ def test_web_settings_reject_invalid_port(monkeypatch, tmp_path: Path, port: str
         WebSettings.from_env()
 
 
-@pytest.mark.parametrize("setup_token", ["", "   ", "short-setup-token"])
-def test_web_settings_reject_short_setup_token(
+@pytest.mark.parametrize(
+    "setup_token",
+    ["", "   ", "short-setup-token", "密" * 24],
+)
+def test_web_settings_reject_invalid_setup_token(
     monkeypatch, tmp_path: Path, setup_token: str
 ):
     monkeypatch.setenv("TMUXBOT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("TMUXBOT_WEB_SETUP_TOKEN", setup_token)
 
     with pytest.raises(
-        ValueError, match="TMUXBOT_WEB_SETUP_TOKEN must be at least 24 characters"
+        ValueError,
+        match="TMUXBOT_WEB_SETUP_TOKEN must be an ASCII string at least 24 characters long",
     ):
         WebSettings.from_env()
