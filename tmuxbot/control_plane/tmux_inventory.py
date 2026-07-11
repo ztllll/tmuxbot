@@ -11,10 +11,24 @@ from tmuxbot.control_plane.models import (
 from tmuxbot.state import Binding
 
 
-TMUX_FORMAT = (
-    "#{session_name}\t#{window_index}\t#{pane_index}\t"
-    "#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}"
+TMUX_FIELD_SEPARATOR = "\x1f"
+TMUX_FORMAT = TMUX_FIELD_SEPARATOR.join(
+    (
+        "#{session_name}",
+        "#{window_index}",
+        "#{pane_index}",
+        "#{pane_current_command}",
+        "#{pane_current_path}",
+        "#{pane_pid}",
+    )
 )
+
+
+class TmuxInventoryError(RuntimeError):
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}")
 
 
 def parse_tmux_rows(output: str) -> list[TmuxPaneRecord]:
@@ -22,7 +36,7 @@ def parse_tmux_rows(output: str) -> list[TmuxPaneRecord]:
     for line_number, line in enumerate(output.splitlines(), start=1):
         if not line:
             continue
-        fields = line.split("\t")
+        fields = line.split(TMUX_FIELD_SEPARATOR)
         if len(fields) != 6:
             raise ValueError(f"malformed tmux row {line_number}: expected 6 fields")
         session, window, pane, command, cwd, pid = fields
@@ -44,16 +58,59 @@ def parse_tmux_rows(output: str) -> list[TmuxPaneRecord]:
 
 
 class TmuxInventory:
+    def __init__(self, *, timeout_seconds: float = 3.0) -> None:
+        self._timeout_seconds = timeout_seconds
+
     def list_panes(self) -> list[TmuxPaneRecord]:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F", TMUX_FORMAT],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["tmux", "list-panes", "-a", "-F", TMUX_FORMAT],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=self._timeout_seconds,
+            )
+        except FileNotFoundError as exc:
+            raise TmuxInventoryError(
+                "unavailable", "tmux executable is unavailable"
+            ) from exc
+        except PermissionError as exc:
+            raise TmuxInventoryError(
+                "permission", "tmux inventory access was denied"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise TmuxInventoryError(
+                "timeout", "tmux inventory command timed out"
+            ) from exc
+        except OSError as exc:
+            raise TmuxInventoryError(
+                "unavailable", "tmux inventory command is unavailable"
+            ) from exc
         if result.returncode != 0:
-            return []
-        return parse_tmux_rows(result.stdout)
+            stderr = (result.stderr or "").lower()
+            if "permission denied" in stderr or "access denied" in stderr:
+                raise TmuxInventoryError(
+                    "permission", "tmux inventory access was denied"
+                )
+            if any(
+                marker in stderr
+                for marker in (
+                    "no server running",
+                    "can't find server",
+                    "no tmux server",
+                )
+            ):
+                return []
+            raise TmuxInventoryError(
+                "command_failed",
+                f"tmux inventory command failed with exit status {result.returncode}",
+            )
+        try:
+            return parse_tmux_rows(result.stdout)
+        except ValueError as exc:
+            raise TmuxInventoryError(
+                "command_failed", "tmux inventory output was malformed"
+            ) from exc
 
 
 def classify_inventory(

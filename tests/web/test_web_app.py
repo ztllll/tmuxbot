@@ -7,6 +7,7 @@ from itsdangerous import TimestampSigner
 
 from tmuxbot.control_plane.models import RunEvent, TmuxPaneRecord
 from tmuxbot.control_plane.repository import ControlPlaneRepository
+from tmuxbot.control_plane.tmux_inventory import TmuxInventoryError
 from tmuxbot.state import Binding
 from tmuxbot.web.app import BOOTSTRAP_COOKIE_NAME, COOKIE_NAME, create_app
 from tmuxbot.web.auth import AuthError, AuthService
@@ -18,12 +19,19 @@ SETUP_TOKEN = "0123456789abcdef0123456789abcdef"
 
 
 class FakeInventory:
-    def __init__(self, panes: list[TmuxPaneRecord] | None = None):
+    def __init__(
+        self,
+        panes: list[TmuxPaneRecord] | None = None,
+        error: TmuxInventoryError | None = None,
+    ):
         self.panes = panes or []
+        self.error = error
         self.list_calls = 0
 
     def list_panes(self) -> list[TmuxPaneRecord]:
         self.list_calls += 1
+        if self.error is not None:
+            raise self.error
         return list(self.panes)
 
 
@@ -51,6 +59,7 @@ def _client(
     bindings: list[Binding] | None = None,
     client_host: str = "127.0.0.1",
     setup_token: str | None = SETUP_TOKEN,
+    raise_server_exceptions: bool = True,
 ) -> tuple[TestClient, ControlPlaneRepository, FakeInventory]:
     settings = _settings(
         tmp_path, secure_cookie=secure_cookie, setup_token=setup_token
@@ -63,6 +72,7 @@ def _client(
         create_app(settings, repository, fake_inventory, bindings or []),
         base_url=f"{scheme}://testserver",
         client=(client_host, 50000),
+        raise_server_exceptions=raise_server_exceptions,
     )
     return client, repository, fake_inventory
 
@@ -668,3 +678,19 @@ def test_tmux_inventory_serializes_managed_and_orphan_panes(tmp_path):
         },
     ]
     assert inventory.list_calls == 1
+
+
+def test_tmux_inventory_failure_returns_fixed_sanitized_503(tmp_path):
+    error = TmuxInventoryError("permission", "tmux inventory access was denied")
+    error.__cause__ = RuntimeError("permission denied for /secret/tmux.sock")
+    inventory = FakeInventory(error=error)
+    client, _, _ = _client(
+        tmp_path, inventory=inventory, raise_server_exceptions=False
+    )
+    _setup(client)
+
+    response = client.get("/api/tmux/sessions")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "tmux inventory unavailable"}
+    assert "/secret" not in response.text

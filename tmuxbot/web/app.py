@@ -12,7 +12,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.control_plane.tmux_inventory import TmuxInventory, classify_inventory
+from tmuxbot.control_plane.tmux_inventory import (
+    TmuxInventory,
+    TmuxInventoryError,
+    classify_inventory,
+)
 from tmuxbot.state import Binding
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import PasswordRequest
@@ -234,9 +238,13 @@ def create_app(
     def tmux_sessions(
         _: AuthenticatedSession = Depends(current_session),
     ) -> list[dict]:
-        items = classify_inventory(
-            inventory.list_panes(), bindings, ignored_targets=set()
-        )
+        try:
+            panes = inventory.list_panes()
+        except TmuxInventoryError as exc:
+            raise HTTPException(
+                status_code=503, detail="tmux inventory unavailable"
+            ) from exc
+        items = classify_inventory(panes, bindings, ignored_targets=set())
         return [
             {
                 "target": item.pane.target,
