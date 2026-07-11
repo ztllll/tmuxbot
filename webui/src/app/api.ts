@@ -37,6 +37,23 @@ export type TmuxSession = {
   provider?: string | null;
 };
 
+export type ProviderProfile = {
+  id: string;
+  binary_name: "tmux" | "claude" | "codex";
+  executable_path: string;
+  version?: string | null;
+};
+
+export type Project = { id: string; name: string; root_path: string };
+export type ManagedSession = {
+  id: string;
+  project_id: string;
+  provider_id: string;
+  name: string;
+  tmux_target: string;
+  status: string;
+};
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -106,8 +123,58 @@ export async function getSystemStatus(): Promise<SystemStatus> {
   );
 }
 
+export async function getSessionCsrf(): Promise<string> {
+  const result = await readJson<{ csrf_token: string }>(
+    await fetch("/api/auth/session", { credentials: "same-origin" }),
+  );
+  return result.csrf_token;
+}
+
 export async function getTmuxSessions(): Promise<TmuxSession[]> {
   return readJson<TmuxSession[]>(
     await fetch("/api/tmux/sessions", { credentials: "same-origin" }),
   );
+}
+
+async function writeJson<T>(path: string, csrfToken: string, body?: unknown): Promise<T> {
+  return readJson<T>(await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  }));
+}
+
+export async function getProviders(): Promise<ProviderProfile[]> {
+  return readJson(await fetch("/api/providers", { credentials: "same-origin" }));
+}
+
+export async function scanProviders(csrfToken: string): Promise<ProviderProfile[]> {
+  return writeJson("/api/providers/scan", csrfToken);
+}
+
+export async function probeProvider(id: string, csrfToken: string) {
+  return writeJson<{ success: boolean; version?: string | null; error_code?: string | null }>(
+    `/api/providers/${encodeURIComponent(id)}/probe`, csrfToken,
+  );
+}
+
+export async function getProjects(): Promise<Project[]> {
+  return readJson(await fetch("/api/projects", { credentials: "same-origin" }));
+}
+
+export async function createProject(name: string, rootPath: string, csrfToken: string): Promise<Project> {
+  return writeJson("/api/projects", csrfToken, { name, root_path: rootPath });
+}
+
+export async function getManagedSessions(): Promise<ManagedSession[]> {
+  return readJson(await fetch("/api/managed-sessions", { credentials: "same-origin" }));
+}
+
+export async function createManagedSession(
+  name: string, projectId: string, providerId: string, csrfToken: string,
+): Promise<ManagedSession> {
+  return writeJson("/api/managed-sessions", csrfToken, {
+    name, project_id: projectId, provider_id: providerId,
+  });
 }

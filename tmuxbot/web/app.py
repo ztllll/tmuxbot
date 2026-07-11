@@ -267,6 +267,12 @@ def create_app(
         auth.logout(session.token)
         response.delete_cookie(COOKIE_NAME, path="/")
 
+    @app.get("/api/auth/session")
+    def auth_session(
+        session: AuthenticatedSession = Depends(current_session),
+    ) -> dict[str, str]:
+        return {"csrf_token": session.csrf_token}
+
     @app.get("/api/events")
     def events(
         after: int = Query(default=0, ge=0),

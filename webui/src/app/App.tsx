@@ -3,11 +3,19 @@ import { useEffect, useState } from "react";
 import LoginView from "../features/auth/LoginView";
 import SetupView from "../features/auth/SetupView";
 import CommandCenterPreview from "../features/overview/CommandCenterPreview";
+import ControlWorkbench from "../features/control/ControlWorkbench";
 import {
   ApiError,
   getAuthStatus,
   getSystemStatus,
   getTmuxSessions,
+  getManagedSessions,
+  getProjects,
+  getProviders,
+  getSessionCsrf,
+  type ManagedSession,
+  type Project,
+  type ProviderProfile,
   type AuthStatus,
   type SystemStatus,
   type TmuxSession,
@@ -26,6 +34,10 @@ export default function App() {
   const [needsLogin, setNeedsLogin] = useState(false);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [sessions, setSessions] = useState<TmuxSession[]>([]);
+  const [sessionCsrf, setSessionCsrf] = useState("");
+  const [providers, setProviders] = useState<ProviderProfile[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [managedSessions, setManagedSessions] = useState<ManagedSession[]>([]);
 
   async function loadDashboard() {
     setError(null);
@@ -36,6 +48,14 @@ export default function App() {
       ]);
       setStatus(nextStatus);
       setSessions(nextSessions);
+      const [nextProviders, nextProjects, nextManaged, nextCsrf] = await Promise.all([
+        getProviders().catch(() => []),
+        getProjects().catch(() => []),
+        getManagedSessions().catch(() => []),
+        getSessionCsrf().catch(() => ""),
+      ]);
+      setProviders(nextProviders); setProjects(nextProjects); setManagedSessions(nextManaged);
+      if (nextCsrf) setSessionCsrf(nextCsrf);
       setNeedsLogin(false);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
@@ -59,7 +79,8 @@ export default function App() {
     }
   }
 
-  function handleAuthenticated() {
+  function handleAuthenticated(csrfToken: string) {
+    setSessionCsrf(csrfToken);
     setAuth((current) => current ? { ...current, configured: true, setup_available: false } : current);
     void loadDashboard();
   }
@@ -98,5 +119,14 @@ export default function App() {
   if (!status) {
     return <main className="center-message">正在验证本机登录状态…</main>;
   }
-  return <CommandCenterPreview status={status} sessions={sessions} />;
+  return <>
+    <CommandCenterPreview status={status} sessions={sessions} />
+    <ControlWorkbench
+      csrfToken={sessionCsrf}
+      providers={providers}
+      projects={projects}
+      managedSessions={managedSessions}
+      onRefresh={loadDashboard}
+    />
+  </>;
 }
