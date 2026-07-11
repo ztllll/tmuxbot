@@ -81,3 +81,14 @@ The rollout changed only channel rendering, attachment delivery, and card intera
 - `ruff check tmuxbot tests` passed; `pytest -q` passed with 186 tests and one upstream lark-oapi deprecation warning.
 - Local service remained active with 6 tmux sessions before and after restart. Both hbhy services remained active with 21 tmux sessions before and after restart.
 - Expanded multi-LLM coordination research was recorded in English and Chinese only; no orchestration runtime code was added.
+
+## 2026-07-11 CLI restart recovery / CLI 重启恢复
+
+- Root cause: after Codex restarted inside the existing tmux pane, the binding still pinned the previous session JSONL. Telegram input reached the new CLI, but the tailer kept watching the ended transcript, so replies were not pushed back.
+- 原因：Codex 在原 tmux pane 内重启后，binding 仍固定到旧会话 JSONL。Telegram 输入能进入新 CLI，但 tailer 继续监听已结束的 transcript，因此没有回推回复。
+- Added a confirmed `重启 CLI` action to both Telegram and Feishu panels. The lifecycle layer now detects a newly launched provider, discovers its new transcript without the stale identity pin, and rebinds the in-memory identity for persistence by the tailer.
+- Telegram 与飞书面板均新增带二次确认的“重启 CLI”。生命周期层会识别新启动的 provider，忽略旧身份固定项查找新 transcript，并重新绑定会话身份供 tailer 持久化。
+- A CliproxyApi live canary produced `✅ CliproxyApi 重启后 TG 回推链路已恢复`; the new JSONL grew and both live/final assistant events were observed without Telegram send errors.
+- CliproxyApi 在线验收返回 `✅ CliproxyApi 重启后 TG 回推链路已恢复`；新 JSONL 正常增长，live/final 助手事件均被捕获，未出现 Telegram 发送错误。
+- Local Ruff and 189 tests passed. The local runtime remained one bot process with 6 tmux sessions. Both hbhy services restarted active at commit `0350e57`, with 21 tmux sessions before and after.
+- 本机 Ruff 与 189 项测试通过；运行时保持单一 bot 进程和 6 个 tmux 会话。hbhy 两个服务在提交 `0350e57` 上重启后均为 active，tmux 会话数前后保持 21。
