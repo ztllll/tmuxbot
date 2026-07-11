@@ -66,3 +66,5 @@ The rollout changed only channel rendering, attachment delivery, and card intera
 - Added text-native state badges: `🟡 工作中`, `🟠 等待输入`, `✅ 已完成`, `🔴 错误/阻塞`, `🔵 信息`, and `⚪ 状态未知`.
 - Missing state remains unrendered, and Telegram replies remain free of persistent buttons.
 - `ruff check tmuxbot tests` passed; `pytest -q` passed with 169 tests and one upstream lark-oapi deprecation warning.
+- Local `tmuxbot.service` restarted active; tmux session count remained 6 before and after restart.
+- Telegram Codex acceptance message `1043` displayed the completed-state badge and was delivered with `reply_markup=None`.

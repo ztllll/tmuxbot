@@ -46,4 +46,4 @@
 - [x] **Step 1: Update README** with a concise Feishu-native versus Telegram-text comparison.
 - [x] **Step 2: Update the Chinese design guide** with the Telegram mapping table and Bot API limitation.
 - [x] **Step 3: Run** `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
-- [ ] **Step 4: Commit and push** the documentation, then deploy without changing tmux session counts.
+- [x] **Step 4: Commit and push** the documentation, then deploy without changing tmux session counts.
