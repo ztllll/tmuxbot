@@ -1,11 +1,16 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import {
   commandTeamRun, completeTeamTask, createTeamRun, getTeamRun, reviewTeamTask,
-  type ManagedSession, type TeamRunSnapshot,
+  type ManagedSession, type TeamRunSnapshot, type TeamRunSummary,
 } from "../../app/api";
 
-export default function TeamRunPanel({ sessions, csrfToken }: { sessions: ManagedSession[]; csrfToken: string }) {
+export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
+  sessions: ManagedSession[];
+  csrfToken: string;
+  runs: TeamRunSummary[];
+  onRefresh: () => Promise<void>;
+}) {
   const [goal, setGoal] = useState("");
   const [coordinator, setCoordinator] = useState("");
   const [implementer, setImplementer] = useState("");
@@ -14,6 +19,12 @@ export default function TeamRunPanel({ sessions, csrfToken }: { sessions: Manage
   const [notice, setNotice] = useState("第一版采用确定性三角色：统筹、唯一写者、独立审核。 ");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (snapshot) return;
+    const active = runs.find((run) => ["draft", "running", "paused", "operator_required"].includes(run.state));
+    if (active) void getTeamRun(active.run_id).then(setSnapshot).catch(() => undefined);
+  }, [runs, snapshot]);
+
   async function create(event: FormEvent) {
     event.preventDefault(); setBusy(true);
     const runId = `run-${Date.now()}`;
@@ -21,6 +32,7 @@ export default function TeamRunPanel({ sessions, csrfToken }: { sessions: Manage
       const created = await createTeamRun({ runId, goal, coordinator, implementer, reviewer }, csrfToken);
       const started = await commandTeamRun(created.run.run_id, "start", csrfToken);
       setSnapshot(started); setNotice("TeamRun 已启动：Implementer 已收到结构化任务。完成后登记证据，Reviewer 会收到独立审查包。");
+      await onRefresh();
     } catch { setNotice("TeamRun 启动失败：三个角色必须绑定三个不同的受管会话。"); }
     finally { setBusy(false); }
   }

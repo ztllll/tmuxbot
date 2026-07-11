@@ -882,6 +882,15 @@ def create_app(
         )
         return _serialize_teamrun(snapshot)
 
+    @app.get("/api/team-runs")
+    def list_team_runs(
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, str]]:
+        return [
+            {"run_id": run.run_id, "goal": run.goal, "state": run.state.value}
+            for run in scheduler_service().repository.list_team_runs()
+        ]
+
     @app.get("/api/team-runs/{run_id}")
     def get_team_run(
         run_id: str,

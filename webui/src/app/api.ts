@@ -221,6 +221,12 @@ export type TeamRunSnapshot = {
   tasks: Array<{ task_id: string; title: string; goal: string; state: string; attempt: number; assignee_agent_id?: string | null }>;
 };
 
+export type TeamRunSummary = {
+  run_id: string;
+  goal: string;
+  state: string;
+};
+
 export async function createTeamRun(
   input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string },
   csrfToken: string,
@@ -255,4 +261,8 @@ export async function reviewTeamTask(runId: string, verdict: "approved" | "rejec
 
 export async function getTeamRun(runId: string): Promise<TeamRunSnapshot> {
   return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}`, { credentials: "same-origin" }));
+}
+
+export async function getTeamRuns(): Promise<TeamRunSummary[]> {
+  return readJson(await fetch("/api/team-runs", { credentials: "same-origin" }));
 }

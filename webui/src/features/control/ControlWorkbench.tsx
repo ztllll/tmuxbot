@@ -9,6 +9,7 @@ import {
   type ManagedSession,
   type Project,
   type ProviderProfile,
+  type TeamRunSummary,
 } from "../../app/api";
 import TerminalDock from "../terminal/TerminalDock";
 import TeamRunPanel from "../teamrun/TeamRunPanel";
@@ -18,11 +19,13 @@ type Props = {
   providers: ProviderProfile[];
   projects: Project[];
   managedSessions: ManagedSession[];
+  teamRuns: TeamRunSummary[];
   onRefresh: () => Promise<void>;
 };
 
 export default function ControlWorkbench({
   csrfToken, providers, projects, managedSessions, onRefresh,
+  teamRuns,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState("所有探测均在本机执行；版本扫描不会调用模型。 ");
@@ -143,7 +146,7 @@ export default function ControlWorkbench({
       </div>
     </section>
     {terminalSession && <TerminalDock session={terminalSession} csrfToken={csrfToken} onClose={() => setTerminalSession(null)} />}
-    <TeamRunPanel sessions={managedSessions} csrfToken={csrfToken} />
+    <TeamRunPanel sessions={managedSessions} csrfToken={csrfToken} runs={teamRuns} onRefresh={onRefresh} />
     </>
   );
 }

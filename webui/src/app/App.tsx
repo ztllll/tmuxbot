@@ -13,12 +13,14 @@ import {
   getProjects,
   getProviders,
   getSessionCsrf,
+  getTeamRuns,
   type ManagedSession,
   type Project,
   type ProviderProfile,
   type AuthStatus,
   type SystemStatus,
   type TmuxSession,
+  type TeamRunSummary,
 } from "./api";
 
 function readGrantFragment(): string | null {
@@ -38,6 +40,7 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderProfile[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSession[]>([]);
+  const [teamRuns, setTeamRuns] = useState<TeamRunSummary[]>([]);
 
   async function loadDashboard() {
     setError(null);
@@ -48,13 +51,15 @@ export default function App() {
       ]);
       setStatus(nextStatus);
       setSessions(nextSessions);
-      const [nextProviders, nextProjects, nextManaged, nextCsrf] = await Promise.all([
+      const [nextProviders, nextProjects, nextManaged, nextCsrf, nextTeamRuns] = await Promise.all([
         getProviders().catch(() => []),
         getProjects().catch(() => []),
         getManagedSessions().catch(() => []),
         getSessionCsrf().catch(() => ""),
+        getTeamRuns().catch(() => []),
       ]);
       setProviders(nextProviders); setProjects(nextProjects); setManagedSessions(nextManaged);
+      setTeamRuns(nextTeamRuns);
       if (nextCsrf) setSessionCsrf(nextCsrf);
       setNeedsLogin(false);
     } catch (reason) {
@@ -127,6 +132,7 @@ export default function App() {
       projects={projects}
       managedSessions={managedSessions}
       onRefresh={loadDashboard}
+      teamRuns={teamRuns}
     />
   </>;
 }

@@ -88,9 +88,9 @@ def build_app():
             settings, repository, S.bindings
         )
         options["runtime_paths"] = paths
-        options["teamrun_scheduler"] = TeamRunScheduler(
-            repository, TmuxManagedSender(repository)
-        )
+        scheduler = TeamRunScheduler(repository, TmuxManagedSender(repository))
+        scheduler.reconcile()
+        options["teamrun_scheduler"] = scheduler
     app = create_app(
         settings,
         repository,

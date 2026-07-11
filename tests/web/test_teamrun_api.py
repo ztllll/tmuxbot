@@ -97,6 +97,7 @@ def run_payload():
 def test_teamrun_rest_requires_auth_and_csrf(tmp_path):
     client, _, _ = make_client(tmp_path)
 
+    assert client.get("/api/team-runs").status_code == 401
     assert client.get("/api/team-runs/run-api").status_code == 401
     assert client.post("/api/team-runs", json=run_payload()).status_code == 401
     csrf = authenticate(client)
@@ -104,6 +105,24 @@ def test_teamrun_rest_requires_auth_and_csrf(tmp_path):
     assert client.post(
         "/api/team-runs", json=run_payload(), headers={"X-CSRF-Token": csrf}
     ).status_code == 201
+
+
+def test_teamrun_list_survives_a_new_web_request(tmp_path):
+    client, _, _ = make_client(tmp_path)
+    csrf = authenticate(client)
+    headers = {"X-CSRF-Token": csrf}
+    assert client.post("/api/team-runs", json=run_payload(), headers=headers).status_code == 201
+
+    response = client.get("/api/team-runs")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "run_id": "run-api",
+            "goal": "完成 REST TeamRun 闭环",
+            "state": "draft",
+        }
+    ]
 
 
 def test_fake_scheduler_rest_e2e_requires_independent_review(tmp_path):
