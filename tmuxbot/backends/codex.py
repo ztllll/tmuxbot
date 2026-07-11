@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,10 +42,11 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
+CODEX_BIN = os.getenv("CODEX_BIN", "codex")
 # --dangerously-bypass-approvals-and-sandbox: codex 最高权限(跳过所有审批 + 无沙箱),
 # 等价 claude 的 --dangerously-skip-permissions。bot 是 tmux 桥接, 命令需无人值守自动执行。
 # CODEX_BIN 仍可配绝对路径(防 tmux shell PATH 不含 ~/.npm-global/bin)。
-START_CMD = f'{os.getenv("CODEX_BIN", "codex")} --dangerously-bypass-approvals-and-sandbox'
+START_CMD = f"{CODEX_BIN} --dangerously-bypass-approvals-and-sandbox"
 
 
 # ────────── 工具名中文化 (codex 工具集) ──────────
@@ -580,10 +582,16 @@ class CodexBackend(Backend):
                 cmd,
             )
             return
-        # codex 没有 --resume <session_id> 直传方式 (只能通过 /resume 命令)
+        session_id = b.provider_session_id or b.last_session_id
+        start = START_CMD
+        if session_id:
+            start = (
+                f"{CODEX_BIN} resume --dangerously-bypass-approvals-and-sandbox "
+                f"{shlex.quote(session_id)}"
+            )
         launched = await tmux_safe_launch(
             b.tmux_target,
-            self.start_cmd,
+            start,
             allowed_shells=self.shell_command_names,
         )
         if not launched:

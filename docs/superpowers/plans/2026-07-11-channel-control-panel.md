@@ -90,8 +90,8 @@
 
 - [x] Record expanded multi-agent research without implementing orchestration code.
 - [x] Document `/panel`, `/mention`, common actions, and model-picker semantics in Chinese.
-- [x] Add confirmed CLI restart controls and rebind the provider transcript after a tmux CLI restart.
-- [x] 增加带二次确认的 CLI 重启控制，并在 tmux 内重启后重新绑定 provider transcript。
+- [x] Add confirmed CLI restart controls and resume the binding's existing provider session after a tmux CLI restart.
+- [x] 增加带二次确认的 CLI 重启控制，并在 tmux 内重启后恢复 binding 原有的 provider 会话。
 - [x] Run `.venv/bin/ruff check tmuxbot tests` and `.venv/bin/pytest -q`.
 - [x] Deploy locally and to hbhy while preserving tmux sessions.
 - [x] Perform Telegram and Feishu live acceptance, commit, push, and synchronize deployments.

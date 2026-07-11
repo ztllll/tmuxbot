@@ -77,6 +77,36 @@ def test_codex_ensure_running_starts_from_shell_once(tmp_path, monkeypatch):
     assert sent == [CodexBackend.start_cmd]
 
 
+def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeypatch):
+    session_id = "019f450e-c966-7b51-b9c0-975d2b1acf7b"
+    b = _binding(tmp_path)
+    b.provider_session_id = session_id
+    commands = iter(["bash", "node"])
+    sent: list[str] = []
+
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        "tmuxbot.backends.codex.tmux_pane_command", lambda _target: next(commands, "node")
+    )
+
+    async def safe_launch(_target: str, text: str, *, allowed_shells) -> bool:
+        sent.append(text)
+        return True
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_safe_launch", safe_launch)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_capture", lambda _target, _lines: "›\ngpt-5")
+    monkeypatch.setattr("tmuxbot.backends.codex.asyncio.sleep", no_sleep)
+
+    asyncio.run(CodexBackend().ensure_running(b))
+
+    assert sent == [
+        "codex resume --dangerously-bypass-approvals-and-sandbox " + session_id
+    ]
+
+
 def test_codex_ensure_running_does_not_inject_into_unknown_process(tmp_path, monkeypatch):
     sent = _run_ensure_running(monkeypatch, tmp_path, ["python3"])
 

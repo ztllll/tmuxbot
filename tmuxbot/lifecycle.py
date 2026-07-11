@@ -9,11 +9,7 @@ import asyncio
 import logging
 import os
 import time
-from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-from tmuxbot.tmux import tmux_pane_command
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -69,42 +65,8 @@ async def ensure_binding_running(
         return False
 
     async with lock:
-        can_track_identity = all(
-            callable(getattr(backend, name, None))
-            for name in ("is_running_command", "find_active_jsonl", "session_identity")
-        )
-        was_running = True
-        previous_transcript = b.transcript_path
-        if can_track_identity:
-            try:
-                was_running = backend.is_running_command(tmux_pane_command(b.tmux_target))
-            except Exception:
-                was_running = False
         started = time.monotonic()
         await backend.ensure_running(b)
-        if can_track_identity and not was_running:
-            try:
-                now_running = backend.is_running_command(tmux_pane_command(b.tmux_target))
-                if now_running:
-                    probe = replace(
-                        b,
-                        provider_session_id=None,
-                        transcript_path=None,
-                        last_session_id=None,
-                    )
-                    transcript = backend.find_active_jsonl(probe)
-                    if transcript is not None and Path(transcript) != previous_transcript:
-                        identity = backend.session_identity(b, Path(transcript))
-                        b.provider_session_id = identity.session_id
-                        b.transcript_path = Path(identity.transcript_path or transcript)
-                        b.last_session_id = identity.session_id
-                        log.info(
-                            "[%s] rebound provider session after CLI start: %s",
-                            b.name,
-                            identity.session_id,
-                        )
-            except Exception:
-                log.exception("[%s] provider session rebind after CLI start failed", b.name)
         elapsed = time.monotonic() - started
         if elapsed >= 1.0:
             log.info(

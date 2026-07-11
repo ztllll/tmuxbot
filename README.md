@@ -116,7 +116,7 @@ bot crash 后 5 秒内自动拉起,无需手动守护。
 ## 当前能力
 
 - **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
-- **中文控制面板**:`/panel` 或 `/settings` 主动打开轻量面板，可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`，并通过当前 tmux CLI 的原生 `/model` 选择器切换模型；面板也提供带二次确认的“重启 CLI”，重启后会自动重新绑定新的 provider transcript；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
+- **中文控制面板**:`/panel` 或 `/settings` 主动打开轻量面板，可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`，并通过当前 tmux CLI 的原生 `/model` 选择器切换模型；面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**:`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
 - **双 bot 共存**:`@your_claude_bot` 接 claude_code,`@your_codex_bot` 接 codex
 - **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart`

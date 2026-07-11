@@ -72,8 +72,8 @@ The in-memory binding is updated before the callback returns, so the policy chan
 
 - Pure tests for effective mention policy, command parsing, panel text, and atomic persistence.
 - Telegram tests for `/panel` keyboard shape, mention-policy callback ACL, and confirmation behavior.
-- Restart regression coverage verifies that a newly launched CLI session is rebound to its new transcript instead of continuing to tail the previous session file.
-- 重启回归测试确保新 CLI 会话会重新绑定到新 transcript，不再继续监听已经结束的旧会话文件。
+- Restart regression coverage verifies that the provider resumes the binding's existing session identity and continues tailing its original transcript so conversation context is preserved.
+- 重启回归测试确保 provider 恢复 binding 已有的会话身份并继续监听原 transcript，从而保留对话上下文。
 - Feishu tests for Card JSON 2.0 panel structure, callback updates, and interaction controls.
 - Provider-neutral tests proving model action dispatches `/model` rather than a hardcoded model string.
 - Full Ruff and pytest verification followed by live Telegram and Feishu acceptance without changing tmux session counts.
