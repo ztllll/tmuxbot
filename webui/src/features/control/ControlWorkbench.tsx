@@ -9,6 +9,7 @@ import {
   type Project,
   type ProviderProfile,
 } from "../../app/api";
+import TerminalDock from "../terminal/TerminalDock";
 
 type Props = {
   csrfToken: string;
@@ -28,6 +29,7 @@ export default function ControlWorkbench({
   const [sessionName, setSessionName] = useState("");
   const [projectId, setProjectId] = useState("");
   const [providerId, setProviderId] = useState("");
+  const [terminalSession, setTerminalSession] = useState<ManagedSession | null>(null);
 
   async function scan() {
     setBusy("scan");
@@ -71,6 +73,7 @@ export default function ControlWorkbench({
 
   const llmProviders = providers.filter((item) => item.binary_name !== "tmux");
   return (
+    <>
     <section className="workbench" aria-label="本机配置与启动">
       <header className="workbench-head">
         <div><span>CONTROL WORKBENCH</span><h2>配置与启动</h2></div>
@@ -103,8 +106,11 @@ export default function ControlWorkbench({
           <label><span>Provider</span><select value={providerId} onChange={(e) => setProviderId(e.target.value)} required><option value="">请选择</option>{llmProviders.map((p) => <option key={p.id} value={p.id}>{p.binary_name}</option>)}</select></label>
           <button className="primary-action" disabled={busy !== null}>启动 CLI 会话</button>
           <small>当前受管会话 {managedSessions.length} 个。启动采用项目目录与已验证 binary，不接受浏览器命令字符串。</small>
+          {managedSessions.map((item) => <button key={item.id} type="button" className="session-row" onClick={() => setTerminalSession(item)}><span>{item.name}</span><code>{item.tmux_target}</code><strong>打开终端</strong></button>)}
         </form>
       </div>
     </section>
+    {terminalSession && <TerminalDock session={terminalSession} csrfToken={csrfToken} onClose={() => setTerminalSession(null)} />}
+    </>
   );
 }

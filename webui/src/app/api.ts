@@ -178,3 +178,22 @@ export async function createManagedSession(
     name, project_id: projectId, provider_id: providerId,
   });
 }
+
+export async function createTerminalTicket(sessionId: string, csrfToken: string) {
+  return writeJson<{ ticket: string; expires_at: number }>(
+    `/api/terminals/${encodeURIComponent(sessionId)}/ticket`, csrfToken,
+  );
+}
+
+export async function startTerminalTakeover(sessionId: string, csrfToken: string) {
+  return writeJson<{ mode: string }>(
+    `/api/terminals/${encodeURIComponent(sessionId)}/takeover`, csrfToken,
+  );
+}
+
+export async function releaseTerminalTakeover(sessionId: string, csrfToken: string) {
+  return readJson<{ mode: string }>(await fetch(
+    `/api/terminals/${encodeURIComponent(sessionId)}/takeover`,
+    { method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } },
+  ));
+}
