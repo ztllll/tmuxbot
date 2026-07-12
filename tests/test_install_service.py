@@ -14,9 +14,9 @@ def test_install_service_writes_user_unit_without_secrets(tmp_path: Path) -> Non
     content = unit.read_text(encoding="utf-8")
     assert "ExecStart=/opt/tmuxbot/bin/tmuxbot serve" in content
     assert "EnvironmentFile=-" in content
+    assert "KillMode=process" in content
     assert "token" not in content.lower()
     assert calls == [
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", "tmuxbot.service"],
     ]
-

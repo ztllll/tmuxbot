@@ -20,6 +20,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Keep native tmux/CLI sessions alive when the bridge service is restarted.
+KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
 ExecStart=%h/.local/bin/tmuxbot serve
 Restart=always

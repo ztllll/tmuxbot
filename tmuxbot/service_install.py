@@ -36,6 +36,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# tmux panes outlive bridge/WebUI deploys; only stop the supervisor itself.
+KillMode=process
 EnvironmentFile=-{env_file}
 ExecStart={executable} serve
 Restart=always
@@ -54,4 +56,3 @@ WantedBy=default.target
     if start_now:
         runner(["systemctl", "--user", "enable", "--now", "tmuxbot.service"])
     return unit_path
-

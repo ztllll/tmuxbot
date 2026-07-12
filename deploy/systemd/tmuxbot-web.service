@@ -19,6 +19,7 @@ After=network.target
 
 [Service]
 Type=simple
+KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
 ExecStart=%h/.local/bin/tmuxbot web
 Restart=on-failure

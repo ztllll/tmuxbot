@@ -25,6 +25,7 @@ async def serve(
     open_browser: bool = False,
     environ: Mapping[str, str] | None = None,
     legacy_project_dir: Path | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> None:
     settings, app = build_app()
     runtime_env = dict(os.environ if environ is None else environ)
@@ -36,7 +37,7 @@ async def serve(
     paths.ensure_private_directories()
     supervisor = BridgeSupervisor(paths, runtime_env)
     app.state.bridge_status = supervisor.snapshot
-    stop = asyncio.Event()
+    stop = stop_event or asyncio.Event()
 
     config = uvicorn.Config(
         app,
@@ -77,6 +78,10 @@ async def serve(
     )
     if stop_task in done:
         server.should_exit = True
+        # systemd KillMode=process intentionally preserves tmux panes. Stop the
+        # bridge child before the supervisor exits so the replacement service
+        # can acquire its single-instance lock without touching tmux.
+        await supervisor.stop()
     await web_task
     stop.set()
     await bridge_task
