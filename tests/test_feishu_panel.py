@@ -91,3 +91,5 @@ def test_feishu_send_control_panel_sends_card_json_v2(tmp_path):
 
     assert message.message_id == "om-panel"
     assert calls[0][1]["header"]["title"]["content"] == "tmuxbot 控制面板"
+    body = [item for item in calls[0][1]["body"]["elements"] if item["tag"] == "markdown"]
+    assert "当前模型" in body[0]["content"]

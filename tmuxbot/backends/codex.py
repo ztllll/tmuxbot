@@ -298,7 +298,7 @@ class CodexBackend(Backend):
         )
 
     bot_commands = [
-        ("panel", "🎛 中文控制面板"),
+        ("menu", "🎛 中文控制面板"),
         ("settings", "⚙️ 打开控制面板"),
         ("mention", "@ 群聊唤醒开关"),
         ("status", "ℹ️ Codex 状态"),

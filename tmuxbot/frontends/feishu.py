@@ -972,6 +972,7 @@ class FeishuFrontend(Frontend):
         text = render_panel_text(
             b,
             frontend_default=self.group_only_when_mentioned,
+            current_model=self._panel_current_model(b),
         )
         content = serialize_feishu_card(
             build_feishu_control_panel(
@@ -985,6 +986,13 @@ class FeishuFrontend(Frontend):
         self._remember_outbound_message(message_id)
         self._remember_v2_message(message_id)
         return _make_fake_msg(message_id)
+
+    def _panel_current_model(self, b: "Binding") -> str | None:
+        try:
+            return self.backend.current_model(b)
+        except Exception:
+            log.debug("[%s] unable to read current model for control menu", b.name, exc_info=True)
+            return None
 
     def _on_card_action(self, event: Any) -> Any:
         data = getattr(event, "event", None)
@@ -1048,6 +1056,7 @@ class FeishuFrontend(Frontend):
                     render_panel_text(
                         b,
                         frontend_default=self.group_only_when_mentioned,
+                        current_model=self._panel_current_model(b),
                     )
                 ),
                 token,
@@ -1059,6 +1068,7 @@ class FeishuFrontend(Frontend):
                     render_panel_text(
                         b,
                         frontend_default=self.group_only_when_mentioned,
+                        current_model=self._panel_current_model(b),
                     )
                 ),
                 token,
@@ -1691,7 +1701,7 @@ class FeishuFrontend(Frontend):
                 return
 
             if is_control_command(text):
-                if text.split(maxsplit=1)[0].split("@", 1)[0] in {"/panel", "/settings"}:
+                if text.split(maxsplit=1)[0].split("@", 1)[0] in {"/menu", "/panel", "/settings"}:
                     await self.send_control_panel(b, chat_id, None)
                     return
                 parsed = parse_mention_command(text)

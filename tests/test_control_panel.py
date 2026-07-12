@@ -42,7 +42,8 @@ def test_parse_mention_command_and_control_command_detection():
     assert parse_mention_command("/mention status") == "status"
     assert parse_mention_command("/mention") == "status"
     assert parse_mention_command("/mention bad") == "invalid"
-    assert is_control_command("/panel")
+    assert is_control_command("/menu")
+    assert is_control_command("/panel")  # 旧命令保留兼容
     assert is_control_command("/settings@my_bot")
     assert is_control_command("/mention off")
     assert not is_control_command("/status")
@@ -62,7 +63,19 @@ def test_render_panel_text_is_chinese_and_explains_native_model_picker(tmp_path)
     assert "alpha:0.0" in text
     assert "Codex" in text
     assert "原生 /model" in text
+    assert "当前模型" in text
     assert "tmux" in text
+
+
+def test_render_panel_text_includes_the_runtime_discovered_model(tmp_path):
+    text = render_panel_text(
+        binding(tmp_path),
+        frontend_default=False,
+        current_model="gpt-5.6-terra",
+    )
+
+    assert "gpt-5.6-terra" in text
+    assert "不写死候选模型" in text
 
 
 def test_save_binding_mention_policy_updates_yaml_atomically(tmp_path):

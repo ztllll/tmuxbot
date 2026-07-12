@@ -86,6 +86,7 @@ def test_telegram_send_control_panel_uses_chinese_text_and_keyboard(tmp_path):
     asyncio.run(frontend.send_control_panel(binding(tmp_path), -100, None))
 
     assert "tmuxbot 控制面板" in calls[0][1]
+    assert "当前模型" in calls[0][1]
     assert "原生 /model" in calls[0][1]
     assert calls[0][2]["reply_markup"].inline_keyboard
 

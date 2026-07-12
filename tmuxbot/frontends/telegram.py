@@ -896,6 +896,7 @@ class TelegramFrontend(Frontend):
         text = render_panel_text(
             b,
             frontend_default=self.group_only_when_mentioned,
+            current_model=self._panel_current_model(b),
         )
         return await self._tg_call(
             lambda: self.bot.send_message(
@@ -905,6 +906,13 @@ class TelegramFrontend(Frontend):
                 reply_markup=build_telegram_panel_markup(b),
             )
         )
+
+    def _panel_current_model(self, b: "Binding") -> str | None:
+        try:
+            return self.backend.current_model(b)
+        except Exception:
+            log.debug("[%s] unable to read current model for control menu", b.name, exc_info=True)
+            return None
 
     async def execute_panel_command(
         self,
@@ -1054,7 +1062,7 @@ class TelegramFrontend(Frontend):
                 return None
             return F_.find_binding(*source_key(m))
 
-        @dp.message(Command("panel", "settings"))
+        @dp.message(Command("menu", "panel", "settings"))
         async def cmd_panel(m: Message):
             b = await _panel_binding(m)
             if b is None:
@@ -1437,6 +1445,7 @@ class TelegramFrontend(Frontend):
                     render_panel_text(
                         b,
                         frontend_default=F_.group_only_when_mentioned,
+                        current_model=F_._panel_current_model(b),
                     ),
                     reply_markup=build_telegram_panel_markup(b),
                 )
@@ -1462,6 +1471,7 @@ class TelegramFrontend(Frontend):
                     render_panel_text(
                         b,
                         frontend_default=F_.group_only_when_mentioned,
+                        current_model=F_._panel_current_model(b),
                     ),
                     reply_markup=build_telegram_panel_markup(b),
                 )
