@@ -91,6 +91,7 @@ async def jsonl_poll_loop(
                 last_file = jl
                 identity = backend.session_identity(b, jl)
                 old_identity = (b.provider_session_id, b.transcript_path)
+                previous_session_id = b.provider_session_id
                 b.provider_session_id = identity.session_id
                 b.transcript_path = Path(identity.transcript_path) if identity.transcript_path else jl
                 b.last_session_id = identity.session_id
@@ -100,6 +101,11 @@ async def jsonl_poll_loop(
                         getattr(frontend, "bindings_file", None),
                         b,
                     )
+                if (
+                    b.pending_session_handoff_after is not None
+                    and identity.session_id != previous_session_id
+                ):
+                    b.pending_session_handoff_after = None
 
             sz = jl.stat().st_size
             if sz != last_sz_logged:

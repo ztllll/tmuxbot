@@ -249,6 +249,7 @@ async def capture_and_push(
             return
         total_wait = opts.init_delay + opts.max_iters * opts.poll + 5  # +5s for final retry
         if opts.expect_new_session and not new_session_seen:
+            b.pending_session_handoff_after = None
             warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
             await frontend.send_html(chat_id, thread_id, warn)
             return

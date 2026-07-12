@@ -202,6 +202,11 @@ async def dispatch_incoming_text(
 
     # ── capture 类 slash 命令: 注入 + background capture_and_push ──
     if cmd_for_feedback and cmd_for_feedback in backend.command_opts():
+        opts = backend.command_opts()[cmd_for_feedback]
+        if opts.expect_new_session:
+            # 仅允许本次通道命令之后创建的 transcript 接管 identity；避免同 cwd
+            # 的其他 tmux binding 被“最新文件”规则误认领。
+            b.pending_session_handoff_after = time.time()
         await tmux_send_text(
             b.tmux_target,
             raw_text,

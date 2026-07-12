@@ -322,6 +322,19 @@ class CodexBackend(Backend):
         if not all_files:
             return None
         target_cwd = str(b.cwd.resolve())
+        handoff_after = b.pending_session_handoff_after
+        if handoff_after is not None:
+            candidates = []
+            for jl in all_files:
+                metadata = self._session_metadata(jl)
+                if not metadata or not self._metadata_matches(metadata, target_cwd, None):
+                    continue
+                session_id = metadata.get("id") or metadata.get("session_id")
+                if session_id == b.provider_session_id or jl.stat().st_mtime < handoff_after:
+                    continue
+                candidates.append(jl)
+            if candidates:
+                return max(candidates, key=lambda path: path.stat().st_mtime)
         if b.transcript_path:
             pinned = Path(b.transcript_path)
             metadata = self._session_metadata(pinned)

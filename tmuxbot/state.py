@@ -38,6 +38,9 @@ class Binding:
     provider_session_id: str | None = None
     transcript_path: Path | None = None
     last_session_id: str | None = None
+    # 由通道注入 /new 或 /clear 前设置；仅本进程内有效，供 transcript 选择器
+    # 安全认领本次命令新建的会话，成功切换后由 jsonl tailer 清除。
+    pending_session_handoff_after: float | None = None
 
     @property
     def tmux_target(self) -> str:

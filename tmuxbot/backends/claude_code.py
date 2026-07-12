@@ -574,6 +574,15 @@ class ClaudeCodeBackend(Backend):
         d = CLAUDE_PROJECTS_DIR / encode_cwd(b.cwd)
         if not d.exists():
             return None
+        handoff_after = b.pending_session_handoff_after
+        if handoff_after is not None:
+            candidates = [
+                path
+                for path in d.glob("*.jsonl")
+                if path.stem != b.provider_session_id and path.stat().st_mtime >= handoff_after
+            ]
+            if candidates:
+                return max(candidates, key=lambda path: path.stat().st_mtime)
         if b.transcript_path:
             pinned = Path(b.transcript_path)
             try:
