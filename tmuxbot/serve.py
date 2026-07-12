@@ -73,18 +73,20 @@ async def serve(
             webbrowser.open(local_url)
 
     stop_task = asyncio.create_task(stop.wait())
-    done, _ = await asyncio.wait(
-        {web_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
-    )
-    if stop_task in done:
-        server.should_exit = True
-        # systemd KillMode=process intentionally preserves tmux panes. Stop the
-        # bridge child before the supervisor exits so the replacement service
-        # can acquire its single-instance lock without touching tmux.
+    try:
+        done, _ = await asyncio.wait(
+            {web_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if stop_task in done:
+            server.should_exit = True
+        await web_task
+    finally:
+        # systemd KillMode=process intentionally preserves tmux panes. Always
+        # stop the bridge child before the supervisor exits so a replacement
+        # service can acquire its single-instance lock without touching tmux.
+        stop.set()
         await supervisor.stop()
-    await web_task
-    stop.set()
-    await bridge_task
+        await bridge_task
 
 
 def run_serve(*, open_browser: bool = False) -> None:

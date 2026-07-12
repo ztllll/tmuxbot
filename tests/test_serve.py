@@ -63,3 +63,42 @@ def test_service_shutdown_stops_bridge_before_leaving_tmux_panes(monkeypatch):
     asyncio.run(scenario())
 
     assert stopped == [True]
+
+
+def test_web_server_exit_also_stops_bridge(monkeypatch):
+    stopped = []
+
+    class FakePaths:
+        def ensure_private_directories(self):
+            return None
+
+    class FakeSupervisor:
+        def __init__(self, *_args):
+            return None
+
+        def snapshot(self):
+            return {"state": "running"}
+
+        async def run(self, stop):
+            await stop.wait()
+
+        async def stop(self):
+            stopped.append(True)
+
+    class FakeServer:
+        def __init__(self, _config):
+            self.started = False
+            self.should_exit = False
+
+        async def serve(self):
+            self.started = True
+
+    monkeypatch.setattr("tmuxbot.serve.build_app", lambda: (SimpleNamespace(host="127.0.0.1", port=8765), SimpleNamespace(state=SimpleNamespace())))
+    monkeypatch.setattr("tmuxbot.serve.RuntimePaths.discover", lambda *_args, **_kwargs: FakePaths())
+    monkeypatch.setattr("tmuxbot.serve.BridgeSupervisor", FakeSupervisor)
+    monkeypatch.setattr("tmuxbot.serve.uvicorn.Config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("tmuxbot.serve.uvicorn.Server", FakeServer)
+
+    asyncio.run(serve())
+
+    assert stopped == [True]
