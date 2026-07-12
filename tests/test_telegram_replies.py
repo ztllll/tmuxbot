@@ -158,6 +158,39 @@ def test_telegram_send_html_splits_long_text_without_document():
     assert all(call[2]["message_thread_id"] == 456 for call in calls)
 
 
+def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path):
+    calls = []
+
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            calls.append(("send", text, kwargs))
+            return SimpleNamespace(message_id=77)
+
+        async def edit_message_text(self, **kwargs):
+            calls.append(("edit", kwargs["text"], kwargs))
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+        frontend.bindings = [binding(tmp_path)]
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.send_status_html(123, 456, "正在处理", display_state="working")
+        await frontend.edit_html(123, 77, "仍在处理")
+
+    import asyncio
+
+    asyncio.run(run())
+
+    expected = f"工作中 · {tmp_path.name}"
+    assert expected in calls[0][1]
+    assert "会话 · <code>alpha</code>" in calls[0][1]
+    assert expected in calls[1][1]
+
+
 def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):
     calls = []
 

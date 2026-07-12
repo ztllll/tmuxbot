@@ -404,6 +404,7 @@ class TelegramFrontend(Frontend):
         # 服务消息进来时缓存, /init 时按 (chat_id, thread_id) 命中, 取代群名。
         self._topic_names: dict[tuple[int, int], str] = {}
         self._unknown_chat_leave_tasks: dict[int, asyncio.Task] = {}
+        self._status_messages: dict[int, tuple["Binding", str]] = {}
         self._register_handlers()
 
     def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
@@ -583,8 +584,57 @@ class TelegramFrontend(Frontend):
                 first_msg = msg
         return first_msg
 
+    async def send_status_html(
+        self,
+        chat_id: int,
+        thread_id: int | None,
+        html_text: str,
+        *,
+        display_state: str,
+    ) -> Any:
+        """Render status updates with the same project/session header as Feishu."""
+        binding = self.find_binding(chat_id, thread_id)
+        if binding is None:
+            return await self.send_html(chat_id, thread_id, html_text)
+        rendered = render_assistant_reply(
+            binding,
+            ReplyEnvelope(
+                title="tmuxbot",
+                body=html_text,
+                metadata={"display_state": display_state},
+            ),
+            full_output_threshold=None,
+        )
+        first_msg = None
+        for chunk in split_for_tg(rendered.chat_html):
+            msg = await self._tg_call(
+                lambda c=chunk: self.bot.send_message(
+                    chat_id, c, message_thread_id=thread_id
+                )
+            )
+            if first_msg is None:
+                first_msg = msg
+        message_id = getattr(first_msg, "message_id", None)
+        if isinstance(message_id, int):
+            if not hasattr(self, "_status_messages"):
+                self._status_messages = {}
+            self._status_messages[message_id] = (binding, display_state)
+        return first_msg
+
     async def edit_html(self, chat_id: int, message_id: int, html_text: str) -> None:
         """编辑已发送消息 — 工具调用聚合用。超长直接 truncate 末尾。"""
+        status = getattr(self, "_status_messages", {}).get(message_id)
+        if status is not None:
+            binding, display_state = status
+            html_text = render_assistant_reply(
+                binding,
+                ReplyEnvelope(
+                    title="tmuxbot",
+                    body=html_text,
+                    metadata={"display_state": display_state},
+                ),
+                full_output_threshold=None,
+            ).chat_html
         html_text = sanitize_telegram_html(html_text)
         if utf16_len(html_text) > TG_SPLIT:
             html_text = html_text[: TG_SPLIT - 30] + "\n<i>… (内容已截断)</i>"
