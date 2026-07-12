@@ -10,6 +10,7 @@ def test_project_and_managed_session_wizard_uses_server_records(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_cli(bin_dir / "codex", "codex 5.0")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("PATH", str(bin_dir))
     client, _, csrf = _make_client(tmp_path / "state")
     [provider] = client.post(
@@ -51,4 +52,3 @@ def test_project_and_managed_session_wizard_uses_server_records(
     assert "browser-controlled" not in observed[0]
     assert client.get("/api/projects").json()[0]["name"] == "演示项目"
     assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
-

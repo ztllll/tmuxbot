@@ -6,7 +6,7 @@ import pytest
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
-from tmuxbot.core.rich_messages import build_reply_document
+from tmuxbot.core.rich_messages import build_reply_document, render_telegram_document
 from tmuxbot.frontends.feishu_cards import (
     FeishuCardTooLarge,
     build_feishu_card_v2,
@@ -48,7 +48,7 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert card["config"]["update_multi"] is True
     assert card["config"]["width_mode"] == "fill"
     assert card["config"]["summary"]["content"].startswith("结论 完成 部署")
-    assert card["header"]["title"]["content"] == "回复"
+    assert card["header"]["title"]["content"] == f"回复 · {tmp_path.name}"
     assert card["header"]["subtitle"]["content"] == "alpha"
     assert card["header"]["template"] == "yellow"
     tags = [item["text"]["content"] for item in card["header"]["text_tag_list"]]
@@ -69,6 +69,28 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert status["text"]["text_color"] == "grey"
 
     assert not any(element["tag"] == "button" for element in elements)
+
+
+def test_channel_headers_share_project_and_session_identity(tmp_path):
+    project = tmp_path / "project-alpha"
+    project.mkdir()
+    b = binding(project)
+    document = build_reply_document(
+        b,
+        ReplyEnvelope(
+            title="tmuxbot",
+            body="正在分析问题",
+            metadata={"display_state": "working"},
+        ),
+    )
+
+    card = build_feishu_card_v2(document, binding_token(b.name))
+    telegram = render_telegram_document(document, full_output_threshold=None)
+
+    assert card["header"]["title"]["content"] == "工作中 · project-alpha"
+    assert card["header"]["subtitle"]["content"] == "alpha"
+    assert "工作中 · project-alpha" in telegram.chat_html
+    assert "alpha" in telegram.chat_html
 
 
 @pytest.mark.parametrize(

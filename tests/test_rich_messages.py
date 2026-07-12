@@ -83,7 +83,9 @@ def test_render_telegram_document_uses_balanced_native_blocks(tmp_path):
 
     result = render_telegram_document(document, full_output_threshold=8000)
 
-    assert result.chat_html.startswith("💬 <b>回复</b> · <code>alpha</code>")
+    assert result.chat_html.startswith(
+        f"💬 <b>回复 · {tmp_path.name}</b>\n\n<i>会话 · <code>alpha</code></i>"
+    )
     assert "<b>结论</b>" in result.chat_html
     assert "<blockquote expandable>很长的细节</blockquote>" in result.chat_html
     assert '<pre><code class="language-python">print(1)</code></pre>' in result.chat_html

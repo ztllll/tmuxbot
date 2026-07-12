@@ -55,7 +55,10 @@ def build_feishu_card_v2(
         elements.append(_button_element(index, label, action, button_type, token))
 
     header: dict[str, Any] = {
-        "title": {"tag": "plain_text", "content": document.title},
+        "title": {
+            "tag": "plain_text",
+            "content": f"{document.title} · {document.project_name}",
+        },
         "subtitle": {"tag": "plain_text", "content": document.binding_name},
         "template": _STATE_TEMPLATES.get(
             "working" if streaming else document.state or "",

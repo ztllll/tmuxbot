@@ -37,7 +37,7 @@ class ProviderDiscovery:
         discovered: list[ProviderProfile] = []
         now = int(time.time())
         for binary_name in sorted(PROVIDER_BINARIES):
-            candidate = shutil.which(binary_name)
+            candidate = self.resolve_executable(binary_name)
             if not candidate:
                 continue
             try:
@@ -60,6 +60,26 @@ class ProviderDiscovery:
                 )
             )
         return discovered
+
+    @staticmethod
+    def resolve_executable(binary_name: str) -> str | None:
+        """Resolve an allowlisted CLI in shells and systemd user services.
+
+        systemd user services commonly omit ``~/.local/bin`` from ``PATH`` even
+        though npm/Claude installers place their launchers there. Prefer an
+        explicit provider override, then PATH, then the conventional user bin.
+        The caller still verifies the resulting file's identity before use.
+        """
+        override_name = {"claude": "CLAUDE_BIN", "codex": "CODEX_BIN"}.get(binary_name)
+        if override_name:
+            override = os.getenv(override_name)
+            if override:
+                return override
+        candidate = shutil.which(binary_name)
+        if candidate:
+            return candidate
+        local_candidate = Path.home() / ".local" / "bin" / binary_name
+        return str(local_candidate) if local_candidate.is_file() else None
 
     def probe(self, provider: ProviderProfile) -> ProviderProbeResult:
         self._verify_identity(provider)

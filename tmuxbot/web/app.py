@@ -642,7 +642,7 @@ def create_app(
         bridge.setdefault("status", bridge.get("state", "unknown"))
         provider_items = []
         for provider_name, binary_name in (("Claude Code", "claude"), ("Codex", "codex")):
-            binary_path = shutil.which(binary_name)
+            binary_path = ProviderDiscovery.resolve_executable(binary_name)
             provider_items.append(
                 {
                     "name": provider_name,

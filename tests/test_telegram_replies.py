@@ -35,7 +35,9 @@ def test_render_assistant_reply_adds_context_header_and_footer(tmp_path):
         footer_text="• Working (9s • esc to interrupt)",
     )
 
-    assert result.chat_html.startswith("💬 <b>回复</b> · <code>alpha</code>")
+    assert result.chat_html.startswith(
+        f"💬 <b>回复 · {tmp_path.name}</b>\n\n<i>会话 · <code>alpha</code></i>"
+    )
     assert "<b>结论</b>" in result.chat_html
     assert '<pre><code class="language-python">print(1)</code></pre>' in result.chat_html
     assert "```python" not in result.chat_html

@@ -42,6 +42,20 @@ def test_scan_only_discovers_allowlisted_regular_executables(tmp_path, monkeypat
     )
 
 
+def test_scan_finds_user_local_cli_when_systemd_path_omits_it(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    bin_dir = home / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    _executable(bin_dir / "claude", "printf 'claude 2.0\\n'\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+
+    found = ProviderDiscovery().scan()
+
+    claude = next(item for item in found if item.binary_name == "claude")
+    assert claude.executable_path == str((bin_dir / "claude").resolve())
+
+
 def test_probe_uses_exact_argv_without_shell_and_returns_version(tmp_path):
     executable = _executable(
         tmp_path / "codex", "test \"$1\" = --version || exit 9\nprintf 'codex 3.4.5\\n'\n"

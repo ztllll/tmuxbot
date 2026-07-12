@@ -68,6 +68,7 @@ def test_scan_and_probe_use_server_provider_id_only(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_cli(bin_dir / "codex", "codex 5.0")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("PATH", str(bin_dir))
     client, _, csrf = _make_client(tmp_path)
 
@@ -98,6 +99,7 @@ def test_probe_rejects_changed_provider_identity_with_fixed_409(tmp_path, monkey
     bin_dir.mkdir()
     executable = bin_dir / "claude"
     _fake_cli(executable, "claude 1")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("PATH", str(bin_dir))
     client, _, csrf = _make_client(tmp_path)
     [provider] = client.post(

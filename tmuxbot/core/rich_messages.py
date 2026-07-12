@@ -25,6 +25,7 @@ class ReplyBlock:
 @dataclass(frozen=True, slots=True)
 class ReplyDocument:
     title: str
+    project_name: str
     binding_name: str
     blocks: tuple[ReplyBlock, ...]
     source_text: str
@@ -59,6 +60,17 @@ _TELEGRAM_STATE_BADGES = {
     "info": "🔵 <b>信息</b>",
 }
 
+_STATE_TITLES = {
+    "working": "工作中",
+    "waiting": "等待输入",
+    "completed": "已完成",
+    "idle": "已完成",
+    "error": "错误/阻塞",
+    "blocked": "错误/阻塞",
+    "dead": "错误/阻塞",
+    "info": "信息",
+}
+
 
 def telegram_state_badge(state: str | None) -> str | None:
     if state is None:
@@ -79,8 +91,12 @@ def build_reply_document(
         if display_state
         else envelope.footer.state.value if envelope.footer is not None else None
     )
+    title = envelope.title or "回复"
+    if title == "tmuxbot":
+        title = _STATE_TITLES.get(state or "", "状态更新")
     return ReplyDocument(
-        title=envelope.title or "回复",
+        title=title,
+        project_name=binding.cwd.name or binding.name,
         binding_name=binding.name,
         blocks=_parse_blocks(source),
         source_text=source,
@@ -109,12 +125,10 @@ def render_telegram_document(
         preview = f"{preview}\n\n<i>完整输出已附为文件。</i>"
         rendered_document = replace(document, blocks=_parse_blocks(preview), source_text=preview)
 
-    header = (
-        f"💬 <b>{html.escape(rendered_document.title)}</b> · "
-        f"<code>{html.escape(rendered_document.binding_name)}</code>"
-    )
+    header = f"💬 <b>{html.escape(rendered_document.title)} · {html.escape(rendered_document.project_name)}</b>"
+    session = f"<i>会话 · <code>{html.escape(rendered_document.binding_name)}</code></i>"
     body = "\n\n".join(_render_telegram_block(block) for block in rendered_document.blocks)
-    parts = [header]
+    parts = [header, session]
     state_badge = telegram_state_badge(rendered_document.state)
     if state_badge:
         parts.append(state_badge)
