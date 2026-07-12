@@ -39,6 +39,8 @@ Type=simple
 # tmux panes outlive bridge/WebUI deploys; only stop the supervisor itself.
 KillMode=process
 EnvironmentFile=-{env_file}
+Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
+ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
 ExecStart={executable} serve
 Restart=always
 RestartSec=5

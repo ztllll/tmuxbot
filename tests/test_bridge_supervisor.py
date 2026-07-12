@@ -95,6 +95,61 @@ def test_bridge_argv_and_setup_grant_not_in_child_environment(tmp_path: Path) ->
     assert "TMUXBOT_SETUP_GRANT" not in observed[0][1]
 
 
+def test_supervisor_writes_and_clears_bridge_pid_file(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure_private_directories()
+    paths.bindings_file.write_text(
+        "bindings:\n"
+        "  - name: demo\n"
+        "    chat_id: 1\n"
+        "    thread_id: 0\n"
+        "    bot_token_env: TG_CODEX_BOT_TOKEN\n"
+        "    backend: codex\n"
+        "    tmux_session: demo\n"
+        "    cwd: /tmp\n",
+        encoding="utf-8",
+    )
+    pid_file = tmp_path / "bridge.pid"
+
+    class Child:
+        pid = 4242
+        returncode = None
+
+        def __init__(self) -> None:
+            self.stopped = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self.stopped.wait()
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 0
+            self.stopped.set()
+
+    async def spawn(_argv: list[str], _env: dict[str, str]):
+        return Child()
+
+    supervisor = BridgeSupervisor(
+        paths,
+        {"TG_CODEX_BOT_TOKEN": "123:abc", "TMUXBOT_BRIDGE_PID_FILE": str(pid_file)},
+        spawn=spawn,
+    )
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(supervisor.run(stop, poll_interval=0.01))
+        for _ in range(20):
+            if pid_file.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert pid_file.read_text(encoding="utf-8") == "4242\n"
+        stop.set()
+        await task
+
+    asyncio.run(scenario())
+    assert not pid_file.exists()
+
+
 def test_readiness_loads_credentials_written_by_webui(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure_private_directories()

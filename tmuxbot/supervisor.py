@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -97,6 +98,12 @@ class BridgeSupervisor:
         self.paths = paths
         self.environ = dict(environ)
         self.spawn = spawn
+        self.pid_file = Path(
+            self.environ.get(
+                "TMUXBOT_BRIDGE_PID_FILE",
+                str(self.paths.state_dir / "bridge.pid"),
+            )
+        )
         self._child: Any | None = None
         self._state = "unconfigured"
         self._reason = "not_started"
@@ -153,6 +160,7 @@ class BridgeSupervisor:
                     self._child = await self.spawn(
                         [sys.executable, "-m", "tmuxbot", "bridge"], child_env
                     )
+                    self._write_bridge_pid(getattr(self._child, "pid", None))
                     self._state = "running"
                     self._reason = "ready"
                     wait_task = asyncio.create_task(self._child.wait())
@@ -181,6 +189,7 @@ class BridgeSupervisor:
                 break
         finally:
             await self.stop()
+            self._clear_bridge_pid()
             self._state = "stopped"
             self._reason = "stopped"
 
@@ -195,3 +204,16 @@ class BridgeSupervisor:
             if hasattr(child, "kill"):
                 child.kill()
                 await child.wait()
+
+    def _write_bridge_pid(self, pid: int | None) -> None:
+        if not isinstance(pid, int) or pid <= 0:
+            return
+        self.pid_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.pid_file.write_text(f"{pid}\n", encoding="utf-8")
+        os.chmod(self.pid_file, 0o600)
+
+    def _clear_bridge_pid(self) -> None:
+        try:
+            self.pid_file.unlink(missing_ok=True)
+        except OSError:
+            pass

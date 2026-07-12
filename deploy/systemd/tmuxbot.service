@@ -23,6 +23,8 @@ Type=simple
 # Keep native tmux/CLI sessions alive when the bridge service is restarted.
 KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
+Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
+ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
 ExecStart=%h/.local/bin/tmuxbot serve
 Restart=always
 RestartSec=5s

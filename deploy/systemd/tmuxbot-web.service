@@ -21,6 +21,8 @@ After=network.target
 Type=simple
 KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
+Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
+ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
 ExecStart=%h/.local/bin/tmuxbot web
 Restart=on-failure
 RestartSec=3
