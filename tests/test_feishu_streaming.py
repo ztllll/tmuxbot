@@ -9,6 +9,7 @@ from tmuxbot.frontends.feishu_streaming import (
     StreamingPrefixError,
 )
 from tmuxbot.frontends.feishu import FeishuFrontend
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.state import Binding
 
 
@@ -174,7 +175,11 @@ def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
 
     async def run():
         message = await frontend.send_status_html(
-            b.chat_id, b.thread_id, "工作中", display_state="working"
+            b.chat_id,
+            b.thread_id,
+            "工作中",
+            display_state="working",
+            footer=TerminalStatus(state=TerminalState.WORKING, model="gpt-5.6-terra"),
         )
         await frontend.edit_html(b.chat_id, message.message_id, "仍在工作")
 
@@ -182,3 +187,5 @@ def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
 
     assert cards[0][1]["header"]["template"] == "yellow"
     assert cards[1][1]["header"]["template"] == "yellow"
+    assert "gpt-5.6-terra" in json.dumps(cards[0][1], ensure_ascii=False)
+    assert "gpt-5.6-terra" in json.dumps(cards[1][1], ensure_ascii=False)

@@ -2,7 +2,9 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from tmuxbot.jsonl import on_tmux_event
+from tmuxbot import jsonl
+from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.jsonl import _capture_terminal_status, on_tmux_event
 from tmuxbot.attachments import is_image_file
 from tmuxbot.state import Binding
 
@@ -126,6 +128,22 @@ def test_assistant_text_uses_enhanced_reply_sender_when_available(tmp_path):
         ]
 
     asyncio.run(run())
+
+
+def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkeypatch):
+    class BackendWithModel:
+        def parse_terminal_status(self, pane):
+            return TerminalStatus(state=TerminalState.WORKING)
+
+        def current_model(self, binding):
+            return "claude-opus-4-8"
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "working")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), BackendWithModel()))
+
+    assert status is not None
+    assert status.model == "claude-opus-4-8"
 
 
 def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_path):

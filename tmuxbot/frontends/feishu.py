@@ -41,6 +41,7 @@ from tmuxbot.channels.feishu import (
 )
 from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
 from tmuxbot.core.capabilities import ChannelCapabilities
+from tmuxbot.core.events import TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import build_reply_document
 from tmuxbot.control_panel import (
@@ -585,6 +586,7 @@ class FeishuFrontend(Frontend):
         html_text: str,
         *,
         display_state: str,
+        footer: TerminalStatus | None = None,
     ) -> Any:
         """发送带语义状态颜色的 Card JSON 2.0。"""
         md = _html_to_feishu_md(html_text)
@@ -597,8 +599,10 @@ class FeishuFrontend(Frontend):
                 ReplyEnvelope(
                     title="tmuxbot",
                     body=html_text,
+                    footer=footer,
                     metadata={"display_state": display_state},
                 ),
+                footer_text=self._status_footer_text(footer),
             )
             card_json = serialize_feishu_card(
                 build_feishu_card_v2(document, binding_token(binding.name))
@@ -619,6 +623,9 @@ class FeishuFrontend(Frontend):
             if not hasattr(self, "_v2_message_states"):
                 self._v2_message_states = {}
             self._v2_message_states[message_id] = display_state
+            if not hasattr(self, "_v2_message_footers"):
+                self._v2_message_footers = {}
+            self._v2_message_footers[message_id] = footer
         return _make_fake_msg(message_id)
 
     async def edit_html(self, chat_id: int | str, message_id: str, html_text: str) -> None:
@@ -631,11 +638,15 @@ class FeishuFrontend(Frontend):
                     ReplyEnvelope(
                         title="tmuxbot",
                         body=html_text,
+                        footer=getattr(self, "_v2_message_footers", {}).get(message_id),
                         metadata={
                             "display_state": getattr(
                                 self, "_v2_message_states", {}
                             ).get(message_id, "unknown")
                         },
+                    ),
+                    footer_text=self._status_footer_text(
+                        getattr(self, "_v2_message_footers", {}).get(message_id)
                     ),
                 )
                 card_json = serialize_feishu_card(
@@ -645,6 +656,14 @@ class FeishuFrontend(Frontend):
                 return
         md = _html_to_feishu_md(html_text)
         await asyncio.to_thread(self._patch_card_sync, message_id, _build_card(md))
+
+    def _status_footer_text(self, footer: TerminalStatus | None) -> str | None:
+        if footer is None:
+            return None
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            return backend.format_status_footer(footer)
+        return " ".join(v for v in (footer.model, footer.effort) if v) or None
 
     async def send_pre(self, chat_id: int | str, thread_id: int | None, raw_text: str) -> None:
         """raw_text 用代码块包裹后发 card"""

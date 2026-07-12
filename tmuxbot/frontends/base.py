@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from tmuxbot.core.capabilities import ChannelCapabilities
+from tmuxbot.core.events import TerminalStatus
 
 if TYPE_CHECKING:
     from tmuxbot.core.replies import ReplyEnvelope
@@ -87,6 +88,7 @@ class Frontend(ABC):
         html_text: str,
         *,
         display_state: str,
+        footer: TerminalStatus | None = None,
     ) -> Any:
         """Send state-aware status content; unsupported channels render normal HTML."""
         return await self.send_html(chat_id, thread_id, html_text)

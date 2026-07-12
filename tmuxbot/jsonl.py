@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
 from tmuxbot.core.replies import ReplyEnvelope
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.runtime_v2 import RuntimeV2Router
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.tmux import tmux_capture
@@ -297,6 +299,7 @@ async def on_tmux_event(
         header = "💭 <b>工作中…</b>"
         initial_html = header + "\n" + body
         send_status = getattr(frontend, "send_status_html", None)
+        status = await _capture_terminal_status(b, backend)
         if send_status is None:
             msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
         else:
@@ -305,6 +308,7 @@ async def on_tmux_event(
                 b.thread_id,
                 initial_html,
                 display_state="working",
+                footer=status,
             )
         if msg is not None and hasattr(msg, "message_id"):
             state.tool_aggregator[b.name] = {
@@ -335,12 +339,7 @@ async def _send_assistant_reply(
     frontend: "Frontend", b: "Binding", html_text: str, backend: "Backend",
 ) -> None:
     clean_text, attachments = split_outbound_attachments(html_text, cwd=b.cwd)
-    try:
-        pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
-        status = backend.parse_terminal_status(pane)
-    except Exception:
-        log.exception("[%s] provider status capture failed", b.name)
-        status = None
+    status = await _capture_terminal_status(b, backend)
     if status is None:
         display_state = "completed"
     elif status.state.value in {"blocked", "dead"}:
@@ -358,6 +357,25 @@ async def _send_assistant_reply(
         metadata={"display_state": display_state},
     )
     await frontend.send_assistant_reply(b, envelope)
+
+
+async def _capture_terminal_status(
+    b: "Binding", backend: "Backend",
+) -> TerminalStatus | None:
+    """Capture runtime state and fill a missing TUI model from provider metadata."""
+    try:
+        pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
+        status = backend.parse_terminal_status(pane)
+        model_getter = getattr(backend, "current_model", None)
+        model = model_getter(b) if callable(model_getter) else None
+    except Exception:
+        log.exception("[%s] provider status capture failed", b.name)
+        return None
+    if status is None:
+        return TerminalStatus(state=TerminalState.IDLE, model=model) if model else None
+    if status.model is None and model:
+        return replace(status, model=model)
+    return status
 
 
 async def _send_live_text(

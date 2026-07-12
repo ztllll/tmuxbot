@@ -603,6 +603,25 @@ class ClaudeCodeBackend(Backend):
             return None
         return max(files, key=lambda p: p.stat().st_mtime)
 
+    def current_model(self, b: "Binding") -> str | None:
+        """Read Claude Code's effective model from the active transcript."""
+        transcript = self.find_active_jsonl(b)
+        if transcript is None:
+            return None
+        try:
+            rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+        for line in reversed(rows):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = row.get("message")
+            if isinstance(message, dict) and isinstance(message.get("model"), str):
+                return message["model"]
+        return None
+
     def poll_provider_events(self, b: "Binding") -> list[ProviderEvent]:
         if b.name not in self._hook_offsets:
             self._hook_offsets[b.name] = (

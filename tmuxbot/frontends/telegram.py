@@ -59,6 +59,7 @@ from tmuxbot.channels.telegram import (
     telegram_replies_to_bot,
 )
 from tmuxbot.core.capabilities import ChannelCapabilities
+from tmuxbot.core.events import TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import sanitize_telegram_html
 from tmuxbot.control_panel import (
@@ -591,6 +592,7 @@ class TelegramFrontend(Frontend):
         html_text: str,
         *,
         display_state: str,
+        footer: TerminalStatus | None = None,
     ) -> Any:
         """Render status updates with the same project/session header as Feishu."""
         binding = self.find_binding(chat_id, thread_id)
@@ -601,9 +603,11 @@ class TelegramFrontend(Frontend):
             ReplyEnvelope(
                 title="tmuxbot",
                 body=html_text,
+                footer=footer,
                 metadata={"display_state": display_state},
             ),
             full_output_threshold=None,
+            footer_text=self._status_footer_text(footer),
         )
         first_msg = None
         for chunk in split_for_tg(rendered.chat_html):
@@ -618,22 +622,24 @@ class TelegramFrontend(Frontend):
         if isinstance(message_id, int):
             if not hasattr(self, "_status_messages"):
                 self._status_messages = {}
-            self._status_messages[message_id] = (binding, display_state)
+            self._status_messages[message_id] = (binding, display_state, footer)
         return first_msg
 
     async def edit_html(self, chat_id: int, message_id: int, html_text: str) -> None:
         """编辑已发送消息 — 工具调用聚合用。超长直接 truncate 末尾。"""
         status = getattr(self, "_status_messages", {}).get(message_id)
         if status is not None:
-            binding, display_state = status
+            binding, display_state, footer = status
             html_text = render_assistant_reply(
                 binding,
                 ReplyEnvelope(
                     title="tmuxbot",
                     body=html_text,
+                    footer=footer,
                     metadata={"display_state": display_state},
                 ),
                 full_output_threshold=None,
+                footer_text=self._status_footer_text(footer),
             ).chat_html
         html_text = sanitize_telegram_html(html_text)
         if utf16_len(html_text) > TG_SPLIT:
@@ -721,7 +727,15 @@ class TelegramFrontend(Frontend):
         except Exception:
             log.exception("telegram image upload failed: %s", path)
             await self._send_attachment_failure(chat_id, thread_id, path)
+        return None
+
+    def _status_footer_text(self, footer: TerminalStatus | None) -> str | None:
+        if footer is None:
             return None
+        backend = getattr(self, "backend", None)
+        if backend is not None:
+            return backend.format_status_footer(footer)
+        return " ".join(v for v in (footer.model, footer.effort) if v) or None
 
     async def send_file(
         self, chat_id: int | str, thread_id: int | None, path: str | Path,

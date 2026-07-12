@@ -357,6 +357,30 @@ class CodexBackend(Backend):
                 return jl
         return None
 
+    def current_model(self, b: "Binding") -> str | None:
+        """Read Codex's effective model from the active rollout transcript."""
+        transcript = self.find_active_jsonl(b)
+        if transcript is None:
+            return None
+        try:
+            rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return None
+        for line in reversed(rows):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            settings = payload.get("thread_settings")
+            if isinstance(settings, dict) and isinstance(settings.get("model"), str):
+                return settings["model"]
+            if isinstance(payload.get("model"), str):
+                return payload["model"]
+        return None
+
     @staticmethod
     def _session_metadata(jl: Path) -> dict | None:
         if not jl.is_file():

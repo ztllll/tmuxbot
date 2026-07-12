@@ -1,6 +1,24 @@
+import json
+from pathlib import Path
+
+from tmuxbot.backends import claude_code, codex
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.core.events import TerminalState
+from tmuxbot.state import Binding
+
+
+def _binding(tmp_path: Path, backend: str) -> Binding:
+    return Binding(
+        name="provider-test",
+        chat_id=1,
+        thread_id=None,
+        tmux_session="provider-test",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=tmp_path,
+        backend=backend,
+    )
 
 
 def test_provider_process_detection_and_safe_start_are_explicit():
@@ -61,3 +79,32 @@ def test_codex_terminal_status_normalizes_working_model_and_cwd():
     assert CodexBackend().format_status_footer(status) == (
         "gpt-5.6-sol high · working 9s · ~/repo"
     )
+
+
+def test_codex_current_model_falls_back_to_active_transcript(tmp_path, monkeypatch):
+    sessions = tmp_path / "codex-sessions"
+    rollout = sessions / "2026" / "07" / "12" / "rollout-test.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        "\n".join(
+            (
+                json.dumps({"type": "session_meta", "payload": {"id": "s-1", "cwd": str(tmp_path)}}),
+                json.dumps({"type": "event_msg", "payload": {"type": "thread_settings_applied", "thread_settings": {"model": "gpt-5.6-terra"}}}),
+            )
+        ) + "\n"
+    )
+    monkeypatch.setattr(codex, "CODEX_SESSIONS_DIR", sessions)
+
+    assert CodexBackend().current_model(_binding(tmp_path, "codex")) == "gpt-5.6-terra"
+
+
+def test_claude_current_model_falls_back_to_active_transcript(tmp_path, monkeypatch):
+    projects = tmp_path / "claude-projects"
+    monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)
+    project = projects / claude_code.encode_cwd(tmp_path)
+    project.mkdir(parents=True)
+    (project / "session-1.jsonl").write_text(
+        json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-8"}}) + "\n"
+    )
+
+    assert ClaudeCodeBackend().current_model(_binding(tmp_path, "claude_code")) == "claude-opus-4-8"

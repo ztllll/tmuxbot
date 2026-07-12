@@ -68,6 +68,14 @@ class Backend(ABC):
     def parse_terminal_status(self, pane: str) -> TerminalStatus | None:
         return None
 
+    def current_model(self, b: "Binding") -> str | None:
+        """Return the model recorded by the active provider transcript, if known.
+
+        TUI status bars vary by provider/version and sometimes omit the model.
+        Transcript metadata is the authoritative fallback used by channel footers.
+        """
+        return None
+
     def format_status_footer(self, status: TerminalStatus | None) -> str | None:
         if status is None:
             return None

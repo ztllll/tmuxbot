@@ -178,7 +178,13 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
             return await fn()
 
         frontend._tg_call = tg_call
-        await frontend.send_status_html(123, 456, "正在处理", display_state="working")
+        await frontend.send_status_html(
+            123,
+            456,
+            "正在处理",
+            display_state="working",
+            footer=TerminalStatus(state=TerminalState.WORKING, model="gpt-5.6-terra"),
+        )
         await frontend.edit_html(123, 77, "仍在处理")
 
     import asyncio
@@ -188,7 +194,9 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
     expected = f"工作中 · {tmp_path.name}"
     assert expected in calls[0][1]
     assert "会话 · <code>alpha</code>" in calls[0][1]
+    assert "gpt-5.6-terra" in calls[0][1]
     assert expected in calls[1][1]
+    assert "gpt-5.6-terra" in calls[1][1]
 
 
 def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):
