@@ -30,12 +30,14 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     terminal.open(host.current);
     terminal.writeln(`\x1b[33m[observe]\x1b[0m ${session.name} · ${session.tmux_target}`);
     let disposed = false;
-    const issueTicket = observedTarget
-      ? createObservedTerminalTicket(observedTarget, csrfToken)
-      : createTerminalTicket(session.id, csrfToken);
-    void issueTicket.then(({ ticket, ...issued }) => {
+    async function connectTerminal() {
+      const ticket = observedTarget
+        ? await createObservedTerminalTicket(observedTarget, csrfToken).then((issued) => {
+          terminalIdRef.current = issued.terminal_id;
+          return issued.ticket;
+        })
+        : await createTerminalTicket(session.id, csrfToken).then((issued) => issued.ticket);
       if (disposed) return;
-      if (observedTarget) terminalIdRef.current = (issued as unknown as { terminal_id: string }).terminal_id;
       const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(`${scheme}//${window.location.host}/api/terminals/ws?ticket=${encodeURIComponent(ticket)}`);
       socket.binaryType = "arraybuffer";
@@ -53,7 +55,9 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
       socket.onclose = () => setState("终端连接已关闭；tmux 会话仍在运行");
       terminal.onData((data) => { if (modeRef.current === "takeover" && socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(data)); });
       terminal.onResize(({ rows, cols }) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", rows, cols })); });
-    }).catch(() => setState("无法创建终端票据，请刷新受管会话。"));
+    }
+    terminalIdRef.current = session.id;
+    void connectTerminal().catch(() => setState("无法创建终端票据，请刷新受管会话。"));
     return () => { disposed = true; socketRef.current?.close(); terminal.dispose(); };
   }, [csrfToken, observedTarget, session.id, session.name, session.tmux_target]);
 

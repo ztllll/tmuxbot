@@ -115,6 +115,15 @@ def create_app(
     app.state.teamrun_scheduler = teamrun_scheduler
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
+    if isinstance(terminal_service, TerminalService):
+        def observed_target_is_current(target: str, pane_pid: int) -> bool:
+            try:
+                panes = inventory.list_panes()
+            except TmuxInventoryError:
+                return False
+            return any(item.target == target and item.pid == pane_pid for item in panes)
+
+        terminal_service.set_observed_target_validator(observed_target_is_current)
 
     @app.exception_handler(RequestValidationError)
     async def sanitized_validation_error(
@@ -461,18 +470,25 @@ def create_app(
             raise HTTPException(status_code=400, detail="project path is unavailable") from exc
         if not root.is_dir():
             raise HTTPException(status_code=400, detail="project path must be a directory")
-        git = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=3, check=False,
-        )
-        git_root = git.stdout.strip() if git.returncode == 0 else None
-        branch = None
-        if git_root:
-            branch_result = subprocess.run(
-                ["git", "-C", str(root), "branch", "--show-current"],
+        try:
+            git = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
                 capture_output=True, text=True, timeout=3, check=False,
             )
-            branch = branch_result.stdout.strip() or None
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            git = None
+        git_root = git.stdout.strip() if git is not None and git.returncode == 0 else None
+        branch = None
+        if git_root:
+            try:
+                branch_result = subprocess.run(
+                    ["git", "-C", str(root), "branch", "--show-current"],
+                    capture_output=True, text=True, timeout=3, check=False,
+                )
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+                branch_result = None
+            branch = branch_result.stdout.strip() if branch_result is not None else None
+            branch = branch or None
         try:
             panes = inventory.list_panes()
         except TmuxInventoryError:
@@ -877,7 +893,7 @@ def create_app(
         pane = next((item for item in panes if item.target == body.target), None)
         if pane is None:
             raise HTTPException(status_code=409, detail="tmux pane no longer exists; refresh inventory")
-        terminal_id = service.register_observed_target(pane.target)
+        terminal_id = service.register_observed_target(pane.target, pane_pid=pane.pid)
         ticket = service.issue_ticket(terminal_id, session.token, now=int(time.time()))
         assert ticket is not None
         return {

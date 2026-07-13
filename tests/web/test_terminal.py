@@ -177,3 +177,26 @@ def test_terminal_ticket_rejects_managed_target_reassignment():
     assert service.consume_ticket(
         ticket.token, "session-a", now=1_001
     ) is None
+
+
+def test_observed_target_uses_one_lock_key_and_rejects_recreated_pane():
+    class Repository:
+        def append_event(self, _event):
+            return True
+
+    current = {("loose:0.0", 77)}
+    service = TerminalService(
+        repository=Repository(),
+        target_resolver=lambda _session_id: None,
+        allowed_origin="http://testserver",
+        observed_target_validator=lambda target, pid: (target, pid) in current,
+    )
+    first = service.register_observed_target("loose:0.0", pane_pid=77)
+    second = service.register_observed_target("loose:0.0", pane_pid=77)
+    assert first == second
+    service.connect(first, "session-a")
+    assert service.start_takeover(first, "session-a") == "started"
+    service.connect(second, "session-b")
+    assert service.start_takeover(second, "session-b") == "conflict"
+    current.clear()
+    assert service.resolve_target(first) is None

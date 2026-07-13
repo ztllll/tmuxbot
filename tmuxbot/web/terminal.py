@@ -121,6 +121,10 @@ class TakeoverRegistry:
         with self._lock:
             return managed_session_id in self._owners
 
+    def discard(self, managed_session_id: str) -> None:
+        with self._lock:
+            self._owners.pop(managed_session_id, None)
+
 
 class TerminalConnection(Protocol):
     async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes: ...
@@ -194,6 +198,13 @@ class PtyTerminal:
 
 TerminalFactory = Callable[[str], Awaitable[TerminalConnection]]
 TargetResolver = Callable[[str], str | None]
+ObservedTargetValidator = Callable[[str, int], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedTarget:
+    target: str
+    pane_pid: int
 
 
 async def _default_terminal_factory(target: str) -> TerminalConnection:
@@ -210,6 +221,7 @@ class TerminalService:
         terminal_factory: TerminalFactory | None = None,
         tickets: TerminalTicketStore | None = None,
         takeovers: TakeoverRegistry | None = None,
+        observed_target_validator: ObservedTargetValidator | None = None,
     ) -> None:
         self.repository = repository
         self.target_resolver = target_resolver
@@ -219,27 +231,54 @@ class TerminalService:
         self.takeovers = takeovers or TakeoverRegistry()
         self._connections: dict[tuple[str, bytes], int] = {}
         self._connections_lock = threading.Lock()
-        self._observed_targets: dict[str, str] = {}
+        self._observed_targets: dict[str, ObservedTarget] = {}
+        self._observed_references: dict[str, str] = {}
         self._observed_targets_lock = threading.Lock()
+        self._observed_target_validator = observed_target_validator
 
     def resolve_target(self, managed_session_id: str) -> str | None:
         with self._observed_targets_lock:
             observed = self._observed_targets.get(managed_session_id)
         if observed is not None:
-            return observed
+            validator = self._observed_target_validator
+            if validator is not None and not validator(observed.target, observed.pane_pid):
+                self.release_observed_target(managed_session_id)
+                return None
+            return observed.target
         return self.target_resolver(managed_session_id)
 
-    def register_observed_target(self, target: str) -> str:
+    def set_observed_target_validator(
+        self, validator: ObservedTargetValidator | None
+    ) -> None:
+        self._observed_target_validator = validator
+
+    def register_observed_target(self, target: str, *, pane_pid: int) -> str:
         """Register a server-verified inventory target for one browser terminal.
 
         Callers must verify the target against a fresh tmux inventory first.  The
         opaque reference prevents the later ticket/takeover endpoints from ever
         accepting a browser-supplied tmux target as a command argument.
         """
-        reference = f"observed-{secrets.token_urlsafe(18)}"
         with self._observed_targets_lock:
-            self._observed_targets[reference] = target
+            existing = self._observed_references.get(target)
+            if existing is not None:
+                current = self._observed_targets.get(existing)
+                if current is not None and current.pane_pid == pane_pid:
+                    return existing
+            reference = f"observed-{secrets.token_urlsafe(18)}"
+            self._observed_targets[reference] = ObservedTarget(target, pane_pid)
+            self._observed_references[target] = reference
         return reference
+
+    def release_observed_target(self, reference: str) -> None:
+        with self._observed_targets_lock:
+            observed = self._observed_targets.pop(reference, None)
+            if (
+                observed is not None
+                and self._observed_references.get(observed.target) == reference
+            ):
+                self._observed_references.pop(observed.target, None)
+        self.takeovers.discard(reference)
 
     def issue_ticket(
         self, managed_session_id: str, web_session_token: str, *, now: int
@@ -324,6 +363,9 @@ class TerminalService:
                 self._connections.pop(key, None)
             else:
                 self._connections[key] = count - 1
+                return
+        if managed_session_id.startswith("observed-") and not self.takeovers.is_active(managed_session_id):
+            self.release_observed_target(managed_session_id)
 
     def is_connected(
         self, managed_session_id: str, web_session_token: str

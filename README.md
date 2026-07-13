@@ -120,7 +120,7 @@ journalctl --user -u tmuxbot -f
 
 ## 当前能力
 
-- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可扫描/探测 tmux、Claude Code、Codex，登记项目并启动受管 CLI，会话和数据使用 XDG 私有目录
+- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型选择始终调用当前 CLI 的原生 `/model` picker。
 - **原生 Web TUI**:xterm.js 直接 attach 已登记 tmux target，默认只观察；显式接管后才允许键盘输入，断开浏览器不会终止 tmux 会话
 - **Web 通道向导**:可为受管会话配置 Telegram 或飞书，密钥只写入本机 `0600` 配置，不通过 API 回显
 - **TeamRun 多 LLM**:确定性 Coordinator / Implementer / Reviewer 三角色协作，唯一写租约、DAG、mailbox、Artifact、重试、独立验收和恢复；Implementer 交付证据后 Reviewer 自动收到只读审查包
