@@ -182,10 +182,13 @@ def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
             footer=TerminalStatus(state=TerminalState.WORKING, model="gpt-5.6-terra"),
         )
         await frontend.edit_html(b.chat_id, message.message_id, "仍在工作")
+        await frontend.finalize_status_html(b.chat_id, message.message_id, "任务完成")
 
     asyncio.run(run())
 
     assert cards[0][1]["header"]["template"] == "yellow"
     assert cards[1][1]["header"]["template"] == "yellow"
+    assert cards[2][1]["header"]["template"] == "green"
+    assert cards[2][1]["header"]["title"]["content"].startswith("已完成")
     assert "gpt-5.6-terra" in json.dumps(cards[0][1], ensure_ascii=False)
     assert "gpt-5.6-terra" in json.dumps(cards[1][1], ensure_ascii=False)

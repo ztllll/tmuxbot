@@ -43,6 +43,11 @@ class FakeFrontend:
                 await self.send_file(binding.chat_id, binding.thread_id, path)
 
 
+class FinalizingFrontend(FakeFrontend):
+    async def finalize_status_html(self, chat_id, message_id, html_text):
+        self.sent.append(("finalize", chat_id, message_id, html_text))
+
+
 class EnhancedFakeFrontend(FakeFrontend):
     async def send_assistant_reply(self, binding, envelope):
         self.sent.append(
@@ -199,6 +204,30 @@ def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
             ("html", 123, None, "💭 <b>工作中…</b>\n工具输出"),
             ("image", 123, None, image, None),
         ]
+
+    asyncio.run(run())
+
+
+def test_final_assistant_text_immediately_completes_the_tool_status_card(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(
+            setup_mode=False,
+            tool_aggregator={
+                "alpha": {
+                    "msg_id": "om-working", "chat_id": 123,
+                    "content": ["💭 <b>工作中…</b>", "工具执行"], "last_ts": 0,
+                }
+            },
+        )
+        b = binding(tmp_path)
+
+        await on_tmux_event(b, "assistant_text", "任务完成", frontend, state, FakeBackend())
+
+        assert state.tool_aggregator == {}
+        assert frontend.sent[0] == (
+            "finalize", 123, "om-working", "💭 <b>工作中…</b>\n工具执行\n\n<i>✓ 完成</i>",
+        )
 
     asyncio.run(run())
 

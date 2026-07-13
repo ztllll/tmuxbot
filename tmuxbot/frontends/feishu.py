@@ -657,6 +657,19 @@ class FeishuFrontend(Frontend):
         md = _html_to_feishu_md(html_text)
         await asyncio.to_thread(self._patch_card_sync, message_id, _build_card(md))
 
+    async def finalize_status_html(
+        self, chat_id: int | str, message_id: str, html_text: str
+    ) -> None:
+        """Close a V2 status card with completed state and no stale TUI footer."""
+        if message_id in getattr(self, "_v2_message_ids", set()):
+            if not hasattr(self, "_v2_message_states"):
+                self._v2_message_states = {}
+            if not hasattr(self, "_v2_message_footers"):
+                self._v2_message_footers = {}
+            self._v2_message_states[message_id] = "completed"
+            self._v2_message_footers[message_id] = None
+        await self.edit_html(chat_id, message_id, html_text)
+
     def _status_footer_text(self, footer: TerminalStatus | None) -> str | None:
         if footer is None:
             return None

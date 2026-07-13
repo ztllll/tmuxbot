@@ -193,12 +193,19 @@ async def _dispatch_provider_events(
 
 async def _close_aggregator(b: "Binding", state: "State", frontend: "Frontend") -> None:
     """把 aggregator 标记完成 (编辑消息加 ✓), 然后从 state 移除"""
-    agg = state.tool_aggregator.pop(b.name, None)
+    aggregators = getattr(state, "tool_aggregator", None)
+    if not aggregators:
+        return
+    agg = aggregators.pop(b.name, None)
     if not agg:
         return
     closing = "\n".join(agg["content"]) + "\n\n<i>✓ 完成</i>"
     try:
-        await frontend.edit_html(agg["chat_id"], agg["msg_id"], closing)
+        finalize = getattr(frontend, "finalize_status_html", None)
+        if callable(finalize):
+            await finalize(agg["chat_id"], agg["msg_id"], closing)
+        else:
+            await frontend.edit_html(agg["chat_id"], agg["msg_id"], closing)
     except Exception:
         log.exception(f"[{b.name}] close aggregator err")
 
@@ -264,6 +271,10 @@ async def on_tmux_event(
 
     if kind == "assistant_text":
         log.info(f"[{b.name}] assistant final text len={len(body)}")
+        # A final provider response is the terminal event that closes a tool
+        # cycle.  Finish the yellow status card immediately instead of leaving
+        # a stale “working” card until the idle watcher wakes up.
+        await _close_aggregator(b, state, frontend)
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
         # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
