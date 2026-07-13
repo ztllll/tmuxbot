@@ -103,18 +103,15 @@ def test_pty_terminal_uses_fixed_tmux_attach_argv_without_shell(monkeypatch):
 
     terminal = PtyTerminal.open("alpha:0.0")
 
-    assert calls == [
-        (
-            ["tmux", "attach-session", "-t", "alpha:0.0"],
-            {
-                "stdin": slave_fd,
-                "stdout": slave_fd,
-                "stderr": slave_fd,
-                "close_fds": True,
-                "shell": False,
-            },
-        )
-    ]
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    assert argv == ["tmux", "attach-session", "-t", "alpha:0.0"]
+    assert kwargs["stdin"] == kwargs["stdout"] == kwargs["stderr"] == slave_fd
+    assert kwargs["close_fds"] is True
+    assert kwargs["shell"] is False
+    assert kwargs["env"]["TERM"] == "xterm-256color"
+    assert "TMUX" not in kwargs["env"]
+    assert "TMUX_PANE" not in kwargs["env"]
 
     asyncio.run(terminal.close())
     assert process.returncode == 0

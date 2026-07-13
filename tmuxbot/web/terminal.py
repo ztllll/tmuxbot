@@ -146,6 +146,13 @@ class PtyTerminal:
     def open(cls, target: str) -> "PtyTerminal":
         master_fd, slave_fd = pty.openpty()
         try:
+            environment = os.environ.copy()
+            # systemd/web processes commonly inherit TERM=dumb or no TERM.  tmux
+            # then refuses to attach ("terminal does not support clear") even
+            # though the browser xterm client fully supports xterm-256color.
+            environment["TERM"] = "xterm-256color"
+            environment.pop("TMUX", None)
+            environment.pop("TMUX_PANE", None)
             process = subprocess.Popen(
                 ["tmux", "attach-session", "-t", target],
                 stdin=slave_fd,
@@ -153,6 +160,7 @@ class PtyTerminal:
                 stderr=slave_fd,
                 close_fds=True,
                 shell=False,
+                env=environment,
             )
         except BaseException:
             os.close(master_fd)
