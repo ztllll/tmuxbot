@@ -59,23 +59,13 @@ def build_feishu_card_v2(
             "tag": "plain_text",
             "content": f"{document.title} · {document.project_name}",
         },
-        "subtitle": {"tag": "plain_text", "content": document.binding_name},
+        "subtitle": {"tag": "plain_text", "content": f"会话 · {document.binding_name}"},
         "template": _STATE_TEMPLATES.get(
             "working" if streaming else document.state or "",
             "grey",
         ),
         "padding": "12px 12px 12px 12px",
     }
-    if document.provider:
-        header["text_tag_list"] = [
-            {
-                "tag": "text_tag",
-                "element_id": "provider_tag",
-                "text": {"tag": "plain_text", "content": document.provider},
-                "color": "neutral",
-            }
-        ]
-
     summary = reply_summary(document) or document.title
     return {
         "schema": "2.0",
@@ -250,45 +240,47 @@ def _reply_blocks_text(blocks: list[ReplyBlock]) -> str:
 
 
 def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]:
-    specs = [
-        ("无需 @", "mention_on", "primary"),
-        ("必须 @", "mention_off", "default"),
-        ("继承默认", "mention_default", "default"),
-        ("状态", "cmd_status", "default"),
-        ("屏幕", "cmd_screen", "default"),
-        ("新会话", "cmd_new", "danger"),
-        ("压缩上下文", "cmd_compact", "default"),
-        ("恢复会话", "cmd_resume", "default"),
-        ("切换模型", "cmd_model", "primary"),
-        ("Esc", "cmd_esc", "default"),
-        ("Ctrl-C", "cmd_cc", "danger"),
-        ("重启 CLI", "cmd_restart", "danger"),
-        ("刷新", "refresh_panel", "default"),
-        ("关闭", "close_panel", "default"),
-    ]
     elements: list[dict[str, Any]] = [
-        {"tag": "markdown", "element_id": "panel_body", "content": markdown_text}
+        {
+            "tag": "markdown",
+            "element_id": "panel_body",
+            "content": markdown_text,
+            "margin": "0px 0px 4px 0px",
+        },
+        _section_label("群聊唤醒"),
+        _button_row(
+            "panel_mention",
+            (("无需 @", "mention_on", "primary"), ("必须 @", "mention_off", "default"), ("继承默认", "mention_default", "default")),
+            token,
+        ),
+        _section_label("会话工具"),
+        _button_row(
+            "panel_tools",
+            (("状态", "cmd_status", "default"), ("屏幕", "cmd_screen", "default"), ("刷新", "refresh_panel", "default")),
+            token,
+        ),
+        _button_row(
+            "panel_session",
+            (("新会话", "cmd_new", "danger"), ("压缩上下文", "cmd_compact", "default"), ("恢复会话", "cmd_resume", "default")),
+            token,
+        ),
+        _section_label("模型与运行控制"),
+        _button_row(
+            "panel_model",
+            (("切换模型", "cmd_model", "primary"),),
+            token,
+        ),
+        _button_row(
+            "panel_control",
+            (("Esc", "cmd_esc", "default"), ("Ctrl-C", "cmd_cc", "danger"), ("重启 CLI", "cmd_restart", "danger")),
+            token,
+        ),
+        _button_row(
+            "panel_close",
+            (("关闭面板", "close_panel", "default"),),
+            token,
+        ),
     ]
-    for index, (label, action, button_type) in enumerate(specs):
-        button = _button_element(index, label, action, button_type, token)
-        button["element_id"] = f"panel_action_{index}"
-        if action == "cmd_new":
-            button["confirm"] = {
-                "title": {"tag": "plain_text", "content": "确认创建新会话？"},
-                "text": {
-                    "tag": "plain_text",
-                    "content": "这会在当前 tmux CLI 中执行 /new。",
-                },
-            }
-        if action == "cmd_restart":
-            button["confirm"] = {
-                "title": {"tag": "plain_text", "content": "确认重启 CLI？"},
-                "text": {
-                    "tag": "plain_text",
-                    "content": "当前 tmux pane 会退出并重新启动 provider CLI。",
-                },
-            }
-        elements.append(button)
     return {
         "schema": "2.0",
         "config": {
@@ -299,10 +291,15 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
         },
         "header": {
             "title": {"tag": "plain_text", "content": "tmuxbot 控制面板"},
-            "subtitle": {"tag": "plain_text", "content": "中文 · tmux 原生 CLI"},
-            "template": "blue",
+            "subtitle": {"tag": "plain_text", "content": "中文 · 当前 tmux CLI 会话"},
+            "template": "indigo",
         },
-        "body": {"direction": "vertical", "vertical_spacing": "8px", "elements": elements},
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 16px 12px",
+            "vertical_spacing": "8px",
+            "elements": elements,
+        },
     }
 
 
@@ -323,13 +320,20 @@ def build_feishu_interaction_card(
     ]
     if session_model:
         specs.insert(5, ("仅本会话", "model_session"))
+    action_specs = tuple(
+        (label, action, "primary" if action == "enter" else "default")
+        for label, action in specs
+    )
+    first_row = action_specs[:1]
+    navigation_row = action_specs[1:4]
+    control_row = action_specs[4:]
     elements: list[dict[str, Any]] = [
-        {"tag": "markdown", "element_id": "tui_body", "content": markdown_text}
+        {"tag": "markdown", "element_id": "tui_body", "content": markdown_text},
+        _section_label("远程操作当前 tmux 选择器"),
+        _button_row("tui_nav_top", first_row, token),
+        _button_row("tui_nav_mid", navigation_row, token),
+        _button_row("tui_nav_bottom", control_row, token),
     ]
-    for index, (label, action) in enumerate(specs):
-        button = _button_element(index, label, action, "primary" if action == "enter" else "default", token)
-        button["element_id"] = f"tui_action_{index}"
-        elements.append(button)
     return {
         "schema": "2.0",
         "config": {
@@ -343,7 +347,12 @@ def build_feishu_interaction_card(
             "subtitle": {"tag": "plain_text", "content": "操作当前 tmux CLI"},
             "template": "yellow",
         },
-        "body": {"direction": "vertical", "vertical_spacing": "8px", "elements": elements},
+        "body": {
+            "direction": "vertical",
+            "padding": "12px 12px 16px 12px",
+            "vertical_spacing": "8px",
+            "elements": elements,
+        },
     }
 
 
@@ -377,13 +386,16 @@ def _button_element(
     action: str,
     button_type: str,
     token: str,
+    *,
+    size: str = "small",
+    width: str = "default",
 ) -> dict[str, Any]:
     return {
         "tag": "button",
         "element_id": f"reply_action_{index}",
         "type": button_type,
-        "size": "small",
-        "width": "default",
+        "size": size,
+        "width": width,
         "text": {"tag": "plain_text", "content": label},
         "behaviors": [
             {
@@ -391,6 +403,64 @@ def _button_element(
                 "value": {"token": token, "action": action},
             }
         ],
+    }
+
+
+def _section_label(content: str) -> dict[str, Any]:
+    return {
+        "tag": "div",
+        "text": {
+            "tag": "plain_text",
+            "content": content,
+            "text_size": "notation",
+            "text_color": "grey",
+        },
+        "margin": "8px 0px 0px 0px",
+    }
+
+
+def _button_row(
+    row_id: str,
+    specs: tuple[tuple[str, str, str], ...],
+    token: str,
+) -> dict[str, Any]:
+    columns: list[dict[str, Any]] = []
+    for index, (label, action, button_type) in enumerate(specs):
+        button = _button_element(
+            index,
+            label,
+            action,
+            button_type,
+            token,
+            size="medium",
+            width="fill",
+        )
+        button["element_id"] = f"{row_id}_{index}"
+        if action == "cmd_new":
+            button["confirm"] = {
+                "title": {"tag": "plain_text", "content": "确认创建新会话？"},
+                "text": {"tag": "plain_text", "content": "这会在当前 tmux CLI 中执行 /new。"},
+            }
+        if action == "cmd_restart":
+            button["confirm"] = {
+                "title": {"tag": "plain_text", "content": "确认重启 CLI？"},
+                "text": {"tag": "plain_text", "content": "当前 tmux pane 会退出并重新启动 provider CLI。"},
+            }
+        columns.append(
+            {
+                "tag": "column",
+                "element_id": f"{row_id}c{index}",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [button],
+            }
+        )
+    return {
+        "tag": "column_set",
+        "element_id": row_id,
+        "flex_mode": "none",
+        "horizontal_spacing": "small",
+        "columns": columns,
     }
 
 

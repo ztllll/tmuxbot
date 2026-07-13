@@ -11,6 +11,17 @@ from tmuxbot.frontends.feishu_cards import (
 from tmuxbot.state import Binding
 
 
+def _buttons(elements):
+    output = []
+    for element in elements:
+        if element["tag"] == "button":
+            output.append(element)
+        if element["tag"] == "column_set":
+            for column in element["columns"]:
+                output.extend(_buttons(column["elements"]))
+    return output
+
+
 def binding(tmp_path: Path) -> Binding:
     return Binding(
         name="alpha",
@@ -37,7 +48,8 @@ def test_feishu_control_panel_is_chinese_and_contains_common_actions(tmp_path):
     assert card["header"]["title"]["content"] == "tmuxbot 控制面板"
     markdown = [e for e in card["body"]["elements"] if e["tag"] == "markdown"]
     assert "控制面板中文说明" in markdown[0]["content"]
-    buttons = [e for e in card["body"]["elements"] if e["tag"] == "button"]
+    rows = [e for e in card["body"]["elements"] if e["tag"] == "column_set"]
+    buttons = _buttons(card["body"]["elements"])
     labels = [button["text"]["content"] for button in buttons]
     actions = [button["behaviors"][0]["value"]["action"] for button in buttons]
     assert "无需 @" in labels
@@ -46,6 +58,8 @@ def test_feishu_control_panel_is_chinese_and_contains_common_actions(tmp_path):
     assert "切换模型" in labels
     assert "重启 CLI" in labels
     assert "cmd_model" in actions
+    assert len(rows) >= 4
+    assert all(len(row["columns"]) <= 3 for row in rows)
     new_button = next(button for button in buttons if button["text"]["content"] == "新会话")
     assert new_button["confirm"]["title"]["content"] == "确认创建新会话？"
     restart_button = next(
@@ -56,10 +70,12 @@ def test_feishu_control_panel_is_chinese_and_contains_common_actions(tmp_path):
 
 def test_feishu_interaction_card_has_remote_tui_controls(tmp_path):
     card = build_feishu_interaction_card("模型选择器", binding_token("alpha"))
-    buttons = [e for e in card["body"]["elements"] if e["tag"] == "button"]
+    rows = [e for e in card["body"]["elements"] if e["tag"] == "column_set"]
+    buttons = _buttons(card["body"]["elements"])
     actions = [button["behaviors"][0]["value"]["action"] for button in buttons]
 
     assert actions == ["up", "left", "enter", "right", "down", "esc", "refresh"]
+    assert len(rows) == 3
 
 
 def test_feishu_claude_model_interaction_has_session_only_control():
@@ -68,7 +84,7 @@ def test_feishu_claude_model_interaction_has_session_only_control():
         binding_token("alpha"),
         session_model=True,
     )
-    buttons = [e for e in card["body"]["elements"] if e["tag"] == "button"]
+    buttons = _buttons(card["body"]["elements"])
     labels = [button["text"]["content"] for button in buttons]
     actions = [button["behaviors"][0]["value"]["action"] for button in buttons]
 

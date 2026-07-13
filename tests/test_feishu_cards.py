@@ -49,10 +49,9 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert card["config"]["width_mode"] == "fill"
     assert card["config"]["summary"]["content"].startswith("结论 完成 部署")
     assert card["header"]["title"]["content"] == f"回复 · {tmp_path.name}"
-    assert card["header"]["subtitle"]["content"] == "alpha"
+    assert card["header"]["subtitle"]["content"] == "会话 · alpha"
     assert card["header"]["template"] == "yellow"
-    tags = [item["text"]["content"] for item in card["header"]["text_tag_list"]]
-    assert tags == ["claude_code"]
+    assert "text_tag_list" not in card["header"]
 
     elements = card["body"]["elements"]
     assert all(element.get("element_id", "x").replace("_", "").isalnum() for element in elements)
@@ -88,7 +87,7 @@ def test_channel_headers_share_project_and_session_identity(tmp_path):
     telegram = render_telegram_document(document, full_output_threshold=None)
 
     assert card["header"]["title"]["content"] == "工作中 · project-alpha"
-    assert card["header"]["subtitle"]["content"] == "alpha"
+    assert card["header"]["subtitle"]["content"] == "会话 · alpha"
     assert "工作中 · project-alpha" in telegram.chat_html
     assert "alpha" in telegram.chat_html
 
