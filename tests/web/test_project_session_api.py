@@ -87,3 +87,27 @@ def test_projects_can_be_renamed_repathed_and_deleted(tmp_path: Path) -> None:
     )
     assert deleted.status_code == 204
     assert client.get("/api/projects").json() == []
+
+
+def test_project_inspection_validates_directory_before_the_wizard_advances(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, _, csrf = _make_client(tmp_path / "state")
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    def run(argv, **kwargs):
+        if argv[-1] == "--show-toplevel":
+            return SimpleNamespace(returncode=0, stdout=f"{project_dir}\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="main\n", stderr="")
+
+    monkeypatch.setattr("tmuxbot.web.app.subprocess.run", run)
+    response = client.post(
+        "/api/projects/inspect", json={"root_path": str(project_dir)},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["root_path"] == str(project_dir)
+    assert response.json()["git_root"] == str(project_dir)
+    assert response.json()["branch"] == "main"

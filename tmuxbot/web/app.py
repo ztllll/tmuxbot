@@ -53,8 +53,10 @@ from tmuxbot.web.schemas import (
     ManagedSessionAdoptRequest,
     ManagedSessionCreateRequest,
     PasswordRequest,
+    ProjectInspectRequest,
     ProjectCreateRequest,
     ProjectUpdateRequest,
+    ObservedTerminalTicketRequest,
     ChannelConfigureRequest,
     BlockTeamTaskRequest,
     CompleteTeamTaskRequest,
@@ -448,6 +450,46 @@ def create_app(
             "created_at": project.created_at,
         }
 
+    @app.post("/api/projects/inspect")
+    def inspect_project(
+        body: ProjectInspectRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        try:
+            root = Path(body.root_path).expanduser().resolve(strict=True)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="project path is unavailable") from exc
+        if not root.is_dir():
+            raise HTTPException(status_code=400, detail="project path must be a directory")
+        git = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+        git_root = git.stdout.strip() if git.returncode == 0 else None
+        branch = None
+        if git_root:
+            branch_result = subprocess.run(
+                ["git", "-C", str(root), "branch", "--show-current"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            branch = branch_result.stdout.strip() or None
+        try:
+            panes = inventory.list_panes()
+        except TmuxInventoryError:
+            panes = []
+        root_resolved = root.resolve()
+        matching = []
+        for pane in panes:
+            try:
+                Path(pane.cwd).resolve().relative_to(root_resolved)
+            except (OSError, ValueError):
+                continue
+            matching.append({"target": pane.target, "command": pane.command})
+        return {
+            "root_path": str(root), "git_root": git_root, "branch": branch,
+            "matching_panes": matching,
+        }
+
     def project_payload(project: ProjectRecord) -> dict[str, object]:
         return {
             "id": project.id,
@@ -821,6 +863,28 @@ def create_app(
             }
             for item in items
         ]
+
+    @app.post("/api/terminals/observed/ticket", status_code=status.HTTP_201_CREATED)
+    def observed_terminal_ticket(
+        body: ObservedTerminalTicketRequest,
+        session: AuthenticatedSession = Depends(csrf_session),
+        service: TerminalService = Depends(require_terminal_service),
+    ) -> dict[str, str | int]:
+        try:
+            panes = inventory.list_panes()
+        except TmuxInventoryError as exc:
+            raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
+        pane = next((item for item in panes if item.target == body.target), None)
+        if pane is None:
+            raise HTTPException(status_code=409, detail="tmux pane no longer exists; refresh inventory")
+        terminal_id = service.register_observed_target(pane.target)
+        ticket = service.issue_ticket(terminal_id, session.token, now=int(time.time()))
+        assert ticket is not None
+        return {
+            "terminal_id": terminal_id,
+            "ticket": ticket.token,
+            "expires_at": ticket.expires_at,
+        }
 
     @app.post(
         "/api/terminals/{managed_session_id}/ticket",

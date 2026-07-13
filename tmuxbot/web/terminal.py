@@ -219,9 +219,27 @@ class TerminalService:
         self.takeovers = takeovers or TakeoverRegistry()
         self._connections: dict[tuple[str, bytes], int] = {}
         self._connections_lock = threading.Lock()
+        self._observed_targets: dict[str, str] = {}
+        self._observed_targets_lock = threading.Lock()
 
     def resolve_target(self, managed_session_id: str) -> str | None:
+        with self._observed_targets_lock:
+            observed = self._observed_targets.get(managed_session_id)
+        if observed is not None:
+            return observed
         return self.target_resolver(managed_session_id)
+
+    def register_observed_target(self, target: str) -> str:
+        """Register a server-verified inventory target for one browser terminal.
+
+        Callers must verify the target against a fresh tmux inventory first.  The
+        opaque reference prevents the later ticket/takeover endpoints from ever
+        accepting a browser-supplied tmux target as a command argument.
+        """
+        reference = f"observed-{secrets.token_urlsafe(18)}"
+        with self._observed_targets_lock:
+            self._observed_targets[reference] = target
+        return reference
 
     def issue_ticket(
         self, managed_session_id: str, web_session_token: str, *, now: int

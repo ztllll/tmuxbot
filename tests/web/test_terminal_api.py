@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
+from tmuxbot.control_plane.models import TmuxPaneRecord
 from tmuxbot.state import Binding
 from tmuxbot.web.__main__ import build_terminal_service
 from tmuxbot.web.app import create_app
@@ -19,8 +20,11 @@ SETUP_TOKEN = "0123456789abcdef0123456789abcdef"
 
 
 class FakeInventory:
+    def __init__(self, panes=None):
+        self.panes = panes or []
+
     def list_panes(self):
-        return []
+        return list(self.panes)
 
 
 class FakeTerminal:
@@ -43,7 +47,7 @@ class FakeTerminal:
         self.closed = True
 
 
-def _app(tmp_path: Path):
+def _app(tmp_path: Path, inventory=None):
     settings = WebSettings(
         host="127.0.0.1",
         port=8765,
@@ -75,7 +79,7 @@ def _app(tmp_path: Path):
     app = create_app(
         settings,
         repository,
-        FakeInventory(),
+        inventory or FakeInventory(),
         [],
         terminal_service=service,
     )
@@ -135,6 +139,33 @@ def test_terminal_ticket_api_requires_auth_csrf_and_server_side_session_id(tmp_p
         "/api/terminals/not-managed/ticket",
         headers={"X-CSRF-Token": csrf},
     ).status_code == 404
+
+
+def test_observed_terminal_ticket_only_uses_a_fresh_inventory_target(tmp_path):
+    pane = TmuxPaneRecord("loose:1.2", "loose", 1, 2, "bash", "/repo", 99)
+    app, _, _, opened_targets, terminals = _app(tmp_path, FakeInventory([pane]))
+    client = _client(app)
+    csrf = _login(client)
+
+    rejected = client.post(
+        "/api/terminals/observed/ticket", json={"target": "browser:0.0"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert rejected.status_code == 409
+    response = client.post(
+        "/api/terminals/observed/ticket", json={"target": pane.target},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert set(body) == {"terminal_id", "ticket", "expires_at"}
+    assert pane.target not in response.text
+    with client.websocket_connect(
+        f"/api/terminals/ws?ticket={body['ticket']}", headers={"Origin": "http://testserver"}
+    ) as websocket:
+        assert websocket.receive_bytes() == b"terminal-ready"
+    assert opened_targets == [pane.target]
+    assert terminals[0].closed is True
 
 
 def test_web_runtime_resolves_existing_binding_name_to_managed_tmux_target(tmp_path):

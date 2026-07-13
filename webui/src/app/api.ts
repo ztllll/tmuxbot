@@ -172,6 +172,12 @@ export async function createProject(name: string, rootPath: string, csrfToken: s
   return writeJson("/api/projects", csrfToken, { name, root_path: rootPath });
 }
 
+export async function inspectProject(rootPath: string, csrfToken: string) {
+  return writeJson<{ root_path: string; git_root?: string | null; branch?: string | null; matching_panes: Array<{ target: string; command: string }> }>(
+    "/api/projects/inspect", csrfToken, { root_path: rootPath },
+  );
+}
+
 export async function updateProject(id: string, name: string, rootPath: string, csrfToken: string): Promise<Project> {
   return readJson(await fetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH", credentials: "same-origin",
@@ -215,6 +221,12 @@ export async function adoptManagedSession(
 export async function createTerminalTicket(sessionId: string, csrfToken: string) {
   return writeJson<{ ticket: string; expires_at: number }>(
     `/api/terminals/${encodeURIComponent(sessionId)}/ticket`, csrfToken,
+  );
+}
+
+export async function createObservedTerminalTicket(target: string, csrfToken: string) {
+  return writeJson<{ terminal_id: string; ticket: string; expires_at: number }>(
+    "/api/terminals/observed/ticket", csrfToken, { target },
   );
 }
 
