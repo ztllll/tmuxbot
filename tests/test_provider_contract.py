@@ -108,3 +108,27 @@ def test_claude_current_model_falls_back_to_active_transcript(tmp_path, monkeypa
     )
 
     assert ClaudeCodeBackend().current_model(_binding(tmp_path, "claude_code")) == "claude-opus-4-8"
+
+
+def test_claude_current_model_prefers_latest_context_usage_model(tmp_path, monkeypatch):
+    projects = tmp_path / "claude-projects"
+    monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)
+    project = projects / claude_code.encode_cwd(tmp_path)
+    project.mkdir(parents=True)
+    (project / "session-1.jsonl").write_text(
+        "\n".join(
+            (
+                json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-8"}}),
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": "## Context Usage\\n\\n**Model:** claude-fable-5  \\n"
+                        },
+                    }
+                ),
+            )
+        ) + "\n"
+    )
+
+    assert ClaudeCodeBackend().current_model(_binding(tmp_path, "claude_code")) == "claude-fable-5"

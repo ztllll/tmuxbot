@@ -34,6 +34,10 @@ log = logging.getLogger("tmuxbot")
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 TASKS_DIR = Path.home() / ".claude" / "tasks"
+_CONTEXT_USAGE_MODEL_RE = re.compile(
+    r"\*\*Model:\*\*\s*`?([A-Za-z0-9][A-Za-z0-9_.-]*)`?",
+    re.I,
+)
 # 保留 start_cmd 属性给状态/调试代码读取;真正启动时用 _start_cmd() 运行时读 CLAUDE_BIN。
 START_CMD = f'{os.getenv("CLAUDE_BIN", "claude")} --dangerously-skip-permissions'
 
@@ -604,7 +608,11 @@ class ClaudeCodeBackend(Backend):
         return max(files, key=lambda p: p.stat().st_mtime)
 
     def current_model(self, b: "Binding") -> str | None:
-        """Read Claude Code's effective model from the active transcript."""
+        """Read Claude Code's effective model from the active transcript.
+
+        Claude's ``/context`` records a newer selected model in a user metadata
+        row even when no assistant turn has yet been produced with that model.
+        """
         transcript = self.find_active_jsonl(b)
         if transcript is None:
             return None
@@ -618,7 +626,14 @@ class ClaudeCodeBackend(Backend):
             except json.JSONDecodeError:
                 continue
             message = row.get("message")
-            if isinstance(message, dict) and isinstance(message.get("model"), str):
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                context_model = _CONTEXT_USAGE_MODEL_RE.search(content)
+                if context_model:
+                    return context_model.group(1)
+            if isinstance(message.get("model"), str):
                 return message["model"]
         return None
 
