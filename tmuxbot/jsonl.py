@@ -381,10 +381,12 @@ async def _capture_terminal_status(
                 permission_mode=permission,
             )
         return None
-    if (status.model is None and model) or (status.permission_mode is None and permission):
+    # Transcript metadata is authoritative. TUI scrollback can contain a tool/subagent
+    # label (for example ``claude-code-guide``) that looks like a model name.
+    if (model and status.model != model) or (status.permission_mode is None and permission):
         return replace(
             status,
-            model=status.model or model,
+            model=model or status.model,
             permission_mode=status.permission_mode or permission,
         )
     return status

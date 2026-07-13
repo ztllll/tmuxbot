@@ -133,7 +133,8 @@ def test_assistant_text_uses_enhanced_reply_sender_when_available(tmp_path):
 def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkeypatch):
     class BackendWithModel:
         def parse_terminal_status(self, pane):
-            return TerminalStatus(state=TerminalState.WORKING)
+            # TUI scrollback may contain a subagent/tool label that looks like a model.
+            return TerminalStatus(state=TerminalState.WORKING, model="claude-code-guide")
 
         def current_model(self, binding):
             return "claude-opus-4-8"
