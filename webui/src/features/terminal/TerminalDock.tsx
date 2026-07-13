@@ -60,9 +60,28 @@ export default function TerminalDock({ session, csrfToken, onClose }: Props) {
     }
   }
 
+  async function openNativeModelPicker() {
+    if (modeRef.current !== "takeover") {
+      try {
+        await startTerminalTakeover(session.id, csrfToken);
+        modeRef.current = "takeover"; setMode("takeover");
+      } catch {
+        setState("无法打开模型选择：终端未连接或已被其他控制者占用。");
+        return;
+      }
+    }
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setState("终端尚未连接，无法打开原生模型选择。");
+      return;
+    }
+    socket.send(new TextEncoder().encode("/model\r"));
+    setState("已发送 /model · 请在真实 CLI picker 中选择模型");
+  }
+
   return <section className="terminal-dock" aria-label={`${session.name} 终端`}>
     <header><div><span>LIVE TMUX / {mode.toUpperCase()}</span><strong>{session.name}</strong><small>{state}</small></div>
-      <div className="terminal-actions"><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭视图</button></div>
+      <div className="terminal-actions"><button className="secondary-action" onClick={() => void openNativeModelPicker()}>打开原生 /model</button><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭视图</button></div>
     </header>
     <div className="terminal-surface" ref={host} />
   </section>;

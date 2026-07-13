@@ -123,7 +123,7 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .workbench-unit:nth-child(n + 3) { border-top: 1px solid rgba(23, 33, 43, 0.16); }
 .workbench-unit > p, .workbench-unit > small { color: #5a6874; }
 .wizard { padding: 0 26px 28px; border-bottom: 1px solid rgba(23, 33, 43, 0.16); }
-.wizard-steps { display: flex; gap: 18px; padding: 18px 0; color: var(--muted-ink); font: 700 .7rem/1 var(--utility-font); letter-spacing: .06em; }
+.wizard-steps { display: flex; flex-wrap: wrap; gap: 18px; padding: 18px 0; color: var(--muted-ink); font: 700 .7rem/1 var(--utility-font); letter-spacing: .06em; }
 .wizard-steps .active { color: var(--circuit-blue); }
 .wizard-stage { display: grid; max-width: 780px; gap: 13px; }
 .wizard-stage h3, .wizard-stage p { margin: 0; }
@@ -136,6 +136,14 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .provider-pick.selected, .recipe-card.selected { border-color: var(--circuit-blue); box-shadow: inset 4px 0 var(--circuit-blue); background: color-mix(in srgb, var(--circuit-blue) 9%, transparent); }
 .provider-pick small, .recipe-card small, .provider-pick code, .recipe-card code { color: var(--muted-ink); font-size: .72rem; }
 .provider-pick em { color: var(--circuit-blue); font-size: .72rem; font-style: normal; }
+.role-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); gap: 10px; }
+.role-config label { display: grid; gap: 7px; padding: 13px; border: 1px solid var(--line); }
+.role-config label span { font-weight: 750; }
+.role-config select { min-width: 0; padding: 8px; border: 1px solid var(--line); color: var(--ink); background: var(--plate); }
+.role-config small, .launch-review small { color: var(--muted-ink); line-height: 1.45; }
+.launch-review ul { display: grid; gap: 1px; margin: 0; padding: 1px; list-style: none; background: var(--line); }
+.launch-review li { display: grid; grid-template-columns: 130px 1fr minmax(180px, 2fr); gap: 12px; align-items: center; padding: 12px; background: var(--plate); }
+.launch-review textarea { min-height: 82px; resize: vertical; padding: 10px; border: 1px solid var(--line); color: var(--ink); background: var(--plate); font: inherit; }
 .project-list { display: grid; gap: 9px; margin: 18px 0 0; padding: 0; list-style: none; }
 .project-list li, .orphan-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 11px; border: 1px solid var(--line); }
 .project-list li > div:first-child, .orphan-row > div { min-width: 0; display: grid; gap: 4px; }
@@ -145,6 +153,7 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .inline-project-edit { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .inline-project-edit > div { display: flex; gap: 8px; }
 .terminal-list { display: grid; gap: 8px; margin-top: 14px; }
+.managed-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: center; }
 .orphan-list { display: grid; gap: 8px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
 .orphan-list h4 { margin: 0; }
 .orphan-row select { max-width: 185px; border: 1px solid var(--line); color: var(--ink); background: var(--plate); padding: 7px; }
@@ -201,6 +210,10 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
   .teamrun-panel { width: calc(100% - 24px); }
   .teamrun-form { grid-template-columns: 1fr; }
   .teamrun-form .goal-field, .teamrun-form > button, .teamrun-form > small { grid-column: auto; }
+}
+@media (max-width: 620px) {
+  .launch-review li { grid-template-columns: 1fr; gap: 5px; }
+  .managed-row { grid-template-columns: 1fr; }
 }
 [data-theme="dark"] .auth-shell { background-image: linear-gradient(rgba(228, 235, 240, .06) 1px, transparent 1px), linear-gradient(90deg, rgba(228, 235, 240, .06) 1px, transparent 1px); }
 [data-theme="dark"] .grant-state, [data-theme="dark"] .next-action { background: #222e38; }

@@ -53,6 +53,13 @@ def test_project_and_managed_session_wizard_uses_server_records(
     assert client.get("/api/projects").json()[0]["name"] == "演示项目"
     assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
 
+    released = client.delete(
+        f"/api/managed-sessions/{session.json()['id']}",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert released.status_code == 204
+    assert client.get("/api/managed-sessions").json() == []
+
 
 def test_projects_can_be_renamed_repathed_and_deleted(tmp_path: Path) -> None:
     client, _, csrf = _make_client(tmp_path / "state")

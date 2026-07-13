@@ -646,6 +646,15 @@ def create_app(
             "tmux_target": pane.target, "status": managed.status,
         }
 
+    @app.delete("/api/managed-sessions/{managed_session_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def release_managed_session(
+        managed_session_id: str,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> None:
+        """Release a record only; the live tmux pane remains untouched by design."""
+        if not repository.delete_managed_session(managed_session_id):
+            raise HTTPException(status_code=404, detail="managed session not found")
+
     def require_runtime_paths() -> RuntimePaths:
         paths = app.state.runtime_paths
         if not isinstance(paths, RuntimePaths):
