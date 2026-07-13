@@ -3,6 +3,8 @@ import type { SystemStatus, TmuxSession } from "../../app/api";
 type PreviewProps = {
   status: SystemStatus;
   sessions: TmuxSession[];
+  theme: "light" | "dark" | "system";
+  onThemeChange: (theme: "light" | "dark" | "system") => void;
 };
 
 function bridgeInfo(bridge: SystemStatus["bridge"]): { status: string; reason: string } {
@@ -25,7 +27,7 @@ function statusLabel(status: string): string {
   return labels[status] || status;
 }
 
-export default function CommandCenterPreview({ status, sessions }: PreviewProps) {
+export default function CommandCenterPreview({ status, sessions, theme, onThemeChange }: PreviewProps) {
   const bridge = bridgeInfo(status.bridge);
   const providers = status.providers || [];
   const host = typeof status.host === "string" ? { hostname: status.host } : (status.host || {});
@@ -53,6 +55,7 @@ export default function CommandCenterPreview({ status, sessions }: PreviewProps)
           <span>HOST</span>
           <strong>{host.hostname || "未报告"}</strong>
           <small>{[host.platform, host.python_version && `Python ${host.python_version}`].filter(Boolean).join(" · ") || "主机详情未报告"}</small>
+          <label className="theme-picker"><span>界面</span><select value={theme} onChange={(event) => onThemeChange(event.target.value as "light" | "dark" | "system")}><option value="system">跟随系统</option><option value="dark">深色</option><option value="light">浅色</option></select></label>
         </div>
       </header>
 

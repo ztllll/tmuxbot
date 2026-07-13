@@ -35,6 +35,8 @@ export type TmuxSession = {
   cwd: string;
   classification: string;
   provider?: string | null;
+  window_index?: number;
+  pane_index?: number;
 };
 
 export type ProviderProfile = {
@@ -64,7 +66,10 @@ export class ApiError extends Error {
 }
 
 async function readJson<T>(response: Response): Promise<T> {
-  if (response.ok) return response.json() as Promise<T>;
+  if (response.ok) {
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
+  }
   let message = "请求失败";
   try {
     const payload = (await response.json()) as { detail?: string };
@@ -167,6 +172,20 @@ export async function createProject(name: string, rootPath: string, csrfToken: s
   return writeJson("/api/projects", csrfToken, { name, root_path: rootPath });
 }
 
+export async function updateProject(id: string, name: string, rootPath: string, csrfToken: string): Promise<Project> {
+  return readJson(await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ name, root_path: rootPath }),
+  }));
+}
+
+export async function deleteProject(id: string, csrfToken: string): Promise<void> {
+  await readJson<void>(await fetch(`/api/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken },
+  }));
+}
+
 export async function getManagedSessions(): Promise<ManagedSession[]> {
   return readJson(await fetch("/api/managed-sessions", { credentials: "same-origin" }));
 }
@@ -176,6 +195,14 @@ export async function createManagedSession(
 ): Promise<ManagedSession> {
   return writeJson("/api/managed-sessions", csrfToken, {
     name, project_id: projectId, provider_id: providerId,
+  });
+}
+
+export async function adoptManagedSession(
+  input: { name: string; projectId: string; providerId: string; target: string }, csrfToken: string,
+): Promise<ManagedSession> {
+  return writeJson("/api/managed-sessions/adopt", csrfToken, {
+    name: input.name, project_id: input.projectId, provider_id: input.providerId, target: input.target,
   });
 }
 

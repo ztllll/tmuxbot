@@ -41,6 +41,15 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [managedSessions, setManagedSessions] = useState<ManagedSession[]>([]);
   const [teamRuns, setTeamRuns] = useState<TeamRunSummary[]>([]);
+  const [theme, setTheme] = useState<"light" | "dark" | "system">(
+    () => (localStorage.getItem("tmuxbot-theme") as "light" | "dark" | "system" | null) || "system",
+  );
+
+  useEffect(() => {
+    const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    localStorage.setItem("tmuxbot-theme", theme);
+  }, [theme]);
 
   async function loadDashboard() {
     setError(null);
@@ -125,12 +134,13 @@ export default function App() {
     return <main className="center-message">正在验证本机登录状态…</main>;
   }
   return <>
-    <CommandCenterPreview status={status} sessions={sessions} />
+    <CommandCenterPreview status={status} sessions={sessions} theme={theme} onThemeChange={setTheme} />
     <ControlWorkbench
       csrfToken={sessionCsrf}
       providers={providers}
       projects={projects}
       managedSessions={managedSessions}
+      sessions={sessions}
       onRefresh={loadDashboard}
       teamRuns={teamRuns}
     />

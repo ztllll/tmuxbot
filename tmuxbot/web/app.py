@@ -50,9 +50,11 @@ from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import (
+    ManagedSessionAdoptRequest,
     ManagedSessionCreateRequest,
     PasswordRequest,
     ProjectCreateRequest,
+    ProjectUpdateRequest,
     ChannelConfigureRequest,
     BlockTeamTaskRequest,
     CompleteTeamTaskRequest,
@@ -446,6 +448,71 @@ def create_app(
             "created_at": project.created_at,
         }
 
+    def project_payload(project: ProjectRecord) -> dict[str, object]:
+        return {
+            "id": project.id,
+            "name": project.name,
+            "root_path": project.root_path,
+            "created_at": project.created_at,
+        }
+
+    def verified_project_record(
+        *, project_id: str, name: str, root_path: str
+    ) -> ProjectRecord:
+        existing = repository.get_project(project_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        if not name.strip():
+            raise HTTPException(status_code=400, detail="project name is required")
+        try:
+            root = Path(root_path).expanduser().resolve(strict=True)
+            info = root.stat()
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail="project path is unavailable") from exc
+        if not root.is_dir():
+            raise HTTPException(status_code=400, detail="project path must be a directory")
+        return ProjectRecord(
+            id=existing.id,
+            name=name.strip(),
+            root_path=str(root),
+            device=info.st_dev,
+            inode=info.st_ino,
+            mtime_ns=info.st_mtime_ns,
+            created_at=existing.created_at,
+        )
+
+    @app.patch("/api/projects/{project_id}")
+    def update_project(
+        project_id: str,
+        body: ProjectUpdateRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        project = verified_project_record(
+            project_id=project_id, name=body.name, root_path=body.root_path
+        )
+        try:
+            changed = repository.update_project(project)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="project path already exists") from exc
+        if not changed:
+            raise HTTPException(status_code=404, detail="project not found")
+        return project_payload(project)
+
+    @app.delete("/api/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_project(
+        project_id: str,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> None:
+        try:
+            deleted = repository.delete_project(project_id)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="project still has managed sessions; remove or reassign them first",
+            ) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="project not found")
+
     @app.get("/api/managed-sessions")
     def managed_sessions(
         _: AuthenticatedSession = Depends(current_session),
@@ -529,6 +596,54 @@ def create_app(
             "provider": provider.binary_name,
             "tmux_target": f"{tmux_session}:0.0",
             "status": managed.status,
+        }
+
+    @app.post("/api/managed-sessions/adopt", status_code=status.HTTP_201_CREATED)
+    def adopt_managed_session(
+        body: ManagedSessionAdoptRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        """Turn one *currently observed* tmux pane into a managed terminal.
+
+        The browser can name a pane but it can never supply a tmux target to execute:
+        target, cwd and indexes are re-read from tmux immediately before storage.
+        """
+        project = repository.get_project(body.project_id)
+        provider = repository.get_provider_profile(body.provider_id)
+        if project is None or provider is None or provider.binary_name not in {"claude", "codex"}:
+            raise HTTPException(status_code=404, detail="project or provider not found")
+        try:
+            ProviderDiscovery._verify_identity(provider)
+        except ProviderDiscoveryError as exc:
+            raise HTTPException(status_code=409, detail="provider identity changed") from exc
+        try:
+            panes = inventory.list_panes()
+        except TmuxInventoryError as exc:
+            raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
+        pane = next((item for item in panes if item.target == body.target), None)
+        if pane is None:
+            raise HTTPException(status_code=409, detail="tmux pane no longer exists; refresh inventory")
+        try:
+            Path(pane.cwd).resolve().relative_to(Path(project.root_path).resolve())
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="tmux pane is outside the selected project") from exc
+        if any(
+            item.tmux_session == pane.session_name
+            and item.tmux_window == pane.window_index
+            and item.tmux_pane == pane.pane_index
+            for item in repository.list_managed_sessions()
+        ):
+            raise HTTPException(status_code=409, detail="tmux pane is already managed")
+        managed = ManagedSession(
+            id=f"session-{uuid.uuid4().hex}", project_id=project.id,
+            provider_id=provider.id, name=body.name.strip(),
+            tmux_session=pane.session_name, tmux_window=pane.window_index,
+            tmux_pane=pane.pane_index, status="running", created_at=int(time.time()),
+        )
+        repository.create_managed_session(managed)
+        return {
+            "id": managed.id, "name": managed.name, "provider": provider.binary_name,
+            "tmux_target": pane.target, "status": managed.status,
         }
 
     def require_runtime_paths() -> RuntimePaths:

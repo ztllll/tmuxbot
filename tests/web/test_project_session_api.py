@@ -52,3 +52,31 @@ def test_project_and_managed_session_wizard_uses_server_records(
     assert "browser-controlled" not in observed[0]
     assert client.get("/api/projects").json()[0]["name"] == "演示项目"
     assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
+
+
+def test_projects_can_be_renamed_repathed_and_deleted(tmp_path: Path) -> None:
+    client, _, csrf = _make_client(tmp_path / "state")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    created = client.post(
+        "/api/projects", json={"name": "旧名称", "root_path": str(first)},
+        headers={"X-CSRF-Token": csrf},
+    )
+    project_id = created.json()["id"]
+
+    updated = client.patch(
+        f"/api/projects/{project_id}",
+        json={"name": "新名称", "root_path": str(second)},
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "新名称"
+    assert updated.json()["root_path"] == str(second)
+    deleted = client.delete(
+        f"/api/projects/{project_id}", headers={"X-CSRF-Token": csrf}
+    )
+    assert deleted.status_code == 204
+    assert client.get("/api/projects").json() == []

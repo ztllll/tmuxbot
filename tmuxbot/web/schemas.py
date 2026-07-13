@@ -12,6 +12,17 @@ class ProjectCreateRequest(BaseModel):
     root_path: str = Field(min_length=1, max_length=4096)
 
 
+class ProjectUpdateRequest(ProjectCreateRequest):
+    """A project is identified by its server-side record, never its browser path."""
+
+
+class ManagedSessionAdoptRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=128)
+    provider_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=120)
+    target: str = Field(min_length=3, max_length=256)
+
+
 class ManagedSessionCreateRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=128)
     provider_id: str = Field(min_length=1, max_length=128)

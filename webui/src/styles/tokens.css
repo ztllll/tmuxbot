@@ -17,3 +17,15 @@
   font-family: var(--body-font);
   font-synthesis: none;
 }
+[data-theme="dark"] {
+  --cloud-steel: #121920;
+  --cloud-steel-deep: #34414c;
+  --plate: #1b252e;
+  --ink: #e4ebf0;
+  --muted-ink: #a5b2bd;
+  --circuit-blue: #80a6ff;
+  --work-amber: #efb64d;
+  --outcome-green: #48c59f;
+  --fault-red: #ff8585;
+  --line: #53616d;
+}
