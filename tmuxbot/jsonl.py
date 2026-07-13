@@ -368,13 +368,25 @@ async def _capture_terminal_status(
         status = backend.parse_terminal_status(pane)
         model_getter = getattr(backend, "current_model", None)
         model = model_getter(b) if callable(model_getter) else None
+        permission_getter = getattr(backend, "current_permission_mode", None)
+        permission = permission_getter(b) if callable(permission_getter) else None
     except Exception:
         log.exception("[%s] provider status capture failed", b.name)
         return None
     if status is None:
-        return TerminalStatus(state=TerminalState.IDLE, model=model) if model else None
-    if status.model is None and model:
-        return replace(status, model=model)
+        if model or permission:
+            return TerminalStatus(
+                state=TerminalState.IDLE,
+                model=model,
+                permission_mode=permission,
+            )
+        return None
+    if (status.model is None and model) or (status.permission_mode is None and permission):
+        return replace(
+            status,
+            model=status.model or model,
+            permission_mode=status.permission_mode or permission,
+        )
     return status
 
 

@@ -76,6 +76,10 @@ class Backend(ABC):
         """
         return None
 
+    def current_permission_mode(self, b: "Binding") -> str | None:
+        """Return the effective permission mode when the TUI omits it."""
+        return None
+
     def format_status_footer(self, status: TerminalStatus | None) -> str | None:
         if status is None:
             return None

@@ -98,6 +98,16 @@ def test_codex_current_model_falls_back_to_active_transcript(tmp_path, monkeypat
     assert CodexBackend().current_model(_binding(tmp_path, "codex")) == "gpt-5.6-terra"
 
 
+def test_codex_permission_mode_falls_back_to_cli_launch_flag(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        codex,
+        "tmux_pane_process_commands",
+        lambda target: ("codex resume --dangerously-bypass-approvals-and-sandbox session-id",),
+    )
+
+    assert CodexBackend().current_permission_mode(_binding(tmp_path, "codex")) == "YOLO"
+
+
 def test_claude_current_model_falls_back_to_active_transcript(tmp_path, monkeypatch):
     projects = tmp_path / "claude-projects"
     monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)

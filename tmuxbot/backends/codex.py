@@ -32,7 +32,7 @@ from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState,
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
-    tmux_pane_command, tmux_safe_launch, tmux_send_key,
+    tmux_pane_command, tmux_pane_process_commands, tmux_safe_launch, tmux_send_key,
 )
 from tmuxbot.utils import strip_decorations
 
@@ -379,6 +379,13 @@ class CodexBackend(Backend):
                 return settings["model"]
             if isinstance(payload.get("model"), str):
                 return payload["model"]
+        return None
+
+    def current_permission_mode(self, b: "Binding") -> str | None:
+        """Infer YOLO from the live Codex process if its status bar hides it."""
+        for command in tmux_pane_process_commands(b.tmux_target):
+            if "--dangerously-bypass-approvals-and-sandbox" in command:
+                return "YOLO"
         return None
 
     @staticmethod

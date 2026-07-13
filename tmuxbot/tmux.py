@@ -54,6 +54,36 @@ def tmux_pane_command(target: str) -> str:
     return r.stdout.strip()
 
 
+def tmux_pane_process_commands(target: str) -> tuple[str, ...]:
+    """Return command lines for a pane shell and all of its live descendants."""
+    pane = _tmux("display-message", "-t", target, "-p", "#{pane_pid}")
+    try:
+        root_pid = int(pane.stdout.strip())
+    except ValueError:
+        return ()
+    processes = subprocess.run(
+        ["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True
+    )
+    children: dict[int, list[tuple[int, str]]] = {}
+    for line in processes.stdout.splitlines():
+        fields = line.strip().split(maxsplit=2)
+        if len(fields) != 3:
+            continue
+        try:
+            pid, ppid = int(fields[0]), int(fields[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append((pid, fields[2]))
+    pending = [root_pid]
+    commands: list[str] = []
+    while pending:
+        parent = pending.pop()
+        for pid, command in children.get(parent, []):
+            commands.append(command)
+            pending.append(pid)
+    return tuple(commands)
+
+
 def tmux_send_key(target: str, key: str) -> None:
     _tmux("send-keys", "-t", target, key)
 

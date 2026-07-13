@@ -138,12 +138,16 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
         def current_model(self, binding):
             return "claude-opus-4-8"
 
+        def current_permission_mode(self, binding):
+            return "YOLO"
+
     monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "working")
 
     status = asyncio.run(_capture_terminal_status(binding(tmp_path), BackendWithModel()))
 
     assert status is not None
     assert status.model == "claude-opus-4-8"
+    assert status.permission_mode == "YOLO"
 
 
 def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_path):
