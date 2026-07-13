@@ -25,7 +25,7 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     if (!host.current) return;
     const terminal = new Terminal({
       cursorBlink: false, convertEol: true, fontFamily: "IBM Plex Mono, monospace",
-      fontSize: 13, theme: { background: "#101820", foreground: "#d9e1e8", cursor: "#d59620" },
+      fontSize: 15, theme: { background: "#101820", foreground: "#d9e1e8", cursor: "#d59620" },
     });
     terminal.open(host.current);
     terminal.writeln(`\x1b[33m[observe]\x1b[0m ${session.name} · ${session.tmux_target}`);
