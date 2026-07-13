@@ -646,12 +646,19 @@ def create_app(
             "tmux_target": pane.target, "status": managed.status,
         }
 
-    @app.delete("/api/managed-sessions/{managed_session_id}", status_code=status.HTTP_204_NO_CONTENT)
+    @app.delete(
+        "/api/managed-sessions/{managed_session_id}", status_code=status.HTTP_204_NO_CONTENT
+    )
     def release_managed_session(
         managed_session_id: str,
         _: AuthenticatedSession = Depends(csrf_session),
     ) -> None:
         """Release a record only; the live tmux pane remains untouched by design."""
+        if repository.has_active_teamrun_for_managed_session(managed_session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="managed session belongs to an active team run; stop that run first",
+            )
         if not repository.delete_managed_session(managed_session_id):
             raise HTTPException(status_code=404, detail="managed session not found")
 

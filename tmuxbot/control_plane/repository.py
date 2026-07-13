@@ -1148,6 +1148,19 @@ class ControlPlaneRepository:
             )
             return cursor.rowcount == 1
 
+    def has_active_teamrun_for_managed_session(self, session_id: str) -> bool:
+        """A running plan must retain its agent session identity until it stops."""
+        with self._connection() as db:
+            row = db.execute(
+                "SELECT 1 FROM team_agents "
+                "JOIN team_runs ON team_runs.run_id = team_agents.run_id "
+                "WHERE team_agents.managed_session_id = ? "
+                "AND team_runs.state IN ('draft', 'running', 'paused', 'operator_required') "
+                "LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        return row is not None
+
     def record_probe_result(self, result: ProviderProbeResult) -> None:
         with self._connection() as db:
             db.execute(
@@ -1482,4 +1495,3 @@ def _is_sql_comment_only(sql: str) -> bool:
             continue
         return False
     return True
-

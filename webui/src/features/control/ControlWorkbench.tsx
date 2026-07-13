@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import {
   adoptManagedSession, createManagedSession, createProject, deleteProject, configureChannel,
-  probeProvider, releaseManagedSession, scanProviders, updateProject,
+  commandTeamRun, createTeamRun, probeProvider, releaseManagedSession, scanProviders, updateProject,
   type ManagedSession, type Project, type ProviderProfile, type TeamRunSummary, type TmuxSession,
 } from "../../app/api";
 import TerminalDock from "../terminal/TerminalDock";
@@ -52,11 +52,20 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
     setBusy("launch");
     try {
       const project = await createProject(projectName.trim() || basename(projectPath), projectPath, csrfToken);
+      const created = new Map<string, ManagedSession>();
       for (const role of currentRecipe.roles) {
         const selected = roleProviders[role.id] || providerId;
-        await createManagedSession(`${project.name} · ${role.suffix}`, project.id, selected, csrfToken);
+        created.set(role.id, await createManagedSession(`${project.name} · ${role.suffix}`, project.id, selected, csrfToken));
       }
-      setNotice(`已在 tmux 创建 ${currentRecipe.roles.length} 个职责会话。模型不写死：打开任意终端后使用该 CLI 原生 /model picker 设置。`);
+      const coordinator = created.get("coordinator"); const implementer = created.get("implementer"); const reviewer = created.get("reviewer");
+      if (runGoal.trim() && coordinator && implementer && reviewer) {
+        const runId = `run-${Date.now()}`;
+        const started = await createTeamRun({ runId, goal: runGoal.trim(), coordinator: coordinator.id, implementer: implementer.id, reviewer: reviewer.id }, csrfToken);
+        await commandTeamRun(started.run.run_id, "start", csrfToken);
+        setNotice(`已创建 ${currentRecipe.roles.length} 个职责会话，并启动 TeamRun。模型不写死：在终端点“打开原生 /model”选择。`);
+      } else {
+        setNotice(`已在 tmux 创建 ${currentRecipe.roles.length} 个职责会话。模型不写死：在终端点“打开原生 /model”选择。`);
+      }
       setProjectName(""); setProjectPath(""); setRunGoal(""); setRoleProviders({}); setStep(1); await onRefresh();
     } catch { setNotice("创建未完整完成：已创建的 tmux 会话会保留。请在下方查看后继续创建或释放记录；请确认路径与 CLI。 "); } finally { setBusy(null); }
   }

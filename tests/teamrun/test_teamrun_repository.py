@@ -116,6 +116,20 @@ def test_repository_creates_and_loads_teamrun_graph_idempotently(tmp_path):
     assert len(repo.list_events(after_sequence=0, limit=20)) == 1
 
 
+def test_repository_detects_a_managed_session_used_by_an_active_run(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    repo.create_team_run(make_run(), make_agents(), make_tasks(), event_id="create")
+
+    assert repo.has_active_teamrun_for_managed_session("tmux-implementer") is True
+    assert repo.has_active_teamrun_for_managed_session("other-session") is False
+    repo.set_team_run_state(
+        "run-1", allowed={TeamRunState.DRAFT}, state=TeamRunState.COMPLETED,
+        event_id="complete", now=NOW,
+    )
+    assert repo.has_active_teamrun_for_managed_session("tmux-implementer") is False
+
+
 def test_repository_enforces_one_active_writer_per_run(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
