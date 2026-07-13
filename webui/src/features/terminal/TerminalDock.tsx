@@ -13,6 +13,12 @@ import {
 type TerminalDescriptor = Pick<ManagedSession, "id" | "name" | "tmux_target">;
 type Props = { session: TerminalDescriptor; observedTarget?: string; csrfToken: string; onClose: () => void; embedded?: boolean };
 
+function terminalFontSize(width: number): number {
+  if (width <= 390) return 12;
+  if (width <= 700) return 13;
+  return 15;
+}
+
 export default function TerminalDock({ session, observedTarget, csrfToken, onClose, embedded = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -25,11 +31,24 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     if (!host.current) return;
     const terminal = new Terminal({
       cursorBlink: false, convertEol: true, fontFamily: "IBM Plex Mono, monospace",
-      fontSize: 15, theme: { background: "#101820", foreground: "#d9e1e8", cursor: "#d59620" },
+      fontSize: terminalFontSize(host.current.clientWidth), theme: { background: "#101820", foreground: "#d9e1e8", cursor: "#d59620" },
     });
     terminal.open(host.current);
     terminal.writeln(`\x1b[33m[observe]\x1b[0m ${session.name} · ${session.tmux_target}`);
     let disposed = false;
+    const fitTerminal = () => {
+      const surface = host.current;
+      if (!surface) return;
+      const fontSize = terminalFontSize(surface.clientWidth);
+      terminal.options.fontSize = fontSize;
+      terminal.resize(
+        Math.max(20, Math.floor(surface.clientWidth / (fontSize * 0.62))),
+        Math.max(8, Math.floor(surface.clientHeight / (fontSize * 1.55))),
+      );
+    };
+    const resizeObserver = new ResizeObserver(fitTerminal);
+    resizeObserver.observe(host.current);
+    fitTerminal();
     async function connectTerminal() {
       const ticket = observedTarget
         ? await createObservedTerminalTicket(observedTarget, csrfToken).then((issued) => {
@@ -58,7 +77,7 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     }
     terminalIdRef.current = session.id;
     void connectTerminal().catch(() => setState("无法创建终端票据，请刷新受管会话。"));
-    return () => { disposed = true; socketRef.current?.close(); terminal.dispose(); };
+    return () => { disposed = true; resizeObserver.disconnect(); socketRef.current?.close(); terminal.dispose(); };
   }, [csrfToken, observedTarget, session.id, session.name, session.tmux_target]);
 
   async function toggleTakeover() {
