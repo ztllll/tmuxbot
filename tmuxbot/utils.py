@@ -35,6 +35,10 @@ def render_task_footer(todos: "list | None") -> str:
     done = [t for t in todos if t.get("status") == "completed"]
     in_prog = [t for t in todos if t.get("status") == "in_progress"]
     pending = [t for t in todos if t.get("status") == "pending"]
+    # Claude retains completed task records in the session directory.  They
+    # are history, not a task card for a later completed reply.
+    if not in_prog and not pending:
+        return ""
     n = len(todos)
     lines = [
         "━━━ 任务 ━━━",
