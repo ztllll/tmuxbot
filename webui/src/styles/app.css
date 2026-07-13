@@ -174,6 +174,24 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .session-row code { font-size: 0.7rem; color: #66727d; }
 .session-row strong { color: var(--circuit-blue); font-size: 0.74rem; }
 .terminal-dock { width: min(1440px, calc(100% - 48px)); margin: -28px auto 48px; background: #101820; color: #d9e1e8; box-shadow: 0 24px 70px rgba(15, 23, 31, 0.3); border-top: 3px solid var(--work-amber); }
+.terminal-workspace { width: min(1600px, calc(100% - 48px)); margin: -28px auto 48px; background: #101820; color: #d9e1e8; box-shadow: 0 24px 70px rgba(15, 23, 31, 0.3); border-top: 3px solid var(--work-amber); }
+.workspace-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 18px; background: #17212b; border-bottom: 1px solid #34414d; }
+.workspace-head > div:first-child { display: grid; gap: 4px; }
+.workspace-head span { color: #e5ad42; font: 700 .66rem/1 var(--utility-font); letter-spacing: .14em; }
+.workspace-head strong { font-size: .84rem; }
+.workspace-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.workspace-actions button { width: auto; min-width: 0; padding: 8px 10px; font-size: .78rem; }
+.terminal-grid { display: grid; gap: 1px; background: #34414d; }
+.terminal-grid.is-one { grid-template-columns: minmax(0, 1fr); }
+.terminal-grid.is-two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.terminal-tile { width: auto; min-width: 0; margin: 0; border-top: 0; box-shadow: none; }
+.terminal-tile header { padding: 10px 12px; }
+.terminal-tile .terminal-actions button { min-width: 0; padding: 8px 9px; font-size: .76rem; }
+.terminal-tile .terminal-surface { height: 460px; min-height: 360px; }
+.terminal-workspace.is-fullscreen { position: fixed; z-index: 1000; inset: 0; width: 100vw; height: 100vh; margin: 0; border: 0; display: flex; flex-direction: column; }
+.terminal-workspace.is-fullscreen .terminal-grid { flex: 1; min-height: 0; }
+.terminal-workspace.is-fullscreen .terminal-tile { display: flex; min-height: 0; flex-direction: column; }
+.terminal-workspace.is-fullscreen .terminal-tile .terminal-surface { flex: 1; height: auto; min-height: 0; }
 .terminal-dock header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 18px; background: #17212b; border-bottom: 1px solid #34414d; }
 .terminal-dock header > div:first-child { display: grid; gap: 3px; }
 .terminal-dock header span { color: #e5ad42; font: 700 0.66rem/1 var(--font-mono); letter-spacing: 0.14em; }
@@ -208,9 +226,12 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
   .workbench-unit { border-right: 0; border-bottom: 1px solid rgba(23, 33, 43, 0.16); }
   .workbench-head { align-items: stretch; flex-direction: column; }
   .terminal-dock { width: calc(100% - 24px); margin-top: -28px; }
+  .terminal-workspace { width: calc(100% - 24px); margin-top: -28px; }
   .terminal-dock header { align-items: stretch; flex-direction: column; }
   .terminal-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .terminal-surface { height: 440px; min-height: 0; }
+  .terminal-grid.is-two { grid-template-columns: 1fr; }
+  .terminal-workspace.is-fullscreen { width: 100vw; }
   .teamrun-panel { width: calc(100% - 24px); }
   .teamrun-form { grid-template-columns: 1fr; }
   .teamrun-form .goal-field, .teamrun-form > button, .teamrun-form > small { grid-column: auto; }

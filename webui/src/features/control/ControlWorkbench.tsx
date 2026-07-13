@@ -5,7 +5,7 @@ import {
   commandTeamRun, createTeamRun, inspectProject, probeProvider, releaseManagedSession, scanProviders, updateProject,
   type ManagedSession, type Project, type ProviderProfile, type TeamRunSummary, type TmuxSession,
 } from "../../app/api";
-import TerminalDock from "../terminal/TerminalDock";
+import TerminalWorkspace, { type WorkspaceTerminal } from "../terminal/TerminalWorkspace";
 import TeamRunPanel from "../teamrun/TeamRunPanel";
 
 type Props = {
@@ -13,7 +13,6 @@ type Props = {
   managedSessions: ManagedSession[]; sessions: TmuxSession[]; teamRuns: TeamRunSummary[];
   onRefresh: () => Promise<void>;
 };
-type OpenTerminal = { session: ManagedSession; observedTarget?: string };
 
 type Recipe = "solo" | "delivery" | "ui" | "orchestrated";
 type Role = { id: string; label: string; suffix: string; schedulerRole?: "coordinator" | "implementer" | "reviewer" };
@@ -37,7 +36,7 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
   const [roleProviders, setRoleProviders] = useState<Record<string, string>>({});
   const [runGoal, setRunGoal] = useState("");
   const [pathInspection, setPathInspection] = useState<{ root_path: string; git_root?: string | null; branch?: string | null; matching_panes: Array<{ target: string; command: string }> } | null>(null);
-  const [terminalSession, setTerminalSession] = useState<OpenTerminal | null>(null);
+  const [terminalSessions, setTerminalSessions] = useState<WorkspaceTerminal[]>([]);
   const [editing, setEditing] = useState<Project | null>(null);
   const [channel, setChannel] = useState<"telegram" | "feishu">("telegram"); const [channelSession, setChannelSession] = useState("");
   const [remoteChatId, setRemoteChatId] = useState(""); const [credentialId, setCredentialId] = useState("");
@@ -45,6 +44,11 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
   const llmProviders = providers.filter((item) => item.binary_name !== "tmux");
   const currentRecipe = recipes[recipe];
   const unmanaged = useMemo(() => sessions.filter((item) => !managedSessions.some((managed) => managed.tmux_target === item.target)), [sessions, managedSessions]);
+
+  function openTerminal(session: ManagedSession, observedTarget?: string) {
+    const key = observedTarget ? `observed:${observedTarget}` : session.id;
+    setTerminalSessions((current) => current.some((item) => item.key === key) ? current : [...current, { key, session, observedTarget }]);
+  }
 
   async function scan() { setBusy("scan"); try { const items = await scanProviders(csrfToken); setNotice(`扫描完成：发现 ${items.length} 个本机 CLI。`); await onRefresh(); } catch { setNotice("扫描失败，请运行 tmuxbot doctor 查看原因。"); } finally { setBusy(null); } }
   async function probe(id: string) { setBusy(id); try { const r = await probeProvider(id, csrfToken); setNotice(r.success ? `版本探测成功：${r.version || "可用"}` : `探测未通过：${r.error_code || "未知原因"}`); await onRefresh(); } catch { setNotice("Provider 身份已变化，请重新扫描。"); } finally { setBusy(null); } }
@@ -76,7 +80,7 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
   async function adopt(item: TmuxSession, projectId: string, provider: string) {
     setBusy(`adopt-${item.target}`); try {
       const managed = await adoptManagedSession({ name: `${item.session_name} · 已纳入`, projectId, providerId: provider, target: item.target }, csrfToken);
-      setTerminalSession({ session: managed }); setNotice("现有 tmux pane 已纳入项目；默认只读，点击“接管输入”才会写入终端。"); await onRefresh();
+      openTerminal(managed); setNotice("现有 tmux pane 已纳入项目；默认只读，点击“接管输入”才会写入终端。"); await onRefresh();
     } catch { setNotice("无法纳入该 pane：它必须仍存在于所选项目目录内，且不能已被管理。"); } finally { setBusy(null); }
   }
 
@@ -100,11 +104,11 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
 
       <div className="workbench-columns">
         <article className="workbench-unit"><span className="unit-number">PROJECTS</span><h3>已登记项目</h3>{projects.length === 0 ? <p>尚未登记项目。使用上方三步向导开始。</p> : <ul className="project-list">{projects.map((project) => <li key={project.id}><div><strong>{project.name}</strong><code>{project.root_path}</code></div><div><button className="secondary-action" onClick={() => setEditing({ ...project })}>编辑</button><button className="text-danger" onClick={() => void removeProject(project)} disabled={busy !== null}>删除</button></div></li>)}</ul>}{editing && <form className="inline-project-edit" onSubmit={saveProject}><label>名称<input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} required /></label><label>路径<input value={editing.root_path} onChange={(e) => setEditing({ ...editing, root_path: e.target.value })} required /></label><div><button className="secondary-action" type="button" onClick={() => setEditing(null)}>取消</button><button className="primary-action" disabled={busy !== null}>保存项目</button></div></form>}</article>
-        <article className="workbench-unit"><span className="unit-number">TMUX WINDOWS</span><h3>查看与操作终端</h3><p>所有终端默认只读；只有手动接管后才可发送输入。已有 pane 可直接查看，无需先纳入项目。</p><div className="terminal-list">{managedSessions.map((item) => <div className="managed-row" key={item.id}><button type="button" className="session-row" onClick={() => setTerminalSession({ session: item })}><span>{item.name}</span><code>{item.tmux_target}</code><strong>查看终端 / 原生模型选择</strong></button><button className="text-danger" onClick={() => void releaseSession(item)} disabled={busy !== null}>释放管理</button></div>)}</div>{unmanaged.length > 0 && <div className="orphan-list"><h4>现有 tmux pane</h4>{unmanaged.map((item) => <div key={item.target} className="orphan-row"><div><strong>{item.session_name}</strong><code>{item.target} · {item.cwd}</code></div><div className="orphan-actions"><button className="secondary-action" onClick={() => setTerminalSession({ session: { id: "observed", name: item.session_name, tmux_target: item.target, project_id: "", provider_id: "", status: "observed" }, observedTarget: item.target })}>直接查看</button><select defaultValue="" aria-label={`${item.target} 所属项目`} onChange={(e) => { const [projectId, provider] = e.target.value.split(":"); if (projectId && provider) void adopt(item, projectId, provider); }} disabled={busy !== null}><option value="">纳入项目…</option>{projects.flatMap((project) => llmProviders.map((provider) => <option key={`${project.id}-${provider.id}`} value={`${project.id}:${provider.id}`}>{project.name} · {provider.binary_name}</option>))}</select></div></div>)}</div>}</article>
+        <article className="workbench-unit"><span className="unit-number">TMUX WINDOWS</span><h3>查看与操作终端</h3><p>所有终端默认只读；不同 pane 可同时接管。已有 pane 可直接查看，无需先纳入项目。</p><div className="terminal-list">{managedSessions.map((item) => <div className="managed-row" key={item.id}><button type="button" className="session-row" onClick={() => openTerminal(item)}><span>{item.name}</span><code>{item.tmux_target}</code><strong>加入工作区 / 原生模型选择</strong></button><button className="text-danger" onClick={() => void releaseSession(item)} disabled={busy !== null}>释放管理</button></div>)}</div>{unmanaged.length > 0 && <div className="orphan-list"><h4>现有 tmux pane</h4>{unmanaged.map((item) => <div key={item.target} className="orphan-row"><div><strong>{item.session_name}</strong><code>{item.target} · {item.cwd}</code></div><div className="orphan-actions"><button className="secondary-action" onClick={() => openTerminal({ id: "observed", name: item.session_name, tmux_target: item.target, project_id: "", provider_id: "", status: "observed" }, item.target)}>直接查看</button><select defaultValue="" aria-label={`${item.target} 所属项目`} onChange={(e) => { const [projectId, provider] = e.target.value.split(":"); if (projectId && provider) void adopt(item, projectId, provider); }} disabled={busy !== null}><option value="">纳入项目…</option>{projects.flatMap((project) => llmProviders.map((provider) => <option key={`${project.id}-${provider.id}`} value={`${project.id}:${provider.id}`}>{project.name} · {provider.binary_name}</option>))}</select></div></div>)}</div>}</article>
         <form className="workbench-unit control-form" onSubmit={saveChannel}><span className="unit-number">CHANNEL</span><h3>接入消息通道</h3><label><span>通道</span><select value={channel} onChange={(e) => setChannel(e.target.value as "telegram" | "feishu")}><option value="telegram">Telegram</option><option value="feishu">飞书</option></select></label><label><span>受管会话</span><select value={channelSession} onChange={(e) => setChannelSession(e.target.value)} required><option value="">请选择</option>{managedSessions.map((s) => <option value={s.id} key={s.id}>{s.name}</option>)}</select></label><label><span>{channel === "telegram" ? "Bot Token" : "App ID"}</span><input type="password" value={credentialId} onChange={(e) => setCredentialId(e.target.value)} required /></label>{channel === "feishu" && <label><span>App Secret</span><input type="password" value={credentialSecret} onChange={(e) => setCredentialSecret(e.target.value)} required /></label>}<label><span>{channel === "telegram" ? "Boss User ID" : "Boss Open ID"}</span><input value={bossId} onChange={(e) => setBossId(e.target.value)} required /></label><label><span>{channel === "telegram" ? "Chat ID" : "Chat ID（oc_…）"}</span><input value={remoteChatId} onChange={(e) => setRemoteChatId(e.target.value)} required /></label><button className="primary-action" disabled={busy !== null}>保存通道配置</button></form>
       </div>
     </section>
-    {terminalSession && <TerminalDock session={terminalSession.session} observedTarget={terminalSession.observedTarget} csrfToken={csrfToken} onClose={() => setTerminalSession(null)} />}
+    <TerminalWorkspace terminals={terminalSessions} csrfToken={csrfToken} onClose={(key) => setTerminalSessions((current) => current.filter((item) => item.key !== key))} />
     <TeamRunPanel sessions={managedSessions} csrfToken={csrfToken} runs={teamRuns} onRefresh={onRefresh} />
   </>;
 }

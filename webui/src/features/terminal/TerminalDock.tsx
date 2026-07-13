@@ -11,9 +11,9 @@ import {
 } from "../../app/api";
 
 type TerminalDescriptor = Pick<ManagedSession, "id" | "name" | "tmux_target">;
-type Props = { session: TerminalDescriptor; observedTarget?: string; csrfToken: string; onClose: () => void };
+type Props = { session: TerminalDescriptor; observedTarget?: string; csrfToken: string; onClose: () => void; embedded?: boolean };
 
-export default function TerminalDock({ session, observedTarget, csrfToken, onClose }: Props) {
+export default function TerminalDock({ session, observedTarget, csrfToken, onClose, embedded = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const [mode, setMode] = useState<"observe" | "takeover">("observe");
@@ -90,9 +90,9 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     setState("已发送 /model · 请在真实 CLI picker 中选择模型");
   }
 
-  return <section className="terminal-dock" aria-label={`${session.name} 终端`}>
+  return <section className={embedded ? "terminal-dock terminal-tile" : "terminal-dock"} aria-label={`${session.name} 终端`}>
     <header><div><span>LIVE TMUX / {mode.toUpperCase()}</span><strong>{session.name}</strong><small>{state}</small></div>
-      <div className="terminal-actions"><button className="secondary-action" onClick={() => void openNativeModelPicker()}>打开原生 /model</button><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭视图</button></div>
+      <div className="terminal-actions"><button className="secondary-action" onClick={() => void openNativeModelPicker()}>原生 /model</button><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭</button></div>
     </header>
     <div className="terminal-surface" ref={host} />
   </section>;
