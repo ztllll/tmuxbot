@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import {
@@ -19,6 +20,21 @@ function terminalFontSize(width: number): number {
   return 15;
 }
 
+// Keep ANSI colours readable without letting an application's indexed green
+// fill turn into the browser's default neon terminal green.
+const terminalTheme = {
+  background: "#101820", foreground: "#d9e1e8", cursor: "#efb64d",
+  black: "#17212b", brightBlack: "#657481",
+  red: "#c95a64", brightRed: "#ee7b83",
+  green: "#4f9a76", brightGreen: "#76bd96",
+  yellow: "#cba35d", brightYellow: "#e6c477",
+  blue: "#6f9de6", brightBlue: "#96baff",
+  magenta: "#ad83d1", brightMagenta: "#c8a3ea",
+  cyan: "#5caeba", brightCyan: "#81cbd5",
+  white: "#c6d0d8", brightWhite: "#edf3f6",
+  selectionBackground: "#3157c880",
+};
+
 export default function TerminalDock({ session, observedTarget, csrfToken, onClose, embedded = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -31,8 +47,10 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
     if (!host.current) return;
     const terminal = new Terminal({
       cursorBlink: false, convertEol: true, fontFamily: "IBM Plex Mono, monospace",
-      fontSize: terminalFontSize(host.current.clientWidth), theme: { background: "#101820", foreground: "#d9e1e8", cursor: "#d59620" },
+      fontSize: terminalFontSize(host.current.clientWidth), theme: terminalTheme,
     });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
     terminal.open(host.current);
     terminal.writeln(`\x1b[33m[observe]\x1b[0m ${session.name} · ${session.tmux_target}`);
     let disposed = false;
@@ -41,10 +59,9 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
       if (!surface) return;
       const fontSize = terminalFontSize(surface.clientWidth);
       terminal.options.fontSize = fontSize;
-      terminal.resize(
-        Math.max(20, Math.floor(surface.clientWidth / (fontSize * 0.62))),
-        Math.max(8, Math.floor(surface.clientHeight / (fontSize * 1.55))),
-      );
+      // Font metrics vary across Android, Samsung Internet and desktop fonts.
+      // FitAddon measures the rendered glyph instead of guessing a cell size.
+      fitAddon.fit();
     };
     const resizeObserver = new ResizeObserver(fitTerminal);
     resizeObserver.observe(host.current);
