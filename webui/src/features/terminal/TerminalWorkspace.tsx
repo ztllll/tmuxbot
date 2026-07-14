@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { ManagedSession } from "../../app/api";
 import TerminalDock from "./TerminalDock";
@@ -15,7 +15,10 @@ export default function TerminalWorkspace({ terminals, csrfToken, onClose }: {
   onClose: (key: string) => void;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
-  const [layout, setLayout] = useState<"auto" | "one" | "two">("auto");
+  const [layout, setLayout] = useState<"auto" | "one" | "two">(
+    () => (localStorage.getItem("tmuxbot-terminal-layout") as "auto" | "one" | "two" | null) || "auto",
+  );
+  useEffect(() => { localStorage.setItem("tmuxbot-terminal-layout", layout); }, [layout]);
   if (terminals.length === 0) return null;
   const columns = layout === "one" ? "one" : layout === "two" ? "two" : terminals.length === 1 ? "one" : "two";
   return <section className={`terminal-workspace ${fullscreen ? "is-fullscreen" : ""}`} aria-label="tmux 多窗口工作区">

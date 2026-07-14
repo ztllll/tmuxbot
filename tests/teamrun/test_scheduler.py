@@ -216,6 +216,64 @@ def test_only_independent_reviewer_can_accept_and_unlock_dependency(tmp_path):
     assert sender.calls[1][1]["kind"] == "independent_review"
 
 
+def test_non_writing_coordinator_task_can_complete_before_implementation(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    sender = FakeTmuxSender()
+    service = TeamRunScheduler(repo, sender, clock=lambda: NOW)
+    service.create_deterministic_run(
+        run_id="run-plan-first",
+        goal="先制定方案，再实施",
+        agents={
+            AgentRole.COORDINATOR: "tmux-coordinator",
+            AgentRole.IMPLEMENTER: "tmux-implementer",
+            AgentRole.REVIEWER: "tmux-reviewer",
+        },
+        tasks=[
+            {
+                "task_id": "plan",
+                "title": "制定方案",
+                "goal": "输出实施计划",
+                "role": "coordinator",
+                "dependencies": [],
+                "requires_write": False,
+                "max_attempts": 1,
+            },
+            {
+                "task_id": "implement",
+                "title": "实施",
+                "goal": "按方案修改代码",
+                "role": "implementer",
+                "dependencies": ["plan"],
+                "requires_write": True,
+                "max_attempts": 1,
+            },
+        ],
+        idempotency_key="plan-first",
+    )
+
+    service.start("run-plan-first", idempotency_key="start")
+    assert sender.calls[0][0] == "tmux-coordinator"
+    service.complete_task(
+        "run-plan-first",
+        "plan",
+        agent_id="run-plan-first:coordinator",
+        artifacts=[ArtifactInput("plan", "docs:plan", {})],
+        idempotency_key="complete-plan",
+    )
+    service.review_task(
+        "run-plan-first",
+        "plan",
+        reviewer_agent_id="run-plan-first:reviewer",
+        verdict="approved",
+        notes="plan accepted",
+        idempotency_key="review-plan",
+    )
+
+    assert repo.get_team_run("run-plan-first").tasks[1].state is TeamTaskState.WORKING
+    assert sender.calls[-1][0] == "tmux-implementer"
+
+
 def test_rejected_review_is_bounded_then_requires_operator(tmp_path):
     repo, _, service = scheduler(tmp_path)
     service.start("run-1", idempotency_key="start-1")

@@ -11,7 +11,7 @@ import {
   type ManagedSession,
 } from "../../app/api";
 
-type TerminalDescriptor = Pick<ManagedSession, "id" | "name" | "tmux_target">;
+type TerminalDescriptor = Pick<ManagedSession, "id" | "name" | "tmux_target" | "provider" | "provider_capabilities">;
 type Props = { session: TerminalDescriptor; observedTarget?: string; csrfToken: string; onClose: () => void; embedded?: boolean };
 
 function terminalFontSize(width: number): number {
@@ -122,13 +122,18 @@ export default function TerminalDock({ session, observedTarget, csrfToken, onClo
       setState("终端尚未连接，无法打开原生模型选择。");
       return;
     }
-    socket.send(new TextEncoder().encode("/model\r"));
-    setState("已发送 /model · 请在真实 CLI picker 中选择模型");
+    const modelCommand = session.provider_capabilities?.model_command;
+    if (!modelCommand) {
+      setState(`${session.provider || "当前 CLI"} 未声明原生模型选择命令。`);
+      return;
+    }
+    socket.send(new TextEncoder().encode(`${modelCommand}\r`));
+    setState(`已发送 ${modelCommand} · 请在真实 CLI picker 中选择模型`);
   }
 
   return <section className={embedded ? "terminal-dock terminal-tile" : "terminal-dock"} aria-label={`${session.name} 终端`}>
     <header><div><span>LIVE TMUX / {mode.toUpperCase()}</span><strong>{session.name}</strong><small>{state}</small></div>
-      <div className="terminal-actions"><button className="secondary-action" onClick={() => void openNativeModelPicker()}>原生 /model</button><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭</button></div>
+      <div className="terminal-actions"><button className="secondary-action" disabled={!session.provider_capabilities?.supports_model_picker} onClick={() => void openNativeModelPicker()}>{session.provider_capabilities?.model_command || "无模型菜单"}</button><button className={mode === "takeover" ? "danger-action" : "primary-action"} onClick={() => void toggleTakeover()}>{mode === "takeover" ? "释放接管" : "接管键盘"}</button><button className="secondary-action" onClick={onClose}>关闭</button></div>
     </header>
     <div className="terminal-surface" ref={host} />
   </section>;

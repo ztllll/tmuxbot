@@ -41,9 +41,16 @@ export type TmuxSession = {
 
 export type ProviderProfile = {
   id: string;
-  binary_name: "tmux" | "claude" | "codex";
+  binary_name: string;
   executable_path: string;
   version?: string | null;
+  capabilities?: ProviderCapabilities;
+};
+export type ProviderCapabilities = {
+  display_name: string;
+  managed: boolean;
+  supports_model_picker: boolean;
+  model_command?: string | null;
 };
 
 export type Project = { id: string; name: string; root_path: string };
@@ -51,6 +58,8 @@ export type ManagedSession = {
   id: string;
   project_id: string;
   provider_id: string;
+  provider?: string | null;
+  provider_capabilities?: ProviderCapabilities | null;
   name: string;
   tmux_target: string;
   status: string;
@@ -263,7 +272,15 @@ export async function configureChannel(
 export type TeamRunSnapshot = {
   run: { run_id: string; goal: string; state: string };
   agents: Array<{ agent_id: string; role: string; managed_session_id: string }>;
-  tasks: Array<{ task_id: string; title: string; goal: string; state: string; attempt: number; assignee_agent_id?: string | null }>;
+  tasks: Array<{ task_id: string; title: string; goal: string; role: string; state: string; dependencies: string[]; requires_write: boolean; attempt: number; assignee_agent_id?: string | null }>;
+};
+export type TeamTaskInput = {
+  taskId: string;
+  title: string;
+  goal: string;
+  role: "coordinator" | "implementer";
+  dependencies: string[];
+  requiresWrite: boolean;
 };
 
 export type TeamRunSummary = {
@@ -273,7 +290,7 @@ export type TeamRunSummary = {
 };
 
 export async function createTeamRun(
-  input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string },
+  input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string; tasks: TeamTaskInput[] },
   csrfToken: string,
 ): Promise<TeamRunSnapshot> {
   return writeJson("/api/team-runs", csrfToken, {
@@ -283,7 +300,7 @@ export async function createTeamRun(
       { role: "implementer", managed_session_id: input.implementer },
       { role: "reviewer", managed_session_id: input.reviewer },
     ],
-    tasks: [{ task_id: "implementation", title: "实现与验证", goal: input.goal, role: "implementer", dependencies: [], requires_write: true, max_attempts: 2 }],
+    tasks: input.tasks.map((task) => ({ task_id: task.taskId, title: task.title, goal: task.goal, role: task.role, dependencies: task.dependencies, requires_write: task.requiresWrite, max_attempts: 2 })),
   });
 }
 
@@ -291,16 +308,16 @@ export async function commandTeamRun(runId: string, command: "start" | "pause" |
   return writeJson<TeamRunSnapshot>(`/api/team-runs/${encodeURIComponent(runId)}/${command}`, csrfToken, { idempotency_key: `${command}-${Date.now()}` });
 }
 
-export async function completeTeamTask(runId: string, artifactUri: string, csrfToken: string) {
-  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/implementation/complete`, csrfToken, {
-    agent_id: `${runId}:implementer`, idempotency_key: `complete-${Date.now()}`,
+export async function completeTeamTask(runId: string, taskId: string, agentId: string, artifactUri: string, csrfToken: string) {
+  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/complete`, csrfToken, {
+    agent_id: agentId, idempotency_key: `complete-${taskId}-${Date.now()}`,
     artifacts: [{ kind: "implementation_evidence", uri: artifactUri, metadata: { source: "operator-confirmed" } }],
   });
 }
 
-export async function reviewTeamTask(runId: string, verdict: "approved" | "rejected", notes: string, csrfToken: string) {
-  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/implementation/review`, csrfToken, {
-    reviewer_agent_id: `${runId}:reviewer`, verdict, notes, idempotency_key: `review-${Date.now()}`,
+export async function reviewTeamTask(runId: string, taskId: string, verdict: "approved" | "rejected", notes: string, csrfToken: string) {
+  return writeJson<{ state: string }>(`/api/team-runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/review`, csrfToken, {
+    reviewer_agent_id: `${runId}:reviewer`, verdict, notes, idempotency_key: `review-${taskId}-${Date.now()}`,
   });
 }
 

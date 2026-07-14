@@ -44,6 +44,11 @@ from tmuxbot.control_plane.tmux_inventory import (
     classify_inventory,
 )
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
+from tmuxbot.providers.adapters import (
+    get_provider_adapter,
+    managed_provider_names,
+    provider_capabilities,
+)
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
 from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask
@@ -360,6 +365,7 @@ def create_app(
             "inode": profile.inode,
             "mtime_ns": profile.mtime_ns,
             "discovered_at": profile.discovered_at,
+            "capabilities": provider_capabilities(profile.binary_name),
         }
 
     @app.get("/api/providers")
@@ -575,17 +581,26 @@ def create_app(
     def managed_sessions(
         _: AuthenticatedSession = Depends(current_session),
     ) -> list[dict[str, object]]:
-        return [
-            {
-                "id": item.id,
-                "project_id": item.project_id,
-                "provider_id": item.provider_id,
-                "name": item.name,
-                "tmux_target": f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}",
-                "status": item.status,
-            }
-            for item in repository.list_managed_sessions()
-        ]
+        payloads = []
+        for item in repository.list_managed_sessions():
+            profile = repository.get_provider_profile(item.provider_id)
+            payloads.append(
+                {
+                    "id": item.id,
+                    "project_id": item.project_id,
+                    "provider_id": item.provider_id,
+                    "provider": profile.binary_name if profile is not None else None,
+                    "provider_capabilities": (
+                        provider_capabilities(profile.binary_name)
+                        if profile is not None
+                        else None
+                    ),
+                    "name": item.name,
+                    "tmux_target": f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}",
+                    "status": item.status,
+                }
+            )
+        return payloads
 
     @app.post("/api/managed-sessions", status_code=status.HTTP_201_CREATED)
     def create_managed_session(
@@ -594,7 +609,8 @@ def create_app(
     ) -> dict[str, object]:
         project = repository.get_project(body.project_id)
         provider = repository.get_provider_profile(body.provider_id)
-        if project is None or provider is None or provider.binary_name not in {"claude", "codex"}:
+        adapter = get_provider_adapter(provider.binary_name) if provider is not None else None
+        if project is None or provider is None or adapter is None:
             raise HTTPException(status_code=404, detail="project or provider not found")
         try:
             ProviderDiscovery._verify_identity(provider)
@@ -611,11 +627,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="tmux is unavailable")
         safe_provider = re.sub(r"[^a-z0-9]+", "-", provider.binary_name.lower()).strip("-")
         tmux_session = f"tmuxbot-{safe_provider}-{uuid.uuid4().hex[:8]}"
-        provider_argv = [provider.executable_path]
-        if provider.binary_name == "claude":
-            provider_argv.append("--dangerously-skip-permissions")
-        else:
-            provider_argv.append("--dangerously-bypass-approvals-and-sandbox")
+        provider_argv = [provider.executable_path, *adapter.launch_arguments]
         # tmux accepts a command argv after its options. No browser-supplied command or target
         # enters this call; provider path and cwd come from server-verified records.
         completed = subprocess.run(
@@ -668,7 +680,7 @@ def create_app(
         """
         project = repository.get_project(body.project_id)
         provider = repository.get_provider_profile(body.provider_id)
-        if project is None or provider is None or provider.binary_name not in {"claude", "codex"}:
+        if project is None or provider is None or provider.binary_name not in managed_provider_names():
             raise HTTPException(status_code=404, detail="project or provider not found")
         try:
             ProviderDiscovery._verify_identity(provider)
@@ -830,13 +842,16 @@ def create_app(
         )
         bridge.setdefault("status", bridge.get("state", "unknown"))
         provider_items = []
-        for provider_name, binary_name in (("Claude Code", "claude"), ("Codex", "codex")):
+        for binary_name in sorted(managed_provider_names()):
+            adapter = get_provider_adapter(binary_name)
+            assert adapter is not None
             binary_path = ProviderDiscovery.resolve_executable(binary_name)
             provider_items.append(
                 {
-                    "name": provider_name,
+                    "name": adapter.display_name,
                     "status": "found" if binary_path else "missing",
                     "path": binary_path,
+                    "capabilities": provider_capabilities(binary_name),
                 }
             )
         tmux_path = shutil.which("tmux")

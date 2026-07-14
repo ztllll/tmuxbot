@@ -8,6 +8,8 @@
 
 ### 0.3.0 Preview
 
+- WebUI 调度台增加中文分区导航、可持久化终端布局、Provider Adapter 能力声明、动态原生模型菜单，以及 Telegram/飞书群聊 @ 响应开关。
+- TeamRun 协作台支持多任务依赖、统筹方案任务与实施写入任务的串行接力，并在同一界面登记证据和独立审查。
 - 新增零配置 `tmuxbot serve --open`、XDG 路径、一次性首次设置授权、doctor 与 systemd user service 安装。
 - 新增中文 WebUI：Provider 扫描/版本探测、项目与受管 Claude/Codex tmux 会话、Telegram/飞书配置。
 - 新增 xterm.js 观察/审计接管终端，浏览器断开不终止 tmux。

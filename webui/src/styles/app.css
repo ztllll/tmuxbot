@@ -117,6 +117,9 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .workbench-head h2, .workbench-unit h3 { margin: 7px 0 0; }
 .compact-action { width: auto; min-width: 150px; }
 .operator-notice { margin: 0; padding: 12px 26px; color: #654a13; background: rgba(213, 150, 32, 0.12); border-bottom: 1px solid rgba(213, 150, 32, 0.3); }
+.control-nav { display: flex; gap: 1px; overflow-x: auto; border-bottom: 1px solid rgba(23, 33, 43, 0.16); background: var(--line); }
+.control-nav a { flex: 1 0 max-content; padding: 10px 16px; color: var(--muted-ink); background: var(--plate); font: 700 .72rem/1 var(--utility-font); letter-spacing: .04em; text-align: center; text-decoration: none; }
+.control-nav a:hover, .control-nav a:focus-visible { color: var(--circuit-blue); background: color-mix(in srgb, var(--circuit-blue) 7%, var(--plate)); }
 .workbench-columns { display: grid; grid-template-columns: 1.1fr 0.9fr; }
 .workbench-unit { min-width: 0; padding: 24px 26px 28px; border-right: 1px solid rgba(23, 33, 43, 0.16); }
 .workbench-unit:nth-child(even) { border-right: 0; }
@@ -133,6 +136,8 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .wizard-actions { display: flex; gap: 10px; margin-top: 5px; }
 .provider-picks, .recipe-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .provider-pick, .recipe-card { display: grid; gap: 8px; padding: 15px; border: 1px solid var(--line); color: var(--ink); background: transparent; text-align: left; }
+.provider-select { display: grid; gap: 8px; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
+.provider-probe { justify-self: start; padding: 7px 10px; font-size: .74rem; }
 .provider-pick.selected, .recipe-card.selected { border-color: var(--circuit-blue); box-shadow: inset 4px 0 var(--circuit-blue); background: color-mix(in srgb, var(--circuit-blue) 9%, transparent); }
 .provider-pick small, .recipe-card small, .provider-pick code, .recipe-card code { color: var(--muted-ink); font-size: .72rem; }
 .provider-pick em { color: var(--circuit-blue); font-size: .72rem; font-style: normal; }
@@ -165,6 +170,9 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .control-form label { display: grid; gap: 6px; }
 .control-form label span { font-size: 0.82rem; font-weight: 700; }
 .control-form input, .control-form select { width: 100%; border: 1px solid #aeb8c1; border-radius: 2px; background: #fff; color: var(--ink); padding: 10px 11px; font: inherit; }
+.control-form .toggle-field { grid-template-columns: auto 1fr; align-items: center; padding: 11px; border: 1px solid var(--line); background: color-mix(in srgb, var(--circuit-blue) 5%, var(--plate)); }
+.control-form .toggle-field input { width: auto; }
+.control-form .toggle-field small { grid-column: 2; color: var(--muted-ink); line-height: 1.4; }
 .probe-list { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 8px; }
 .probe-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid rgba(23, 33, 43, 0.12); }
 .probe-list div { min-width: 0; display: grid; gap: 3px; }
@@ -213,10 +221,30 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
 .teamrun-form .goal-field { grid-column: 1 / -1; }
 .teamrun-form textarea { min-height: 92px; resize: vertical; }
 .teamrun-form > button, .teamrun-form > small { grid-column: 1 / -1; }
+.task-composer { display: grid; grid-column: 1 / -1; gap: 10px; padding: 14px; border: 1px solid var(--line); background: color-mix(in srgb, var(--circuit-blue) 4%, var(--plate)); }
+.task-composer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.task-composer-head .secondary-action { width: auto; padding: 8px 10px; font-size: .76rem; }
+.task-editor { display: grid; grid-template-columns: 1fr 1fr 150px minmax(150px, .8fr) auto auto; align-items: end; gap: 10px; padding: 12px; border-left: 3px solid var(--circuit-blue); background: var(--plate); }
+.task-editor input, .task-editor select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--line); color: var(--ink); background: var(--plate); }
+.task-write { display: flex !important; align-items: center; gap: 6px; padding-bottom: 9px; white-space: nowrap; }
+.task-write input { width: auto; }
+.task-editor .text-danger { align-self: end; padding-bottom: 9px; }
+.task-dependencies { display: grid; gap: 4px; min-width: 0; margin: 0; padding: 6px 8px; border: 1px solid var(--line); color: var(--muted-ink); font-size: .74rem; }
+.task-dependencies legend { padding: 0 3px; }
+.task-dependencies label { display: flex; align-items: center; gap: 5px; }
+.task-dependencies input { width: auto; }
 .run-console { padding: 24px 26px 28px; display: grid; gap: 18px; }
 .run-goal { display: grid; gap: 6px; }
 .task-track { display: flex; align-items: center; gap: 12px; padding: 16px; border: 1px solid #c8d0d7; background: #fff; }
 .task-track > div { display: grid; gap: 3px; }
+.task-board { display: grid; gap: 8px; }
+.task-board .task-track { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
+.task-actions { display: flex !important; align-items: center; gap: 8px; }
+.task-actions button { width: auto; padding: 8px 10px; font-size: .76rem; }
+.review-sheet { display: grid !important; grid-column: 2 / -1; grid-template-columns: 1fr auto auto auto; align-items: end; gap: 8px; padding-top: 10px; }
+.review-sheet label { display: grid; gap: 5px; color: var(--muted-ink); font-size: .76rem; }
+.review-sheet textarea { min-height: 60px; resize: vertical; border: 1px solid var(--line); color: var(--ink); background: var(--plate); font: inherit; padding: 8px; }
+.review-sheet button { width: auto; padding: 8px 10px; font-size: .74rem; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .run-actions button { width: auto; }
 
@@ -263,9 +291,14 @@ h1 { margin: 0; font: 650 clamp(2rem, 7vw, 4.6rem)/.95 var(--display-font); lett
   .workbench { margin-bottom: 30px; }
   .workbench-head, .teamrun-panel > header { padding: 16px; }
   .operator-notice { padding: 11px 16px; font-size: .86rem; }
+  .control-nav a { flex-basis: 118px; padding: 10px 12px; }
   .wizard, .workbench-unit, .teamrun-form, .run-console { padding-left: 16px; padding-right: 16px; }
   .wizard-steps { gap: 10px; font-size: .64rem; }
   .provider-picks, .recipe-grid, .role-config { grid-template-columns: 1fr; }
+  .task-editor { grid-template-columns: 1fr; align-items: stretch; }
+  .task-write, .task-editor .text-danger { padding-bottom: 0; }
+  .review-sheet { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
+  .review-sheet label { grid-column: 1 / -1; }
   .wizard-actions { display: grid; grid-template-columns: 1fr; }
   .wizard-actions button { width: 100%; }
   .project-list li, .orphan-row { align-items: stretch; flex-direction: column; }
