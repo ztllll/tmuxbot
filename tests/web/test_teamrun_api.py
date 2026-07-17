@@ -239,3 +239,18 @@ def test_worker_can_report_blocked_through_authenticated_api(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["state"] == "blocked"
+
+
+def test_teamrun_event_timeline_and_dispatch_receipts_are_read_only_projections(tmp_path):
+    client, _, _ = make_client(tmp_path)
+    csrf = authenticate(client)
+    headers = {"X-CSRF-Token": csrf}
+    client.post("/api/team-runs", json=run_payload(), headers=headers)
+    client.post("/api/team-runs/run-api/start", json={"idempotency_key": "start"}, headers=headers)
+
+    events = client.get("/api/team-runs/run-api/events")
+    dispatches = client.get("/api/team-runs/run-api/dispatches")
+
+    assert events.status_code == 200
+    assert any(item["event_type"] == "teamtask.working" for item in events.json())
+    assert dispatches.json()[0]["state"] == "tmux_written"

@@ -9,14 +9,19 @@ function response(body: unknown): Response {
 }
 
 test("重新打开页面时恢复进行中的 TeamRun", async () => {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(response({
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    if (String(input).includes("/events") || String(input).includes("/dispatches")) {
+      return Promise.resolve(response([]));
+    }
+    return Promise.resolve(response({
     run: { run_id: "run-active", goal: "恢复发布任务", state: "running" },
     agents: [],
     tasks: [{
       task_id: "implementation", title: "实现与验证", goal: "恢复发布任务",
       state: "working", attempt: 1,
     }],
-  }));
+    }));
+  });
 
   render(
     <TeamRunPanel

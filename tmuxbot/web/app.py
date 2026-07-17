@@ -1168,6 +1168,51 @@ def create_app(
             for artifact in scheduler_service().repository.list_artifacts(run_id)
         ]
 
+    @app.get("/api/team-runs/{run_id}/events")
+    def get_team_run_events(
+        run_id: str,
+        after_sequence: int = Query(default=0, ge=0),
+        limit: int = Query(default=100, ge=1, le=500),
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
+        return [
+            {
+                "sequence": event.sequence,
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "aggregate_type": event.aggregate_type,
+                "aggregate_id": event.aggregate_id,
+                "payload": dict(event.payload),
+                "occurred_at": event.occurred_at.isoformat(),
+            }
+            for event in scheduler_service().repository.list_teamrun_events(
+                run_id, after_sequence=after_sequence, limit=limit
+            )
+        ]
+
+    @app.get("/api/team-runs/{run_id}/dispatches")
+    def get_team_run_dispatches(
+        run_id: str,
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
+        return [
+            {
+                "command_id": command.command_id,
+                "task_id": command.task_id,
+                "attempt": command.attempt,
+                "managed_session_id": command.managed_session_id,
+                "state": command.state,
+                "created_at": command.created_at.isoformat(),
+                "tmux_written_at": (
+                    command.tmux_written_at.isoformat() if command.tmux_written_at else None
+                ),
+                "last_error": command.last_error,
+            }
+            for command in scheduler_service().repository.list_dispatch_commands(run_id)
+        ]
+
     @app.post("/api/team-runs/{run_id}/start")
     def start_team_run(
         run_id: str,

@@ -206,6 +206,27 @@ class ControlPlaneRepository:
             for row in rows
         ]
 
+    def list_teamrun_events(
+        self, run_id: str, *, after_sequence: int, limit: int
+    ) -> list[RunEvent]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM run_events WHERE sequence > ? AND ("
+                "(aggregate_type = 'team_run' AND aggregate_id = ?) "
+                "OR json_extract(payload_json, '$.run_id') = ?) "
+                "ORDER BY sequence LIMIT ?",
+                (after_sequence, run_id, run_id, min(max(limit, 1), 500)),
+            ).fetchall()
+        return [
+            RunEvent(
+                event_id=row["event_id"], event_type=row["event_type"],
+                aggregate_type=row["aggregate_type"], aggregate_id=row["aggregate_id"],
+                payload=json.loads(row["payload_json"]),
+                occurred_at=datetime.fromisoformat(row["occurred_at"]), sequence=row["sequence"],
+            )
+            for row in rows
+        ]
+
     def set_setting(self, key: str, value: str) -> None:
         with self._connection() as db:
             db.execute(

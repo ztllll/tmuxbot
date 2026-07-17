@@ -288,6 +288,15 @@ export type TeamRunSummary = {
   goal: string;
   state: string;
 };
+export type TeamRunEvent = {
+  sequence: number; event_id: string; event_type: string; aggregate_type: string;
+  aggregate_id: string; payload: Record<string, unknown>; occurred_at: string;
+};
+export type DispatchReceipt = {
+  command_id: string; task_id: string; attempt: number; managed_session_id: string;
+  state: "pending" | "tmux_written" | "uncertain"; created_at: string;
+  tmux_written_at: string | null; last_error: string | null;
+};
 
 export async function createTeamRun(
   input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string; tasks: TeamTaskInput[] },
@@ -327,4 +336,12 @@ export async function getTeamRun(runId: string): Promise<TeamRunSnapshot> {
 
 export async function getTeamRuns(): Promise<TeamRunSummary[]> {
   return readJson(await fetch("/api/team-runs", { credentials: "same-origin" }));
+}
+
+export async function getTeamRunEvents(runId: string): Promise<TeamRunEvent[]> {
+  return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/events`, { credentials: "same-origin" }));
+}
+
+export async function getDispatchReceipts(runId: string): Promise<DispatchReceipt[]> {
+  return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/dispatches`, { credentials: "same-origin" }));
 }
