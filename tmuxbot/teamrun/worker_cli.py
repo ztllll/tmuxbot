@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.paths import RuntimePaths
-from tmuxbot.teamrun.protocol import WorkerEvent, WorkerEventKind
+from tmuxbot.teamrun.protocol import ReviewDecision, WorkerEvent, WorkerEventKind
 from tmuxbot.teamrun.scheduler import TeamRunScheduler
 from tmuxbot.teamrun.tmux_sender import TmuxManagedSender
 from tmuxbot.teamrun.worker import WorkerReporter, artifact_from_argument, now_utc
@@ -34,6 +34,9 @@ def add_worker_parser(subparsers: argparse._SubParsersAction) -> None:
     complete.add_argument("--metadata", default="{}", help="JSON object applied to every artifact")
     blocked = commands.add_parser("block", help="report a task blocker")
     blocked.add_argument("--reason", required=True)
+    review = commands.add_parser("review", help="submit an independent review verdict")
+    review.add_argument("--verdict", required=True, choices=["approved", "rejected"])
+    review.add_argument("--notes", required=True)
 
 
 def run_worker(args: argparse.Namespace) -> None:
@@ -72,6 +75,7 @@ def _event_from_args(args: argparse.Namespace) -> WorkerEvent:
             "publish-artifact": WorkerEventKind.ARTIFACT_PUBLISHED.value,
             "complete": WorkerEventKind.TASK_COMPLETED.value,
             "block": WorkerEventKind.TASK_BLOCKED.value,
+            "review": WorkerEventKind.REVIEW_COMPLETED.value,
         }[args.worker_command]
     )
     metadata = _metadata(args.metadata) if hasattr(args, "metadata") else {}
@@ -95,8 +99,11 @@ def _event_from_args(args: argparse.Namespace) -> WorkerEvent:
         idempotency_key=args.idempotency_key,
         occurred_at=now_utc(),
         evidence=tuple(artifact_from_argument(item, metadata) for item in raw_artifacts),
-        message=args.reason if args.worker_command == "block" else None,
+        message=(args.reason if args.worker_command == "block" else args.notes if args.worker_command == "review" else None),
         progress_percent=args.percent if args.worker_command == "progress" else None,
+        review_decision=(
+            ReviewDecision(args.verdict) if args.worker_command == "review" else None
+        ),
     )
 
 

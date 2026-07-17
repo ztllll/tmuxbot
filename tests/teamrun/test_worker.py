@@ -4,7 +4,12 @@ import pytest
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.teamrun.domain import AgentRole, TeamTaskState
-from tmuxbot.teamrun.protocol import ArtifactReference, WorkerEvent, WorkerEventKind
+from tmuxbot.teamrun.protocol import (
+    ArtifactReference,
+    ReviewDecision,
+    WorkerEvent,
+    WorkerEventKind,
+)
 from tmuxbot.teamrun.scheduler import TeamRunScheduler
 from tmuxbot.teamrun.worker import WorkerReporter
 from tmuxbot.teamrun.worker_cli import _event_from_args, add_worker_parser
@@ -98,6 +103,24 @@ def test_worker_cannot_report_another_agent_or_attempt(tmp_path):
         reporter.report(event(WorkerEventKind.TASK_CLAIMED, actor_agent_id="run-1:reviewer"))
     with pytest.raises(ValueError, match="attempt"):
         reporter.report(event(WorkerEventKind.TASK_CLAIMED, attempt=2))
+
+
+def test_independent_reviewer_can_submit_a_protocol_verdict(tmp_path):
+    _, _, reporter = worker(tmp_path)
+    evidence = ArtifactReference("test", "pytest://468-passed", {})
+    reporter.report(event(WorkerEventKind.TASK_COMPLETED, evidence=(evidence,)))
+
+    reviewed = reporter.report(event(
+        WorkerEventKind.REVIEW_COMPLETED,
+        event_id="worker-event:review",
+        idempotency_key="review-1",
+        actor_agent_id="run-1:reviewer",
+        review_decision=ReviewDecision.APPROVED,
+        message="evidence verified",
+    ))
+
+    assert reviewed is not None
+    assert reviewed.state is TeamTaskState.ACCEPTED
 
 
 def test_worker_cli_builds_only_protocol_v1_events():

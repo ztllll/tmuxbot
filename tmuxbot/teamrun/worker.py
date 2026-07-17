@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from tmuxbot.control_plane.models import RunEvent
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.teamrun.domain import TeamTask, TeamTaskState
+from tmuxbot.teamrun.domain import AgentRole, TeamTask, TeamTaskState
 from tmuxbot.teamrun.protocol import ArtifactReference, WorkerEvent, WorkerEventKind
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 
@@ -20,7 +20,7 @@ class WorkerReporter:
     scheduler: TeamRunScheduler
 
     def report(self, event: WorkerEvent) -> TeamTask | None:
-        task = self._assigned_task(event)
+        task = self._reviewing_task(event) if event.kind is WorkerEventKind.REVIEW_COMPLETED else self._assigned_task(event)
         if not self._append(event):
             return task
         if event.kind is WorkerEventKind.TASK_CLAIMED:
@@ -59,6 +59,15 @@ class WorkerReporter:
                 reason=event.message or "",
                 idempotency_key=event.idempotency_key,
             )
+        if event.kind is WorkerEventKind.REVIEW_COMPLETED:
+            return self.scheduler.review_task(
+                event.run_id,
+                event.task_id,
+                reviewer_agent_id=event.actor_agent_id,
+                verdict=event.review_decision.value if event.review_decision else "",
+                notes=event.message or "",
+                idempotency_key=event.idempotency_key,
+            )
         raise ValueError(f"worker cannot submit {event.kind.value}")
 
     def _assigned_task(self, event: WorkerEvent) -> TeamTask:
@@ -69,6 +78,18 @@ class WorkerReporter:
             raise ValueError("worker report attempt does not match the active task")
         if task.state is not TeamTaskState.WORKING and not self.repository.has_event(event.event_id):
             raise ValueError("worker reports require a working task")
+        return task
+
+    def _reviewing_task(self, event: WorkerEvent) -> TeamTask:
+        task = self.repository.get_team_task(event.run_id, event.task_id)
+        snapshot = self.repository.get_team_run(event.run_id)
+        reviewer = next((agent for agent in snapshot.agents if agent.agent_id == event.actor_agent_id), None)
+        if reviewer is None or reviewer.role is not AgentRole.REVIEWER or task.assignee_agent_id == reviewer.agent_id:
+            raise ValueError("only an independent reviewer can report a verdict")
+        if task.attempt != event.attempt:
+            raise ValueError("review report attempt does not match the active task")
+        if task.state is not TeamTaskState.REVIEW and not self.repository.has_event(event.event_id):
+            raise ValueError("review reports require a task awaiting review")
         return task
 
     def _append(self, event: WorkerEvent) -> bool:
