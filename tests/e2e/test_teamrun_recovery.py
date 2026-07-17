@@ -16,7 +16,7 @@ class FakeSender:
         self.calls.append((session_id, envelope))
 
 
-def test_restart_reconciliation_never_redispatches_uncertain_assignment(tmp_path):
+def test_restart_reconciliation_delivers_persisted_pending_assignment_once(tmp_path):
     now = datetime(2026, 7, 11, tzinfo=timezone.utc)
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
@@ -55,8 +55,8 @@ def test_restart_reconciliation_never_redispatches_uncertain_assignment(tmp_path
     affected = restarted.reconcile()
 
     snapshot = repo.get_team_run("recovery-run")
-    assert affected == ["recovery-run"]
-    assert snapshot.run.state is TeamRunState.OPERATOR_REQUIRED
-    assert snapshot.tasks[0].state is TeamTaskState.OPERATOR_REQUIRED
-    assert sender.calls == []
+    assert affected == []
+    assert snapshot.run.state is TeamRunState.RUNNING
+    assert snapshot.tasks[0].state is TeamTaskState.WORKING
+    assert len(sender.calls) == 1
     assert repo.get_active_write_lease("recovery-run") is not None

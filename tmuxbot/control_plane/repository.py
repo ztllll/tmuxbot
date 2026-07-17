@@ -24,6 +24,7 @@ from tmuxbot.teamrun.domain import (
     AgentRole,
     MailboxMessage,
     TeamArtifact,
+    DispatchCommand,
     TeamAgent,
     TeamRun,
     TeamRunSnapshot,
@@ -33,6 +34,7 @@ from tmuxbot.teamrun.domain import (
     WriteLease,
     validate_task_graph,
 )
+from tmuxbot.teamrun.protocol import TaskAssignment
 
 log = logging.getLogger(__name__)
 
@@ -393,6 +395,51 @@ class ControlPlaneRepository:
                 (now.isoformat(), run_id, idempotency_key),
             )
 
+    def list_dispatch_commands(
+        self, run_id: str, *, states: set[str] | None = None
+    ) -> list[DispatchCommand]:
+        query = "SELECT * FROM dispatch_commands WHERE run_id = ?"
+        params: list[object] = [run_id]
+        if states:
+            query += " AND state IN (" + ", ".join("?" for _ in states) + ")"
+            params.extend(sorted(states))
+        query += " ORDER BY created_at, command_id"
+        with self._connection() as db:
+            rows = db.execute(query, params).fetchall()
+        return [_dispatch_command_from_row(row) for row in rows]
+
+    def mark_dispatch_tmux_written(self, command_id: str, *, now: datetime) -> DispatchCommand:
+        with self._connection() as db:
+            db.execute(
+                "UPDATE dispatch_commands SET state = 'tmux_written', "
+                "tmux_written_at = COALESCE(tmux_written_at, ?) WHERE command_id = ? "
+                "AND state = 'pending'",
+                (now.isoformat(), command_id),
+            )
+            row = db.execute(
+                "SELECT * FROM dispatch_commands WHERE command_id = ?", (command_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(command_id)
+        return _dispatch_command_from_row(row)
+
+    def mark_dispatch_uncertain(
+        self, command_id: str, *, error: str, now: datetime
+    ) -> DispatchCommand:
+        with self._connection() as db:
+            db.execute(
+                "UPDATE dispatch_commands SET state = 'uncertain', last_error = ?, "
+                "tmux_written_at = COALESCE(tmux_written_at, ?) WHERE command_id = ? "
+                "AND state = 'pending'",
+                (error[:500], now.isoformat(), command_id),
+            )
+            row = db.execute(
+                "SELECT * FROM dispatch_commands WHERE command_id = ?", (command_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(command_id)
+        return _dispatch_command_from_row(row)
+
     def list_artifacts(self, run_id: str, task_id: str | None = None) -> list[TeamArtifact]:
         query = "SELECT * FROM artifacts WHERE run_id = ?"
         params: tuple[object, ...] = (run_id,)
@@ -574,17 +621,24 @@ class ControlPlaneRepository:
                 ),
             )
             dependencies = json.loads(task_row["dependencies_json"])
-            envelope = {
-                "run_id": run_id,
-                "task_id": task_id,
-                "goal": task_row["goal"],
-                "constraints": [
+            dispatch_key = f"teamrun:{run_id}:dispatch:{task_id}:{next_attempt}"
+            envelope = TaskAssignment(
+                message_id=dispatch_key,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=next_attempt,
+                assignee_agent_id=agent_row["agent_id"],
+                role=AgentRole(task_row["role"]),
+                goal=task_row["goal"],
+                constraints=(
                     "shared-directory single writer",
                     "publish evidence before review",
-                ],
-                "dependencies": dependencies,
-                "attempt": next_attempt,
-            }
+                ),
+                dependencies=tuple(dependencies),
+                expected_artifacts=("evidence",),
+                acceptance_criteria=("publish evidence before review",),
+                idempotency_key=dispatch_key,
+            ).to_wire()
             db.execute(
                 "INSERT INTO mailbox_messages("
                 "message_id, run_id, task_id, sender_agent_id, recipient_agent_id, kind, "
@@ -597,7 +651,21 @@ class ControlPlaneRepository:
                     agent_row["agent_id"],
                     "task_dispatch",
                     json.dumps(envelope, ensure_ascii=False, sort_keys=True),
-                    event_id,
+                    dispatch_key,
+                    now.isoformat(),
+                ),
+            )
+            db.execute(
+                "INSERT INTO dispatch_commands(command_id, run_id, task_id, attempt, "
+                "managed_session_id, envelope_json, state, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+                (
+                    dispatch_key,
+                    run_id,
+                    task_id,
+                    next_attempt,
+                    agent_row["managed_session_id"],
+                    json.dumps(envelope, ensure_ascii=False, sort_keys=True),
                     now.isoformat(),
                 ),
             )
@@ -1031,7 +1099,10 @@ class ControlPlaneRepository:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             assigned = db.execute(
-                "SELECT run_id, task_id FROM team_tasks WHERE state = ?",
+                "SELECT task.run_id, task.task_id FROM team_tasks AS task "
+                "LEFT JOIN dispatch_commands AS command ON command.run_id = task.run_id "
+                "AND command.task_id = task.task_id AND command.attempt = task.attempt "
+                "WHERE task.state = ? AND (command.command_id IS NULL OR command.state = 'uncertain')",
                 (TeamTaskState.ASSIGNED.value,),
             ).fetchall()
             for row in assigned:
@@ -1363,6 +1434,24 @@ def _artifact_from_row(row: sqlite3.Row) -> TeamArtifact:
         metadata=json.loads(row["metadata_json"]),
         idempotency_key=row["idempotency_key"],
         created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _dispatch_command_from_row(row: sqlite3.Row) -> DispatchCommand:
+    return DispatchCommand(
+        command_id=row["command_id"],
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        attempt=row["attempt"],
+        managed_session_id=row["managed_session_id"],
+        envelope=json.loads(row["envelope_json"]),
+        state=row["state"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        tmux_written_at=(
+            datetime.fromisoformat(row["tmux_written_at"])
+            if row["tmux_written_at"] else None
+        ),
+        last_error=row["last_error"],
     )
 
 

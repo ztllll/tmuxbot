@@ -114,6 +114,20 @@ class WriteLease:
     released_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class DispatchCommand:
+    command_id: str
+    run_id: str
+    task_id: str
+    attempt: int
+    managed_session_id: str
+    envelope: Mapping[str, Any]
+    state: str
+    created_at: datetime
+    tmux_written_at: datetime | None
+    last_error: str | None
+
+
 def validate_task_graph(tasks: Iterable[TeamTask]) -> None:
     task_list = list(tasks)
     by_id = {task.task_id: task for task in task_list}

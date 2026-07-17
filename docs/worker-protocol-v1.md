@@ -63,3 +63,16 @@ tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
 The command verifies that the caller is the active assignee for the active
 attempt. A published artifact is deduplicated when the same evidence is later
 used in `complete`; completion still moves the task to independent review.
+
+## Dispatch recovery (P3)
+
+Assignment creation atomically records a `dispatch_commands` outbox record with
+the exact Protocol v1 envelope. The scheduler only marks a task `working` after
+the tmux sender returns and the command has a `tmux_written` receipt.
+
+- A restart replays a still-`pending` command exactly once from SQLite.
+- A `tmux_written` command whose task was not yet marked working is recovered
+  without injecting the prompt a second time.
+- A transport exception is `uncertain`, not automatically retried: it may have
+  reached a pane before the failure. Reconciliation moves it to
+  `operator_required` for explicit inspection.

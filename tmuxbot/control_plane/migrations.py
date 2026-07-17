@@ -162,4 +162,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON write_leases(run_id) WHERE released_at IS NULL;
         """,
     ),
+    (
+        4,
+        """
+        CREATE TABLE dispatch_commands (
+            command_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL,
+            attempt INTEGER NOT NULL CHECK(attempt >= 1),
+            managed_session_id TEXT NOT NULL,
+            envelope_json TEXT NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('pending', 'tmux_written', 'uncertain')),
+            created_at TEXT NOT NULL,
+            tmux_written_at TEXT,
+            last_error TEXT,
+            UNIQUE(run_id, task_id, attempt),
+            FOREIGN KEY(run_id, task_id) REFERENCES team_tasks(run_id, task_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX dispatch_commands_pending_idx
+            ON dispatch_commands(run_id, state, created_at);
+        """,
+    ),
 )

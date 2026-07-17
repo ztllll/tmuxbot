@@ -25,6 +25,12 @@ class FakeTmuxSender:
         self.calls.append((managed_session_id, envelope))
 
 
+class FailingTmuxSender(FakeTmuxSender):
+    def send(self, managed_session_id: str, envelope: dict) -> None:
+        self.calls.append((managed_session_id, envelope))
+        raise RuntimeError("tmux transport failed after unknown write boundary")
+
+
 def scheduler(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
@@ -94,6 +100,37 @@ def test_start_dispatches_only_ready_task_through_injected_sender(tmp_path):
     assert repo.get_active_write_lease("run-1").task_id == "implement"
     dispatch = next(item for item in repo.list_mailbox("run-1") if item.kind == "task_dispatch")
     assert dispatch.delivered_at == NOW
+
+
+def test_failed_dispatch_is_persisted_as_uncertain_and_never_blindly_resent(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    sender = FailingTmuxSender()
+    service = TeamRunScheduler(repo, sender, clock=lambda: NOW)
+    service.create_deterministic_run(
+        run_id="uncertain-run",
+        goal="do not duplicate a possible write",
+        agents={
+            AgentRole.COORDINATOR: "tmux-coordinator",
+            AgentRole.IMPLEMENTER: "tmux-implementer",
+            AgentRole.REVIEWER: "tmux-reviewer",
+        },
+        tasks=[{
+            "task_id": "implement", "title": "implement", "goal": "implement",
+            "role": "implementer", "dependencies": [], "requires_write": True, "max_attempts": 1,
+        }],
+        idempotency_key="create",
+    )
+
+    service.start("uncertain-run", idempotency_key="start")
+    command = repo.list_dispatch_commands("uncertain-run")[0]
+    assert command.state == "uncertain"
+    assert len(sender.calls) == 1
+
+    affected = service.reconcile()
+    assert affected == ["uncertain-run"]
+    assert len(sender.calls) == 1
+    assert repo.get_team_run("uncertain-run").tasks[0].state is TeamTaskState.OPERATOR_REQUIRED
 
 
 @pytest.mark.parametrize(

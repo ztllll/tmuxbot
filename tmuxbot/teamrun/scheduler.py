@@ -15,7 +15,7 @@ from tmuxbot.teamrun.domain import (
     TeamTask,
     TeamTaskState,
 )
-from tmuxbot.teamrun.protocol import ArtifactReference, ReviewRequest, TaskAssignment
+from tmuxbot.teamrun.protocol import ArtifactReference, ReviewRequest
 
 
 class TmuxTaskSender(Protocol):
@@ -225,6 +225,11 @@ class TeamRunScheduler:
         )
 
     def reconcile(self) -> list[str]:
+        for run in self.repository.list_team_runs():
+            if run.state is not TeamRunState.RUNNING:
+                continue
+            self._recover_written_dispatches(run.run_id)
+            self._deliver_pending_dispatches(run.run_id)
         operator_runs = self.repository.reconcile_team_runs(now=self.clock())
         for run in self.repository.list_team_runs():
             if run.state is not TeamRunState.RUNNING:
@@ -244,38 +249,37 @@ class TeamRunScheduler:
             )
             if claimed is None:
                 continue
-            assigned, agent = claimed
-            dispatch_key = f"teamrun:{run_id}:dispatch:{assigned.task_id}:{assigned.attempt}"
-            envelope = TaskAssignment(
-                message_id=dispatch_key,
-                run_id=run_id,
-                task_id=assigned.task_id,
-                attempt=assigned.attempt,
-                assignee_agent_id=agent.agent_id,
-                role=agent.role,
-                goal=assigned.goal,
-                constraints=(
-                    "shared-directory single writer",
-                    "publish evidence before review",
-                ),
-                dependencies=assigned.dependencies,
-                expected_artifacts=("evidence",),
-                acceptance_criteria=("publish evidence before review",),
-                idempotency_key=dispatch_key,
-            ).to_wire()
+            _assigned, _agent = claimed
+        self._deliver_pending_dispatches(run_id)
+
+    def _deliver_pending_dispatches(self, run_id: str) -> None:
+        for command in self.repository.list_dispatch_commands(run_id, states={"pending"}):
             try:
-                self.sender.send(agent.managed_session_id, envelope)
-            except Exception:
-                self.repository.reconcile_team_runs(now=self.clock())
-                raise
+                self.sender.send(command.managed_session_id, dict(command.envelope))
+            except Exception as exc:
+                self.repository.mark_dispatch_uncertain(
+                    command.command_id, error=str(exc), now=self.clock()
+                )
+                continue
+            self.repository.mark_dispatch_tmux_written(command.command_id, now=self.clock())
             self.repository.mark_mailbox_delivered(
                 run_id,
-                dispatch_key,
+                command.command_id,
                 now=self.clock(),
             )
             self.repository.mark_team_task_working(
                 run_id,
-                assigned.task_id,
-                event_id=f"teamrun:{run_id}:working:{assigned.task_id}:{assigned.attempt}",
+                command.task_id,
+                event_id=f"teamrun:{run_id}:working:{command.task_id}:{command.attempt}",
+                now=self.clock(),
+            )
+
+    def _recover_written_dispatches(self, run_id: str) -> None:
+        for command in self.repository.list_dispatch_commands(run_id, states={"tmux_written"}):
+            self.repository.mark_mailbox_delivered(run_id, command.command_id, now=self.clock())
+            self.repository.mark_team_task_working(
+                run_id,
+                command.task_id,
+                event_id=f"teamrun:{run_id}:working:{command.task_id}:{command.attempt}",
                 now=self.clock(),
             )
