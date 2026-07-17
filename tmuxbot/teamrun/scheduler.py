@@ -15,6 +15,7 @@ from tmuxbot.teamrun.domain import (
     TeamTask,
     TeamTaskState,
 )
+from tmuxbot.teamrun.protocol import ArtifactReference, ReviewRequest, TaskAssignment
 
 
 class TmuxTaskSender(Protocol):
@@ -157,23 +158,22 @@ class TeamRunScheduler:
         )
         snapshot = self.repository.get_team_run(run_id)
         reviewer = next(agent for agent in snapshot.agents if agent.role is AgentRole.REVIEWER)
+        review_key = f"teamrun:{run_id}:review:{task_id}:{task.attempt}"
         self.sender.send(
             reviewer.managed_session_id,
-            {
-                "kind": "independent_review",
-                "run_id": run_id,
-                "task_id": task_id,
-                "goal": task.goal,
-                "artifacts": [
-                    {"kind": item.kind, "uri": item.uri, "metadata": dict(item.metadata)}
-                    for item in artifacts
-                ],
-                "instructions": [
-                    "只读审查实现与证据",
-                    "明确给出 approved 或 rejected 及原因",
-                    "不得修改共享项目目录",
-                ],
-            },
+            ReviewRequest(
+                message_id=review_key,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=task.attempt,
+                reviewer_agent_id=reviewer.agent_id,
+                producer_agent_id=agent_id,
+                goal=task.goal,
+                artifacts=tuple(
+                    ArtifactReference(item.kind, item.uri, item.metadata) for item in artifacts
+                ),
+                idempotency_key=review_key,
+            ).to_wire(),
         )
         return task
 
@@ -245,17 +245,24 @@ class TeamRunScheduler:
             if claimed is None:
                 continue
             assigned, agent = claimed
-            envelope = {
-                "run_id": run_id,
-                "task_id": assigned.task_id,
-                "goal": assigned.goal,
-                "constraints": [
+            dispatch_key = f"teamrun:{run_id}:dispatch:{assigned.task_id}:{assigned.attempt}"
+            envelope = TaskAssignment(
+                message_id=dispatch_key,
+                run_id=run_id,
+                task_id=assigned.task_id,
+                attempt=assigned.attempt,
+                assignee_agent_id=agent.agent_id,
+                role=agent.role,
+                goal=assigned.goal,
+                constraints=(
                     "shared-directory single writer",
                     "publish evidence before review",
-                ],
-                "dependencies": list(assigned.dependencies),
-                "attempt": assigned.attempt,
-            }
+                ),
+                dependencies=assigned.dependencies,
+                expected_artifacts=("evidence",),
+                acceptance_criteria=("publish evidence before review",),
+                idempotency_key=dispatch_key,
+            ).to_wire()
             try:
                 self.sender.send(agent.managed_session_id, envelope)
             except Exception:
@@ -263,7 +270,7 @@ class TeamRunScheduler:
                 raise
             self.repository.mark_mailbox_delivered(
                 run_id,
-                f"teamrun:{run_id}:dispatch:{assigned.task_id}:{assigned.attempt}",
+                dispatch_key,
                 now=self.clock(),
             )
             self.repository.mark_team_task_working(

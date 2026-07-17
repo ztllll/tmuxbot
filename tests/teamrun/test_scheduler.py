@@ -72,19 +72,25 @@ def test_start_dispatches_only_ready_task_through_injected_sender(tmp_path):
     assert snapshot.run.state is TeamRunState.RUNNING
     assert snapshot.tasks[0].state is TeamTaskState.WORKING
     assert snapshot.tasks[1].state is TeamTaskState.PENDING
-    assert sender.calls == [
-        (
-            "tmux-implementer",
-            {
-                "run_id": "run-1",
-                "task_id": "implement",
-                "goal": "修改代码并提供测试证据",
-                "constraints": ["shared-directory single writer", "publish evidence before review"],
-                "dependencies": [],
-                "attempt": 1,
-            },
-        )
-    ]
+    assert len(sender.calls) == 1
+    target, dispatch = sender.calls[0]
+    assert target == "tmux-implementer"
+    assert dispatch == {
+        "protocol_version": "tmuxbot.worker.v1",
+        "kind": "task.assignment",
+        "message_id": "teamrun:run-1:dispatch:implement:1",
+        "run_id": "run-1",
+        "task_id": "implement",
+        "attempt": 1,
+        "assignee_agent_id": "run-1:implementer",
+        "role": "implementer",
+        "goal": "修改代码并提供测试证据",
+        "constraints": ["shared-directory single writer", "publish evidence before review"],
+        "dependencies": [],
+        "expected_artifacts": ["evidence"],
+        "acceptance_criteria": ["publish evidence before review"],
+        "idempotency_key": "teamrun:run-1:dispatch:implement:1",
+    }
     assert repo.get_active_write_lease("run-1").task_id == "implement"
     dispatch = next(item for item in repo.list_mailbox("run-1") if item.kind == "task_dispatch")
     assert dispatch.delivered_at == NOW
@@ -213,7 +219,8 @@ def test_only_independent_reviewer_can_accept_and_unlock_dependency(tmp_path):
         "implement",
         "follow-up",
     ]
-    assert sender.calls[1][1]["kind"] == "independent_review"
+    assert sender.calls[1][1]["kind"] == "review.requested"
+    assert sender.calls[1][1]["reviewer_agent_id"] == "run-1:reviewer"
 
 
 def test_non_writing_coordinator_task_can_complete_before_implementation(tmp_path):

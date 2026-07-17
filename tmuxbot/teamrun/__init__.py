@@ -9,6 +9,15 @@ from tmuxbot.teamrun.domain import (
     TeamTask,
     TeamTaskState,
 )
+from tmuxbot.teamrun.protocol import (
+    WORKER_PROTOCOL_VERSION,
+    ArtifactReference,
+    ReviewDecision,
+    ReviewRequest,
+    TaskAssignment,
+    WorkerEvent,
+    WorkerEventKind,
+)
 
 __all__ = [
     "AgentRole",
@@ -18,4 +27,11 @@ __all__ = [
     "TeamRunState",
     "TeamTask",
     "TeamTaskState",
+    "WORKER_PROTOCOL_VERSION",
+    "ArtifactReference",
+    "ReviewDecision",
+    "ReviewRequest",
+    "TaskAssignment",
+    "WorkerEvent",
+    "WorkerEventKind",
 ]
