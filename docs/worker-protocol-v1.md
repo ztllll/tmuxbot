@@ -38,3 +38,28 @@ P0 publishes the pure, tested contract in `tmuxbot.teamrun.protocol`. P1 adds
 the worker-side commands that submit the reports. P2 adapts Claude and Codex
 terminal prompts to emit them; P3 persists delivery receipts and recovery;
 P4 renders the append-only event timeline in WebUI.
+
+## Worker commands (P1)
+
+Every command requires the run, task, assigned agent, active attempt and a
+stable idempotency key. It writes to the local control-plane database selected
+by `TMUXBOT_DATABASE` (or `--database`), never to an IM channel.
+
+```bash
+tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
+  --attempt 1 --idempotency-key claim-1 claim
+tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
+  --attempt 1 --idempotency-key progress-50 progress --percent 50
+tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
+  --attempt 1 --idempotency-key test-1 publish-artifact \
+  --artifact 'test=pytest://468-passed' --metadata '{"passed":468}'
+tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
+  --attempt 1 --idempotency-key complete-1 complete \
+  --artifact 'test=pytest://468-passed'
+tmuxbot worker --run run-42 --task implement --agent run-42:implementer \
+  --attempt 1 --idempotency-key blocked-1 block --reason 'credential required'
+```
+
+The command verifies that the caller is the active assignee for the active
+attempt. A published artifact is deduplicated when the same evidence is later
+used in `complete`; completion still moves the task to independent review.

@@ -179,6 +179,12 @@ class ControlPlaneRepository:
             )
             return cursor.rowcount == 1
 
+    def has_event(self, event_id: str) -> bool:
+        with self._connection() as db:
+            return db.execute(
+                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
+            ).fetchone() is not None
+
     def list_events(self, *, after_sequence: int, limit: int) -> list[RunEvent]:
         with self._connection() as db:
             rows = db.execute(
@@ -673,6 +679,20 @@ class ControlPlaneRepository:
             if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
                 raise ValueError("only the assigned working agent can complete the task")
             for index, (kind, uri, metadata) in enumerate(artifacts):
+                existing = db.execute(
+                    "SELECT 1 FROM artifacts WHERE run_id = ? AND task_id = ? "
+                    "AND producer_agent_id = ? AND kind = ? AND uri = ? AND metadata_json = ?",
+                    (
+                        run_id,
+                        task_id,
+                        agent_id,
+                        kind,
+                        uri,
+                        json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    continue
                 db.execute(
                     "INSERT INTO artifacts(artifact_id, run_id, task_id, producer_agent_id, "
                     "kind, uri, metadata_json, idempotency_key, created_at) "
@@ -736,6 +756,77 @@ class ControlPlaneRepository:
                 ),
             )
         return self.get_team_task(run_id, task_id)
+
+    def publish_team_artifact(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        agent_id: str,
+        kind: str,
+        uri: str,
+        metadata: dict[str, object],
+        idempotency_key: str,
+        now: datetime,
+    ) -> TeamArtifact:
+        event_id = f"teamrun:{run_id}:artifact:{idempotency_key}"
+        metadata_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT * FROM team_tasks WHERE run_id = ? AND task_id = ?",
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            existing = db.execute(
+                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? "
+                "AND idempotency_key = ?",
+                (run_id, task_id, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                return _artifact_from_row(existing)
+            if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
+                raise ValueError("only the assigned working agent can publish an artifact")
+            db.execute(
+                "INSERT INTO artifacts(artifact_id, run_id, task_id, producer_agent_id, "
+                "kind, uri, metadata_json, idempotency_key, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"artifact:{run_id}:{idempotency_key}",
+                    run_id,
+                    task_id,
+                    agent_id,
+                    kind,
+                    uri,
+                    metadata_json,
+                    idempotency_key,
+                    now.isoformat(),
+                ),
+            )
+            _append_event_db(
+                db,
+                RunEvent(
+                    event_id=event_id,
+                    event_type="teamtask.artifact_published",
+                    aggregate_type="team_task",
+                    aggregate_id=task_id,
+                    payload={
+                        "run_id": run_id,
+                        "agent_id": agent_id,
+                        "kind": kind,
+                        "uri": uri,
+                    },
+                    occurred_at=now,
+                ),
+            )
+            created = db.execute(
+                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? "
+                "AND idempotency_key = ?",
+                (run_id, task_id, idempotency_key),
+            ).fetchone()
+            assert created is not None
+            return _artifact_from_row(created)
 
     def review_team_task(
         self,

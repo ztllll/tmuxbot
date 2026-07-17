@@ -321,6 +321,9 @@ def build_parser() -> argparse.ArgumentParser:
         "install-service", help="install a systemd user service"
     )
     service_parser.add_argument("--now", action="store_true", dest="start_now")
+    from tmuxbot.teamrun.worker_cli import add_worker_parser
+
+    add_worker_parser(subparsers)
     parser.set_defaults(command="bridge")
     return parser
 
@@ -351,6 +354,11 @@ def run(argv: list[str] | None = None) -> None:
 
         unit = install_service(start_now=args.start_now)
         print(f"已安装: {unit}")
+        return
+    if args.command == "worker":
+        from tmuxbot.teamrun.worker_cli import run_worker
+
+        run_worker(args)
         return
     asyncio.run(main())
 
