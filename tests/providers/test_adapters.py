@@ -11,6 +11,7 @@ def test_adapter_registry_keeps_launch_and_model_picker_details_server_side():
     assert claude is not None
     assert claude.launch_arguments == ("--dangerously-skip-permissions",)
     assert claude.model_command == "/model"
+    assert "Bash" in claude.teamrun_instruction
     assert managed_provider_names() == frozenset({"claude", "codex"})
 
 

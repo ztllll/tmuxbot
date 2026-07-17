@@ -20,10 +20,16 @@ def test_tmux_sender_resolves_server_managed_target(tmp_path):
         sent.append((target, prompt))
 
     sender = TmuxManagedSender(repo, send_text=send_text)
-    sender.send("session", {"task_id": "task-1", "goal": "实现并测试"})
+    sender.send("session", {
+        "kind": "task.assignment", "run_id": "run-1", "task_id": "task-1",
+        "attempt": 1, "assignee_agent_id": "run-1:implementer", "idempotency_key": "dispatch-1",
+        "goal": "实现并测试",
+    })
 
     assert sender.is_registered("session") is True
     assert sent[0][0] == "worker-tmux:1.2"
     assert '"task_id": "task-1"' in sent[0][1]
-    assert "Reviewer" in sent[0][1]
-
+    assert "Claude Code 的 Bash" not in sent[0][1]
+    assert "Codex 的 shell" in sent[0][1]
+    assert "tmuxbot worker --run run-1" in sent[0][1]
+    assert "dispatch-1:progress-<n>" in sent[0][1]

@@ -16,6 +16,7 @@ class ProviderAdapter:
     display_name: str
     launch_arguments: tuple[str, ...]
     model_command: str | None
+    teamrun_instruction: str
 
     @property
     def supports_model_picker(self) -> bool:
@@ -28,12 +29,14 @@ _ADAPTERS = {
         display_name="Claude Code",
         launch_arguments=("--dangerously-skip-permissions",),
         model_command="/model",
+        teamrun_instruction="使用 Claude Code 的 Bash 工具执行 worker 回报命令。",
     ),
     "codex": ProviderAdapter(
         binary_name="codex",
         display_name="Codex",
         launch_arguments=("--dangerously-bypass-approvals-and-sandbox",),
         model_command="/model",
+        teamrun_instruction="使用 Codex 的 shell 工具执行 worker 回报命令。",
     ),
 }
 
