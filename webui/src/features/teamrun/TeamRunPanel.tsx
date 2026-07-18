@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
-  commandTeamRun, completeTeamTask, createTeamRun, getDispatchReceipts, getTaskWorktrees, getTeamRun, getTeamRunEvents, reviewTeamTask,
+  commandTeamRun, completeTeamTask, createTeamRun, getDispatchReceipts, getTaskWorktrees, getTeamRun, getTeamRunEvents, mergeTaskWorktree, reviewTeamTask,
   type DispatchReceipt, type ManagedSession, type TaskWorktree, type TeamRunEvent, type TeamRunSnapshot, type TeamRunSummary, type TeamTaskInput,
 } from "../../app/api";
 
@@ -106,6 +106,13 @@ export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
     catch { setNotice("审查提交失败：任务状态可能已经变化，请刷新后重试。"); }
     finally { setBusy(false); }
   }
+  async function merge(worktree: TaskWorktree) {
+    if (!snapshot || !window.confirm(`合并 ${worktree.branch} 到项目当前分支？合并前会检查主目录是否干净。`)) return;
+    setBusy(true);
+    try { await mergeTaskWorktree(snapshot.run.run_id, worktree.task_id, worktree.attempt, csrfToken); await refresh(); setNotice(`已合并 ${worktree.branch}。可在确认后释放隔离目录。`); }
+    catch { setNotice("无法合并：主项目可能有未提交改动、发生冲突，或任务尚未验收。"); }
+    finally { setBusy(false); }
+  }
 
   return <section className="teamrun-panel" id="teamrun">
     <header><div><span>MULTI-LLM / 协作调度</span><h2>TeamRun 协作台</h2></div>{snapshot && <strong className={`run-state is-${snapshot.run.state}`}>{labelState(snapshot.run.state)}</strong>}</header>
@@ -118,7 +125,7 @@ export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
     </form> : <div className="run-console">
       <div className="run-goal"><span>协作目标 / GOAL</span><strong>{snapshot.run.goal}</strong></div>
       <div className="task-board">{snapshot.tasks.map((task) => { const dependencies = task.dependencies || []; return <article className={`task-track is-${task.state}`} key={task.task_id}><span className={`status-mark is-${task.state}`} /><div><strong>{task.title}</strong><small>状态 {labelState(task.state)} · 第 {task.attempt} 次尝试</small>{(task.role || dependencies.length > 0) && <small>{task.role || "实施"} · {dependencies.length ? `依赖 ${dependencies.join("、")}` : "无依赖"}</small>}</div><div className="task-actions">{task.state === "working" && <button className="primary-action" disabled={busy} onClick={() => void complete(task.task_id, task.assignee_agent_id)}>登记证据</button>}{task.state === "review" && <button className="primary-action" disabled={busy} onClick={() => { setReviewingTask(task.task_id); setReviewNotes(""); }}>审查任务</button>}</div>{reviewingTask === task.task_id && <div className="review-sheet"><label>审查结论<textarea autoFocus value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} placeholder="说明通过依据或退回原因" /></label><button className="secondary-action" onClick={() => setReviewingTask(null)}>取消</button><button className="danger-action" disabled={busy} onClick={() => void review(task.task_id, "rejected")}>退回修改</button><button className="primary-action" disabled={busy} onClick={() => void review(task.task_id, "approved")}>通过审查</button></div>}</article>; })}</div>
-      <section className="teamrun-audit" aria-label="协作事件审计"><header><div><span>EVENT AUDIT / 可审计协作过程</span><h3>运行事件与 tmux 投递回执</h3></div><button className="secondary-action" onClick={() => void refresh()}>刷新</button></header><div className="dispatch-receipts">{dispatches.map((dispatch) => <div key={dispatch.command_id} className={`dispatch-receipt is-${dispatch.state}`}><strong>{dispatch.task_id} · #{dispatch.attempt}</strong><span>{dispatch.state === "tmux_written" ? "已写入 tmux" : dispatch.state === "pending" ? "等待投递" : "投递不确定，需人工确认"}</span>{dispatch.last_error && <small>{dispatch.last_error}</small>}</div>)}{!dispatches.length && <small>尚未生成 tmux 投递记录。</small>}</div>{worktrees.length > 0 && <div className="worktree-ledger"><strong>隔离工作目录</strong>{worktrees.map((worktree) => <div key={`${worktree.task_id}-${worktree.attempt}`}><span>{worktree.task_id} · #{worktree.attempt}</span><code>{worktree.branch}</code><small>{worktree.state === "active" ? "独立执行中" : "已释放"}</small></div>)}</div>}<ol className="event-timeline">{events.slice().reverse().map((item) => <li key={item.event_id}><time>{new Date(item.occurred_at).toLocaleTimeString()}</time><strong>{labelEvent(item.event_type)}</strong><span>{item.aggregate_id}</span></li>)}{!events.length && <li>尚无事件；开始 TeamRun 后会显示可核验的协作过程。</li>}</ol></section>
+      <section className="teamrun-audit" aria-label="协作事件审计"><header><div><span>EVENT AUDIT / 可审计协作过程</span><h3>运行事件与 tmux 投递回执</h3></div><button className="secondary-action" onClick={() => void refresh()}>刷新</button></header><div className="dispatch-receipts">{dispatches.map((dispatch) => <div key={dispatch.command_id} className={`dispatch-receipt is-${dispatch.state}`}><strong>{dispatch.task_id} · #{dispatch.attempt}</strong><span>{dispatch.state === "tmux_written" ? "已写入 tmux" : dispatch.state === "pending" ? "等待投递" : "投递不确定，需人工确认"}</span>{dispatch.last_error && <small>{dispatch.last_error}</small>}</div>)}{!dispatches.length && <small>尚未生成 tmux 投递记录。</small>}</div>{worktrees.length > 0 && <div className="worktree-ledger"><strong>隔离工作目录</strong>{worktrees.map((worktree) => <div key={`${worktree.task_id}-${worktree.attempt}`}><span>{worktree.task_id} · #{worktree.attempt}</span><code>{worktree.branch}</code><small>{worktree.state === "active" ? "独立执行中" : "已释放"}</small>{snapshot.tasks.find((task) => task.task_id === worktree.task_id)?.state === "accepted" && worktree.state === "active" && <button className="secondary-action" disabled={busy} onClick={() => void merge(worktree)}>合并已验收成果</button>}</div>)}</div>}<ol className="event-timeline">{events.slice().reverse().map((item) => <li key={item.event_id}><time>{new Date(item.occurred_at).toLocaleTimeString()}</time><strong>{labelEvent(item.event_type)}</strong><span>{item.aggregate_id}</span></li>)}{!events.length && <li>尚无事件；开始 TeamRun 后会显示可核验的协作过程。</li>}</ol></section>
       <div className="run-actions"><button className="secondary-action" onClick={() => snapshot && void commandTeamRun(snapshot.run.run_id, "pause", csrfToken).then(setSnapshot)}>暂停</button><button className="secondary-action" onClick={() => snapshot && void commandTeamRun(snapshot.run.run_id, "resume", csrfToken).then(setSnapshot)}>继续</button></div>
     </div>}
   </section>;

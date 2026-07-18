@@ -353,3 +353,11 @@ export async function getDispatchReceipts(runId: string): Promise<DispatchReceip
 export async function getTaskWorktrees(runId: string): Promise<TaskWorktree[]> {
   return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/worktrees`, { credentials: "same-origin" }));
 }
+
+export async function mergeTaskWorktree(runId: string, taskId: string, attempt: number, csrfToken: string) {
+  return writeJson<{ merged: boolean; branch: string }>(
+    `/api/team-runs/${encodeURIComponent(runId)}/worktrees/${encodeURIComponent(taskId)}/${attempt}/merge`,
+    csrfToken,
+    { idempotency_key: `merge-${taskId}-${attempt}-${Date.now()}` },
+  );
+}
