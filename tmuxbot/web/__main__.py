@@ -90,15 +90,17 @@ def build_app():
             settings, repository, S.bindings
         )
         options["runtime_paths"] = paths
+        worktree_manager = GitWorktreeManager(paths.data_dir / "worktrees")
         scheduler = TeamRunScheduler(
             repository,
             TmuxManagedSender(repository),
             workspace_factory=TaskWorkspaceFactory(
-                repository, GitWorktreeManager(paths.data_dir / "worktrees")
+                repository, worktree_manager
             ),
         )
         scheduler.reconcile()
         options["teamrun_scheduler"] = scheduler
+        options["worktree_manager"] = worktree_manager
     app = create_app(
         settings,
         repository,

@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from contextlib import suppress
@@ -37,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.control_plane.models import ManagedSession, ProjectRecord, ProviderProfile
+from tmuxbot.control_plane.models import ManagedSession, ProjectRecord, ProviderProfile, RunEvent
 from tmuxbot.control_plane.tmux_inventory import (
     TmuxInventory,
     TmuxInventoryError,
@@ -51,8 +52,9 @@ from tmuxbot.providers.adapters import (
 )
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
-from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask
+from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask, TeamTaskState
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
+from tmuxbot.teamrun.worktree import GitWorktreeManager, TaskWorktree, WorktreeError
 from tmuxbot.web.auth import AuthError, AuthenticatedSession, AuthService
 from tmuxbot.web.schemas import (
     ManagedSessionAdoptRequest,
@@ -99,6 +101,7 @@ def create_app(
     terminal_service: TerminalService | None = None,
     runtime_paths: RuntimePaths | None = None,
     teamrun_scheduler: TeamRunScheduler | None = None,
+    worktree_manager: GitWorktreeManager | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="tmuxbot control plane",
@@ -118,6 +121,7 @@ def create_app(
     app.state.terminal_service = terminal_service
     app.state.runtime_paths = runtime_paths
     app.state.teamrun_scheduler = teamrun_scheduler
+    app.state.worktree_manager = worktree_manager
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
     if isinstance(terminal_service, TerminalService):
@@ -1089,6 +1093,12 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    def worktrees() -> GitWorktreeManager:
+        manager = app.state.worktree_manager
+        if not isinstance(manager, GitWorktreeManager):
+            raise HTTPException(status_code=503, detail="worktree manager unavailable")
+        return manager
+
     @app.post("/api/team-runs", status_code=status.HTTP_201_CREATED)
     def create_team_run(
         body: CreateTeamRunRequest,
@@ -1232,6 +1242,44 @@ def create_app(
             }
             for worktree in scheduler_service().repository.list_task_worktrees(run_id)
         ]
+
+    @app.post("/api/team-runs/{run_id}/worktrees/{task_id}/{attempt}/merge")
+    def merge_task_worktree(
+        run_id: str,
+        task_id: str,
+        attempt: int,
+        body: IdempotentCommandRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        task = scheduler_call(lambda: scheduler_service().repository.get_team_task(run_id, task_id))
+        if task.state is not TeamTaskState.ACCEPTED:
+            raise HTTPException(status_code=409, detail="only an accepted task may be merged")
+        record = next(
+            (item for item in scheduler_service().repository.list_task_worktrees(run_id)
+             if item.task_id == task_id and item.attempt == attempt),
+            None,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="worktree not found")
+        managed = scheduler_service().repository.get_managed_session(record.managed_session_id)
+        project = scheduler_service().repository.get_project(managed.project_id) if managed is not None else None
+        if project is None:
+            raise HTTPException(status_code=409, detail="worktree project is unavailable")
+        try:
+            worktrees().merge_into_repository(
+                TaskWorktree(run_id, task_id, attempt, Path(project.root_path), Path(record.path), record.branch)
+            )
+        except WorktreeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        scheduler_service().repository.append_event(
+            RunEvent(
+                event_id=f"teamrun:{run_id}:worktree:{task_id}:{attempt}:merge:{body.idempotency_key}",
+                event_type="teamtask.worktree_merged", aggregate_type="team_task", aggregate_id=task_id,
+                payload={"run_id": run_id, "attempt": attempt, "branch": record.branch},
+                occurred_at=datetime.now(timezone.utc),
+            )
+        )
+        return {"merged": True, "branch": record.branch}
 
     @app.post("/api/team-runs/{run_id}/start")
     def start_team_run(

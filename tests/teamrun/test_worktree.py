@@ -45,3 +45,19 @@ def test_task_worktree_rejects_non_git_project_and_can_be_removed(tmp_path):
     manager.remove(created)
 
     assert not created.path.exists()
+
+
+def test_task_worktree_merges_only_when_primary_repository_is_clean(tmp_path):
+    root = repository(tmp_path)
+    manager = GitWorktreeManager(tmp_path / "runtime-worktrees")
+    created = manager.create(project_root=root, run_id="run", task_id="task", attempt=1)
+    (created.path / "feature.txt").write_text("isolated\n", encoding="utf-8")
+    git(created.path, "add", "feature.txt")
+    git(created.path, "commit", "-qm", "feature")
+
+    manager.merge_into_repository(created)
+
+    assert (root / "feature.txt").read_text(encoding="utf-8") == "isolated\n"
+    (root / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(WorktreeError, match="uncommitted"):
+        manager.merge_into_repository(created)

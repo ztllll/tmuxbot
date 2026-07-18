@@ -55,6 +55,16 @@ class GitWorktreeManager:
         if result.returncode != 0:
             raise WorktreeError(_git_error(result))
 
+    def merge_into_repository(self, worktree: TaskWorktree) -> None:
+        status = self._git(worktree.repository_root, "status", "--porcelain")
+        if status.returncode != 0:
+            raise WorktreeError(_git_error(status))
+        if status.stdout.strip():
+            raise WorktreeError("repository has uncommitted changes; merge is not safe")
+        merged = self._git(worktree.repository_root, "merge", "--no-ff", "--no-edit", worktree.branch)
+        if merged.returncode != 0:
+            raise WorktreeError(_git_error(merged))
+
     def _existing_worktree(self, path: Path, repository_root: Path) -> TaskWorktree | None:
         if not (path / ".git").exists():
             return None
