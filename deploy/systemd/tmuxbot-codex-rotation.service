@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh tmuxbot Codex Feishu WebSocket bridge
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user restart tmuxbot-codex.service

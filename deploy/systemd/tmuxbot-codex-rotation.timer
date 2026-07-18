@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh tmuxbot Codex Feishu bridge every six hours
+
+[Timer]
+OnBootSec=30min
+OnUnitInactiveSec=6h
+Persistent=true
+Unit=tmuxbot-codex-rotation.service
+
+[Install]
+WantedBy=timers.target
