@@ -31,6 +31,7 @@ from tmuxbot.teamrun.domain import (
     TeamRunState,
     TeamTask,
     TeamTaskState,
+    TaskWorktreeRecord,
     WriteLease,
     validate_task_graph,
 )
@@ -428,6 +429,36 @@ class ControlPlaneRepository:
         with self._connection() as db:
             rows = db.execute(query, params).fetchall()
         return [_dispatch_command_from_row(row) for row in rows]
+
+    def create_task_worktree(self, record: TaskWorktreeRecord) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "INSERT INTO task_worktrees(run_id, task_id, attempt, path, branch, "
+                "managed_session_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(run_id, task_id, attempt) DO NOTHING",
+                (
+                    record.run_id, record.task_id, record.attempt, record.path, record.branch,
+                    record.managed_session_id, record.state, record.created_at.isoformat(),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def list_task_worktrees(self, run_id: str) -> list[TaskWorktreeRecord]:
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT * FROM task_worktrees WHERE run_id = ? ORDER BY created_at, task_id, attempt",
+                (run_id,),
+            ).fetchall()
+        return [_task_worktree_from_row(row) for row in rows]
+
+    def release_task_worktree(self, run_id: str, task_id: str, attempt: int, *, now: datetime) -> bool:
+        with self._connection() as db:
+            cursor = db.execute(
+                "UPDATE task_worktrees SET state = 'released', released_at = ? WHERE run_id = ? "
+                "AND task_id = ? AND attempt = ? AND state = 'active'",
+                (now.isoformat(), run_id, task_id, attempt),
+            )
+            return cursor.rowcount == 1
 
     def mark_dispatch_tmux_written(self, command_id: str, *, now: datetime) -> DispatchCommand:
         with self._connection() as db:
@@ -1474,6 +1505,15 @@ def _dispatch_command_from_row(row: sqlite3.Row) -> DispatchCommand:
             if row["tmux_written_at"] else None
         ),
         last_error=row["last_error"],
+    )
+
+
+def _task_worktree_from_row(row: sqlite3.Row) -> TaskWorktreeRecord:
+    return TaskWorktreeRecord(
+        run_id=row["run_id"], task_id=row["task_id"], attempt=row["attempt"],
+        path=row["path"], branch=row["branch"], managed_session_id=row["managed_session_id"],
+        state=row["state"], created_at=datetime.fromisoformat(row["created_at"]),
+        released_at=datetime.fromisoformat(row["released_at"]) if row["released_at"] else None,
     )
 
 

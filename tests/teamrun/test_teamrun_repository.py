@@ -91,6 +91,7 @@ def test_migration_adds_teamrun_tables_and_partial_write_lease_index(tmp_path):
         "artifacts",
         "write_leases",
         "dispatch_commands",
+        "task_worktrees",
     } <= tables
     assert "write_leases_one_active_per_run" in indexes
 

@@ -184,4 +184,24 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON dispatch_commands(run_id, state, created_at);
         """,
     ),
+    (
+        5,
+        """
+        CREATE TABLE task_worktrees (
+            run_id TEXT NOT NULL REFERENCES team_runs(run_id) ON DELETE CASCADE,
+            task_id TEXT NOT NULL,
+            attempt INTEGER NOT NULL CHECK(attempt >= 1),
+            path TEXT NOT NULL UNIQUE,
+            branch TEXT NOT NULL UNIQUE,
+            managed_session_id TEXT NOT NULL REFERENCES managed_sessions(id) ON DELETE RESTRICT,
+            state TEXT NOT NULL CHECK(state IN ('active', 'released')),
+            created_at TEXT NOT NULL,
+            released_at TEXT,
+            PRIMARY KEY(run_id, task_id, attempt),
+            FOREIGN KEY(run_id, task_id) REFERENCES team_tasks(run_id, task_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX task_worktrees_run_idx ON task_worktrees(run_id, state, created_at);
+        """,
+    ),
 )

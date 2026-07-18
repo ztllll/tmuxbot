@@ -128,6 +128,19 @@ class DispatchCommand:
     last_error: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class TaskWorktreeRecord:
+    run_id: str
+    task_id: str
+    attempt: int
+    path: str
+    branch: str
+    managed_session_id: str
+    state: str
+    created_at: datetime
+    released_at: datetime | None
+
+
 def validate_task_graph(tasks: Iterable[TeamTask]) -> None:
     task_list = list(tasks)
     by_id = {task.task_id: task for task in task_list}

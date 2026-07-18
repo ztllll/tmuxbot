@@ -13,6 +13,7 @@ from tmuxbot.control_plane.models import ManagedSession, RunEvent
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.providers.adapters import get_provider_adapter
 from tmuxbot.teamrun.domain import TeamAgent, TeamTask
+from tmuxbot.teamrun.domain import TaskWorktreeRecord
 from tmuxbot.teamrun.worktree import GitWorktreeManager, TaskWorktree, WorktreeError
 
 
@@ -63,6 +64,14 @@ class TaskWorkspaceFactory:
             status="worktree", created_at=int(time.time()),
         )
         self.repository.create_managed_session(managed)
+        self.repository.create_task_worktree(
+            TaskWorktreeRecord(
+                run_id=run_id, task_id=task.task_id, attempt=attempt,
+                path=str(worktree.path), branch=worktree.branch,
+                managed_session_id=managed.id, state="active", created_at=task.updated_at,
+                released_at=None,
+            )
+        )
         self.repository.append_event(
             RunEvent(
                 event_id=f"teamrun:{run_id}:worktree:{task.task_id}:{attempt}",

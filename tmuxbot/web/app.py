@@ -1213,6 +1213,26 @@ def create_app(
             for command in scheduler_service().repository.list_dispatch_commands(run_id)
         ]
 
+    @app.get("/api/team-runs/{run_id}/worktrees")
+    def get_team_run_worktrees(
+        run_id: str,
+        _: AuthenticatedSession = Depends(current_session),
+    ) -> list[dict[str, object]]:
+        scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
+        return [
+            {
+                "task_id": worktree.task_id,
+                "attempt": worktree.attempt,
+                "path": worktree.path,
+                "branch": worktree.branch,
+                "managed_session_id": worktree.managed_session_id,
+                "state": worktree.state,
+                "created_at": worktree.created_at.isoformat(),
+                "released_at": worktree.released_at.isoformat() if worktree.released_at else None,
+            }
+            for worktree in scheduler_service().repository.list_task_worktrees(run_id)
+        ]
+
     @app.post("/api/team-runs/{run_id}/start")
     def start_team_run(
         run_id: str,

@@ -254,3 +254,4 @@ def test_teamrun_event_timeline_and_dispatch_receipts_are_read_only_projections(
     assert events.status_code == 200
     assert any(item["event_type"] == "teamtask.working" for item in events.json())
     assert dispatches.json()[0]["state"] == "tmux_written"
+    assert client.get("/api/team-runs/run-api/worktrees").json() == []
