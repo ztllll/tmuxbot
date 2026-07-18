@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 
 import {
   adoptManagedSession, createManagedSession, createProject, deleteProject, configureChannel,
-  commandTeamRun, createTeamRun, inspectProject, probeProvider, releaseManagedSession, scanProviders, updateProject,
+  inspectProject, launchTeamRun, probeProvider, releaseManagedSession, scanProviders, updateProject,
   type ManagedSession, type Project, type ProviderProfile, type TeamRunSummary, type TmuxSession,
 } from "../../app/api";
 import TerminalWorkspace, { type WorkspaceTerminal } from "../terminal/TerminalWorkspace";
@@ -58,21 +58,31 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
     if (!projectPath || currentRecipe.roles.some((role) => !(roleProviders[role.id] || providerId))) return;
     setBusy("launch");
     try {
+      const schedulerRoles = currentRecipe.roles.filter((role) => role.schedulerRole);
+      if (runGoal.trim() && schedulerRoles.length === 3) {
+        const projectLabel = projectName.trim() || basename(projectPath);
+        await launchTeamRun({
+          projectName: projectLabel, rootPath: projectPath, runId: `run-${Date.now()}`, goal: runGoal.trim(),
+          roles: schedulerRoles.map((role) => ({
+            role: role.schedulerRole!, providerId: roleProviders[role.id] || providerId,
+            name: `${projectLabel} · ${role.suffix}`,
+          })),
+        }, csrfToken);
+        setNotice("已原子创建三位职责 CLI 并启动 TeamRun：统筹先规划，审查确认后才进入隔离实施。可在下方协作台查看每一步。 ");
+        setProjectName(""); setProjectPath(""); setRunGoal(""); setRoleProviders({}); setStep(1); await onRefresh();
+        return;
+      }
+      if (runGoal.trim() && schedulerRoles.length !== 3) {
+        setNotice("“界面功能”配方含独立设计者，暂不支持一键自动交接；请使用标准研发或调度优先配方启动 TeamRun。");
+        return;
+      }
       const project = await createProject(projectName.trim() || basename(projectPath), projectPath, csrfToken);
       const created = new Map<string, ManagedSession>();
       for (const role of currentRecipe.roles) {
         const selected = roleProviders[role.id] || providerId;
         created.set(role.id, await createManagedSession(`${project.name} · ${role.suffix}`, project.id, selected, csrfToken));
       }
-      const coordinator = created.get("coordinator"); const implementer = created.get("implementer"); const reviewer = created.get("reviewer");
-      if (runGoal.trim() && coordinator && implementer && reviewer) {
-        const runId = `run-${Date.now()}`;
-        const started = await createTeamRun({ runId, goal: runGoal.trim(), coordinator: coordinator.id, implementer: implementer.id, reviewer: reviewer.id, tasks: [{ taskId: "implementation", title: "实现与验证", goal: runGoal.trim(), role: "implementer", dependencies: [], requiresWrite: true }] }, csrfToken);
-        await commandTeamRun(started.run.run_id, "start", csrfToken);
-        setNotice(`已创建 ${currentRecipe.roles.length} 个职责会话，并启动 TeamRun。模型不写死：在终端点“打开原生 /model”选择。`);
-      } else {
-        setNotice(`已在 tmux 创建 ${currentRecipe.roles.length} 个职责会话。模型不写死：在终端点“打开原生 /model”选择。`);
-      }
+      setNotice(`已在 tmux 创建 ${created.size} 个职责会话。模型不写死：在终端点“打开原生模型菜单”选择。`);
       setProjectName(""); setProjectPath(""); setRunGoal(""); setRoleProviders({}); setStep(1); await onRefresh();
     } catch { setNotice("创建未完整完成：已创建的 tmux 会话会保留。请在下方查看后继续创建或释放记录；请确认路径与 CLI。 "); } finally { setBusy(null); }
   }

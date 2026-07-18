@@ -68,6 +68,23 @@ class CreateTeamRunRequest(BaseModel):
     tasks: list[TeamTaskRequest] = Field(min_length=1, max_length=256)
 
 
+class TeamRunLaunchRoleRequest(BaseModel):
+    role: Literal["coordinator", "implementer", "reviewer"]
+    provider_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class TeamRunLaunchRequest(BaseModel):
+    """Server-owned one-click launch request for the deterministic three-role runtime."""
+
+    project_name: str = Field(min_length=1, max_length=120)
+    root_path: str = Field(min_length=1, max_length=4096)
+    run_id: str = Field(min_length=1, max_length=128)
+    goal: str = Field(min_length=1, max_length=4096)
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    roles: list[TeamRunLaunchRoleRequest] = Field(min_length=3, max_length=3)
+
+
 class IdempotentCommandRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=256)
 

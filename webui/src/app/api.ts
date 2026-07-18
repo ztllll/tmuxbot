@@ -317,6 +317,25 @@ export async function createTeamRun(
   });
 }
 
+export async function launchTeamRun(
+  input: {
+    projectName: string; rootPath: string; runId: string; goal: string;
+    roles: Array<{ role: "coordinator" | "implementer" | "reviewer"; providerId: string; name: string }>;
+  },
+  csrfToken: string,
+): Promise<TeamRunSnapshot> {
+  return writeJson("/api/team-runs/launch", csrfToken, {
+    project_name: input.projectName,
+    root_path: input.rootPath,
+    run_id: input.runId,
+    goal: input.goal,
+    idempotency_key: `launch-${input.runId}`,
+    roles: input.roles.map((role) => ({
+      role: role.role, provider_id: role.providerId, name: role.name,
+    })),
+  });
+}
+
 export async function commandTeamRun(runId: string, command: "start" | "pause" | "resume", csrfToken: string) {
   return writeJson<TeamRunSnapshot>(`/api/team-runs/${encodeURIComponent(runId)}/${command}`, csrfToken, { idempotency_key: `${command}-${Date.now()}` });
 }

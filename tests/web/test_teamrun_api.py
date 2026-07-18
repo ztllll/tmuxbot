@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -66,7 +67,7 @@ def authenticate(client: TestClient) -> str:
         headers={"X-CSRF-Token": bootstrap, "X-Setup-Token": SETUP_TOKEN},
         json={"password": PASSWORD},
     )
-    assert response.status_code == 201
+    assert response.status_code == 201, response.text
     return response.json()["csrf_token"]
 
 
@@ -105,6 +106,99 @@ def test_teamrun_rest_requires_auth_and_csrf(tmp_path):
     assert client.post(
         "/api/team-runs", json=run_payload(), headers={"X-CSRF-Token": csrf}
     ).status_code == 201
+
+
+def test_one_click_launch_creates_roles_and_starts_run_atomically(tmp_path, monkeypatch):
+    client, repository, sender = make_client(tmp_path)
+    csrf = authenticate(client)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(project_root)], check=True)
+    provider = _register_provider(repository, tmp_path / "codex")
+    monkeypatch.setattr("tmuxbot.web.app.shutil.which", lambda name: "/usr/bin/tmux")
+    real_run = subprocess.run
+
+    def run(argv, **kwargs):
+        if argv[0] == "git":
+            return real_run(argv, **kwargs)
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("tmuxbot.web.app.subprocess.run", run)
+    sender.is_registered = lambda _session_id: True
+
+    response = client.post(
+        "/api/team-runs/launch",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "project_name": "一键协作", "root_path": str(project_root),
+            "run_id": "run-launch", "goal": "完成一键启动", "idempotency_key": "launch-1",
+            "roles": [
+                {"role": "coordinator", "provider_id": provider.id, "name": "统筹"},
+                {"role": "implementer", "provider_id": provider.id, "name": "实施"},
+                {"role": "reviewer", "provider_id": provider.id, "name": "审查"},
+            ],
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["run"]["state"] == "running"
+    assert len(repository.list_managed_sessions()) == 3
+    assert len(sender.calls) == 1
+
+
+def test_one_click_launch_compensates_created_resources_when_tmux_fails(tmp_path, monkeypatch):
+    client, repository, _ = make_client(tmp_path)
+    csrf = authenticate(client)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    subprocess.run(["git", "init", "-q", str(project_root)], check=True)
+    provider = _register_provider(repository, tmp_path / "codex")
+    monkeypatch.setattr("tmuxbot.web.app.shutil.which", lambda name: "/usr/bin/tmux")
+    real_run = subprocess.run
+    tmux_calls = 0
+
+    def run(argv, **kwargs):
+        nonlocal tmux_calls
+        if argv[0] == "git":
+            return real_run(argv, **kwargs)
+        if "new-session" in argv:
+            tmux_calls += 1
+            code = 1 if tmux_calls == 2 else 0
+            return type("Result", (), {"returncode": code, "stdout": "", "stderr": "failed"})()
+        return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr("tmuxbot.web.app.subprocess.run", run)
+    response = client.post(
+        "/api/team-runs/launch",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "project_name": "失败回滚", "root_path": str(project_root),
+            "run_id": "run-fail", "goal": "不应留下资源", "idempotency_key": "launch-fail",
+            "roles": [
+                {"role": "coordinator", "provider_id": provider.id, "name": "统筹"},
+                {"role": "implementer", "provider_id": provider.id, "name": "实施"},
+                {"role": "reviewer", "provider_id": provider.id, "name": "审查"},
+            ],
+        },
+    )
+
+    assert response.status_code == 503
+    assert repository.list_projects() == []
+    assert repository.list_managed_sessions() == []
+
+
+def _register_provider(repository, executable):
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    stat = executable.stat()
+    from tmuxbot.control_plane.models import ProviderProfile
+
+    provider = ProviderProfile(
+        "provider-codex", "codex", str(executable), "test", stat.st_dev, stat.st_ino,
+        stat.st_mtime_ns, 1,
+    )
+    repository.upsert_provider_profile(provider)
+    return provider
 
 
 def test_teamrun_list_survives_a_new_web_request(tmp_path):

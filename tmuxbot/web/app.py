@@ -71,6 +71,7 @@ from tmuxbot.web.schemas import (
     IdempotentCommandRequest,
     ReviewTeamTaskRequest,
     StopTeamRunRequest,
+    TeamRunLaunchRequest,
 )
 from tmuxbot.web.setup import SetupGrant
 from tmuxbot.web.settings import WebSettings
@@ -87,6 +88,26 @@ COOKIE_NAME = "tmuxbot_session"
 BOOTSTRAP_COOKIE_NAME = "tmuxbot_bootstrap_csrf"
 BOOTSTRAP_COOKIE_MAX_AGE = 300
 STATIC_DIR = Path(__file__).with_name("static")
+
+
+def _rollback_teamrun_launch(
+    repository: ControlPlaneRepository,
+    project: ProjectRecord | None,
+    sessions: list[ManagedSession],
+) -> None:
+    """Best-effort compensation for a launch that failed before it became runnable."""
+    tmux_binary = shutil.which("tmux")
+    for session in reversed(sessions):
+        if tmux_binary is not None:
+            with suppress(OSError, subprocess.TimeoutExpired):
+                subprocess.run(
+                    [tmux_binary, "kill-session", "-t", session.tmux_session],
+                    capture_output=True, text=True, timeout=5, check=False,
+                )
+        repository.delete_managed_session(session.id)
+    if project is not None:
+        with suppress(Exception):
+            repository.delete_project(project.id)
 
 
 def create_app(
@@ -1117,6 +1138,91 @@ def create_app(
             )
         )
         return _serialize_teamrun(snapshot)
+
+    @app.post("/api/team-runs/launch", status_code=status.HTTP_201_CREATED)
+    def launch_team_run(
+        body: TeamRunLaunchRequest,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        """Create a project, three real tmux CLIs, and start one deterministic run.
+
+        This deliberately keeps the browser out of the orchestration transaction.  It
+        validates the complete role set first and compensates any newly-created tmux
+        resources if a later provisioning step fails.
+        """
+        roles = {AgentRole(item.role): item for item in body.roles}
+        required = {AgentRole.COORDINATOR, AgentRole.IMPLEMENTER, AgentRole.REVIEWER}
+        if set(roles) != required or len(roles) != len(body.roles):
+            raise HTTPException(
+                status_code=409,
+                detail="launch requires exactly one coordinator, implementer, and reviewer",
+            )
+        try:
+            root = Path(body.root_path).expanduser().resolve(strict=True)
+            git = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(status_code=400, detail="project path is unavailable") from exc
+        if not root.is_dir() or git.returncode != 0 or git.stdout.strip() != "true":
+            raise HTTPException(
+                status_code=409,
+                detail="one-click TeamRun requires an existing Git worktree",
+            )
+
+        created_project: ProjectRecord | None = None
+        created_sessions: list[ManagedSession] = []
+        role_sessions: dict[AgentRole, ManagedSession] = {}
+        try:
+            project_payload_value = create_project(
+                ProjectCreateRequest(name=body.project_name, root_path=str(root)), None
+            )
+            created_project = repository.get_project(str(project_payload_value["id"]))
+            assert created_project is not None
+            for role in (AgentRole.COORDINATOR, AgentRole.IMPLEMENTER, AgentRole.REVIEWER):
+                request = roles[role]
+                created_payload = create_managed_session(
+                    ManagedSessionCreateRequest(
+                        project_id=created_project.id,
+                        provider_id=request.provider_id,
+                        name=request.name,
+                    ),
+                    None,
+                )
+                managed = repository.get_managed_session(str(created_payload["id"]))
+                assert managed is not None
+                created_sessions.append(managed)
+                role_sessions[role] = managed
+            snapshot = scheduler_service().create_deterministic_run(
+                run_id=body.run_id,
+                goal=body.goal,
+                agents={
+                    role: role_sessions[role].id
+                    for role in required
+                },
+                tasks=[
+                    {
+                        "task_id": "plan", "title": "制定实施计划", "goal": body.goal,
+                        "role": "coordinator", "dependencies": [], "requires_write": False,
+                    },
+                    {
+                        "task_id": "implementation", "title": "实施与验证", "goal": body.goal,
+                        "role": "implementer", "dependencies": ["plan"], "requires_write": True,
+                    },
+                ],
+                idempotency_key=body.idempotency_key,
+            )
+            snapshot = scheduler_service().start(
+                snapshot.run.run_id, idempotency_key=f"{body.idempotency_key}:start"
+            )
+            return _serialize_teamrun(snapshot)
+        except HTTPException:
+            _rollback_teamrun_launch(repository, created_project, created_sessions)
+            raise
+        except (ValueError, KeyError, StopIteration) as exc:
+            _rollback_teamrun_launch(repository, created_project, created_sessions)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/team-runs")
     def list_team_runs(
