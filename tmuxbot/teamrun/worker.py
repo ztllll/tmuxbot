@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -12,6 +13,9 @@ from tmuxbot.teamrun.protocol import ArtifactReference, WorkerEvent, WorkerEvent
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 
 
+log = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True, slots=True)
 class WorkerReporter:
     """Validate worker reports before applying the permitted TeamRun transition."""
@@ -20,8 +24,13 @@ class WorkerReporter:
     scheduler: TeamRunScheduler
 
     def report(self, event: WorkerEvent) -> TeamTask | None:
+        log.info(
+            "teamrun worker report kind=%s run=%s task=%s attempt=%d actor=%s",
+            event.kind.value, event.run_id, event.task_id, event.attempt, event.actor_agent_id,
+        )
         task = self._reviewing_task(event) if event.kind is WorkerEventKind.REVIEW_COMPLETED else self._assigned_task(event)
         if not self._append(event):
+            log.info("teamrun worker duplicate event=%s", event.event_id)
             return task
         if event.kind is WorkerEventKind.TASK_CLAIMED:
             return task

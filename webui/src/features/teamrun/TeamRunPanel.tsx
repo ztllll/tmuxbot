@@ -83,6 +83,11 @@ export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
     setSnapshot(next); setEvents(nextEvents); setDispatches(nextDispatches);
   }
   useEffect(() => { if (snapshot) void refresh().catch(() => undefined); }, [snapshot?.run.run_id]);
+  useEffect(() => {
+    if (!snapshot || !["draft", "running", "paused", "operator_required"].includes(snapshot.run.state)) return;
+    const timer = window.setInterval(() => void refresh().catch(() => undefined), 5000);
+    return () => window.clearInterval(timer);
+  }, [snapshot?.run.run_id, snapshot?.run.state]);
   async function complete(taskId: string, agentId: string | null | undefined) {
     if (!snapshot) return;
     if (!agentId) { setNotice("任务尚未分配给 CLI，无法登记证据。"); return; }

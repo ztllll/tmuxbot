@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,9 @@ from tmuxbot.teamrun.domain import (
     TeamTaskState,
 )
 from tmuxbot.teamrun.protocol import ArtifactReference, ReviewRequest
+
+
+log = logging.getLogger(__name__)
 
 
 class TmuxTaskSender(Protocol):
@@ -94,6 +98,7 @@ class TeamRunScheduler:
             task_records,
             event_id=f"teamrun:{run_id}:create:{idempotency_key}",
         )
+        log.info("teamrun created run=%s tasks=%d", run_id, len(task_records))
         return self.repository.get_team_run(run_id)
 
     def start(self, run_id: str, *, idempotency_key: str) -> TeamRunSnapshot:
@@ -105,6 +110,7 @@ class TeamRunScheduler:
             now=self.clock(),
         )
         self._dispatch_ready(run_id)
+        log.info("teamrun started run=%s", run_id)
         return self.repository.get_team_run(run_id)
 
     def pause(self, run_id: str, *, idempotency_key: str) -> TeamRunSnapshot:
@@ -255,10 +261,18 @@ class TeamRunScheduler:
     def _deliver_pending_dispatches(self, run_id: str) -> None:
         for command in self.repository.list_dispatch_commands(run_id, states={"pending"}):
             try:
+                log.info(
+                    "teamrun dispatch sending command=%s run=%s task=%s attempt=%d",
+                    command.command_id, command.run_id, command.task_id, command.attempt,
+                )
                 self.sender.send(command.managed_session_id, dict(command.envelope))
             except Exception as exc:
                 self.repository.mark_dispatch_uncertain(
                     command.command_id, error=str(exc), now=self.clock()
+                )
+                log.warning(
+                    "teamrun dispatch uncertain command=%s run=%s task=%s error=%s",
+                    command.command_id, command.run_id, command.task_id, type(exc).__name__,
                 )
                 continue
             self.repository.mark_dispatch_tmux_written(command.command_id, now=self.clock())
@@ -273,6 +287,10 @@ class TeamRunScheduler:
                 event_id=f"teamrun:{run_id}:working:{command.task_id}:{command.attempt}",
                 now=self.clock(),
             )
+            log.info(
+                "teamrun dispatch tmux_written command=%s run=%s task=%s attempt=%d",
+                command.command_id, command.run_id, command.task_id, command.attempt,
+            )
 
     def _recover_written_dispatches(self, run_id: str) -> None:
         for command in self.repository.list_dispatch_commands(run_id, states={"tmux_written"}):
@@ -282,4 +300,8 @@ class TeamRunScheduler:
                 command.task_id,
                 event_id=f"teamrun:{run_id}:working:{command.task_id}:{command.attempt}",
                 now=self.clock(),
+            )
+            log.info(
+                "teamrun dispatch recovered command=%s run=%s task=%s",
+                command.command_id, command.run_id, command.task_id,
             )

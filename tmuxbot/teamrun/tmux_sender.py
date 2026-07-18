@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shlex
 from collections.abc import Awaitable, Callable
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.providers.adapters import get_provider_adapter
 from tmuxbot.tmux import tmux_send_text
+
+
+log = logging.getLogger(__name__)
 
 
 class TmuxManagedSender:
@@ -32,6 +36,12 @@ class TmuxManagedSender:
         provider = self.repository.get_provider_profile(managed.provider_id)
         adapter = get_provider_adapter(provider.binary_name) if provider is not None else None
         prompt = _render_worker_prompt(envelope, payload, adapter.teamrun_instruction if adapter else None)
+        log.info(
+            "teamrun tmux inject target=%s provider=%s kind=%s run=%s task=%s",
+            target,
+            provider.binary_name if provider is not None else "unknown",
+            envelope.get("kind", "unknown"), envelope.get("run_id", "-"), envelope.get("task_id", "-"),
+        )
         asyncio.run(self.send_text(target, prompt))
 
 
