@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 from tmuxbot.control_plane.repository import ControlPlaneRepository
+from tmuxbot.control_plane.models import ManagedSession, ProjectRecord, ProviderProfile
 from tmuxbot.teamrun.domain import (
     AgentRole,
     TeamAgent,
@@ -11,6 +12,7 @@ from tmuxbot.teamrun.domain import (
     TeamRunState,
     TeamTask,
     TeamTaskState,
+    TaskWorktreeRecord,
 )
 
 
@@ -76,9 +78,7 @@ def test_migration_adds_teamrun_tables_and_partial_write_lease_index(tmp_path):
     ControlPlaneRepository(path).migrate()
 
     with sqlite3.connect(path) as db:
-        tables = {
-            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         indexes = {
             row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'")
         }
@@ -100,12 +100,14 @@ def test_repository_creates_and_loads_teamrun_graph_idempotently(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
 
-    assert repo.create_team_run(
-        make_run(), make_agents(), make_tasks(), event_id="request-create-1"
-    ) is True
-    assert repo.create_team_run(
-        make_run(), make_agents(), make_tasks(), event_id="request-create-1"
-    ) is False
+    assert (
+        repo.create_team_run(make_run(), make_agents(), make_tasks(), event_id="request-create-1")
+        is True
+    )
+    assert (
+        repo.create_team_run(make_run(), make_agents(), make_tasks(), event_id="request-create-1")
+        is False
+    )
 
     snapshot = repo.get_team_run("run-1")
     assert snapshot.run.goal == "实现并审查确定性调度"
@@ -126,10 +128,71 @@ def test_repository_detects_a_managed_session_used_by_an_active_run(tmp_path):
     assert repo.has_active_teamrun_for_managed_session("tmux-implementer") is True
     assert repo.has_active_teamrun_for_managed_session("other-session") is False
     repo.set_team_run_state(
-        "run-1", allowed={TeamRunState.DRAFT}, state=TeamRunState.COMPLETED,
-        event_id="complete", now=NOW,
+        "run-1",
+        allowed={TeamRunState.DRAFT},
+        state=TeamRunState.COMPLETED,
+        event_id="complete",
+        now=NOW,
     )
     assert repo.has_active_teamrun_for_managed_session("tmux-implementer") is False
+
+
+def test_repository_retains_active_isolated_worktree_session(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    repo.create_team_run(make_run(), make_agents(), make_tasks(), event_id="create")
+    root = tmp_path / "project"
+    root.mkdir()
+    executable = tmp_path / "codex"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    root_stat = root.stat()
+    executable_stat = executable.stat()
+    repo.create_project(
+        ProjectRecord(
+            "project",
+            "project",
+            str(root),
+            root_stat.st_dev,
+            root_stat.st_ino,
+            root_stat.st_mtime_ns,
+            1,
+        )
+    )
+    repo.upsert_provider_profile(
+        ProviderProfile(
+            "provider",
+            "codex",
+            str(executable),
+            "test",
+            executable_stat.st_dev,
+            executable_stat.st_ino,
+            executable_stat.st_mtime_ns,
+            1,
+        )
+    )
+    repo.create_managed_session(
+        ManagedSession(
+            "worktree-session", "project", "provider", "worktree", "worktree", 0, 0, "worktree", 1
+        )
+    )
+    repo.create_task_worktree(
+        TaskWorktreeRecord(
+            "run-1",
+            "implement",
+            1,
+            str(tmp_path / "worktree"),
+            "worktree-branch",
+            "worktree-session",
+            "active",
+            NOW,
+            None,
+        )
+    )
+
+    assert repo.has_active_teamrun_for_managed_session("worktree-session") is True
+    repo.release_task_worktree("run-1", "implement", 1, now=NOW)
+    assert repo.has_active_teamrun_for_managed_session("worktree-session") is False
 
 
 def test_repository_enforces_one_active_writer_per_run(tmp_path):
@@ -182,9 +245,10 @@ def test_task_ids_are_scoped_to_their_teamrun(tmp_path):
         )
     ]
 
-    assert repo.create_team_run(
-        second_run, second_agents, second_tasks, event_id="create-2"
-    ) is True
-    assert repo.get_team_task("run-1", "implement").goal != repo.get_team_task(
-        "run-2", "implement"
-    ).goal
+    assert (
+        repo.create_team_run(second_run, second_agents, second_tasks, event_id="create-2") is True
+    )
+    assert (
+        repo.get_team_task("run-1", "implement").goal
+        != repo.get_team_task("run-2", "implement").goal
+    )

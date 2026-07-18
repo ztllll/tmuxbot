@@ -103,9 +103,12 @@ def test_teamrun_rest_requires_auth_and_csrf(tmp_path):
     assert client.post("/api/team-runs", json=run_payload()).status_code == 401
     csrf = authenticate(client)
     assert client.post("/api/team-runs", json=run_payload()).status_code == 403
-    assert client.post(
-        "/api/team-runs", json=run_payload(), headers={"X-CSRF-Token": csrf}
-    ).status_code == 201
+    assert (
+        client.post(
+            "/api/team-runs", json=run_payload(), headers={"X-CSRF-Token": csrf}
+        ).status_code
+        == 201
+    )
 
 
 def test_one_click_launch_creates_roles_and_starts_run_atomically(tmp_path, monkeypatch):
@@ -130,8 +133,11 @@ def test_one_click_launch_creates_roles_and_starts_run_atomically(tmp_path, monk
         "/api/team-runs/launch",
         headers={"X-CSRF-Token": csrf},
         json={
-            "project_name": "一键协作", "root_path": str(project_root),
-            "run_id": "run-launch", "goal": "完成一键启动", "idempotency_key": "launch-1",
+            "project_name": "一键协作",
+            "root_path": str(project_root),
+            "run_id": "run-launch",
+            "goal": "完成一键启动",
+            "idempotency_key": "launch-1",
             "roles": [
                 {"role": "coordinator", "provider_id": provider.id, "name": "统筹"},
                 {"role": "implementer", "provider_id": provider.id, "name": "实施"},
@@ -144,6 +150,24 @@ def test_one_click_launch_creates_roles_and_starts_run_atomically(tmp_path, monk
     assert response.json()["run"]["state"] == "running"
     assert len(repository.list_managed_sessions()) == 3
     assert len(sender.calls) == 1
+    retry = client.post(
+        "/api/team-runs/launch",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "project_name": "一键协作",
+            "root_path": str(project_root),
+            "run_id": "run-launch",
+            "goal": "完成一键启动",
+            "idempotency_key": "launch-1",
+            "roles": [
+                {"role": "coordinator", "provider_id": provider.id, "name": "统筹"},
+                {"role": "implementer", "provider_id": provider.id, "name": "实施"},
+                {"role": "reviewer", "provider_id": provider.id, "name": "审查"},
+            ],
+        },
+    )
+    assert retry.status_code == 201
+    assert len(repository.list_managed_sessions()) == 3
 
 
 def test_one_click_launch_compensates_created_resources_when_tmux_fails(tmp_path, monkeypatch):
@@ -172,8 +196,11 @@ def test_one_click_launch_compensates_created_resources_when_tmux_fails(tmp_path
         "/api/team-runs/launch",
         headers={"X-CSRF-Token": csrf},
         json={
-            "project_name": "失败回滚", "root_path": str(project_root),
-            "run_id": "run-fail", "goal": "不应留下资源", "idempotency_key": "launch-fail",
+            "project_name": "失败回滚",
+            "root_path": str(project_root),
+            "run_id": "run-fail",
+            "goal": "不应留下资源",
+            "idempotency_key": "launch-fail",
             "roles": [
                 {"role": "coordinator", "provider_id": provider.id, "name": "统筹"},
                 {"role": "implementer", "provider_id": provider.id, "name": "实施"},
@@ -194,8 +221,14 @@ def _register_provider(repository, executable):
     from tmuxbot.control_plane.models import ProviderProfile
 
     provider = ProviderProfile(
-        "provider-codex", "codex", str(executable), "test", stat.st_dev, stat.st_ino,
-        stat.st_mtime_ns, 1,
+        "provider-codex",
+        "codex",
+        str(executable),
+        "test",
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mtime_ns,
+        1,
     )
     repository.upsert_provider_profile(provider)
     return provider
@@ -279,7 +312,9 @@ def test_fake_scheduler_rest_e2e_requires_independent_review(tmp_path):
     assert reviewed.status_code == 200
     assert reviewed.json()["state"] == "accepted"
     assert client.get("/api/team-runs/run-api").json()["run"]["state"] == "completed"
-    event_types = [event.event_type for event in repository.list_events(after_sequence=0, limit=100)]
+    event_types = [
+        event.event_type for event in repository.list_events(after_sequence=0, limit=100)
+    ]
     assert "teamtask.review_approved" in event_types
 
 

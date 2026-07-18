@@ -84,7 +84,7 @@ export default function ControlWorkbench({ csrfToken, providers, projects, manag
       }
       setNotice(`已在 tmux 创建 ${created.size} 个职责会话。模型不写死：在终端点“打开原生模型菜单”选择。`);
       setProjectName(""); setProjectPath(""); setRunGoal(""); setRoleProviders({}); setStep(1); await onRefresh();
-    } catch { setNotice("创建未完整完成：已创建的 tmux 会话会保留。请在下方查看后继续创建或释放记录；请确认路径与 CLI。 "); } finally { setBusy(null); }
+    } catch { setNotice("启动失败：尚未进入协作运行的资源已自动清理；若任务已写入 tmux，协作台会保留该运行供恢复和人工确认。"); } finally { setBusy(null); }
   }
 
   async function adopt(item: TmuxSession, projectId: string, provider: string) {

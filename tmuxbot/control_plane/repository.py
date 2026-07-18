@@ -184,9 +184,10 @@ class ControlPlaneRepository:
 
     def has_event(self, event_id: str) -> bool:
         with self._connection() as db:
-            return db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone() is not None
+            return (
+                db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone()
+                is not None
+            )
 
     def list_events(self, *, after_sequence: int, limit: int) -> list[RunEvent]:
         with self._connection() as db:
@@ -220,10 +221,13 @@ class ControlPlaneRepository:
             ).fetchall()
         return [
             RunEvent(
-                event_id=row["event_id"], event_type=row["event_type"],
-                aggregate_type=row["aggregate_type"], aggregate_id=row["aggregate_id"],
+                event_id=row["event_id"],
+                event_type=row["event_type"],
+                aggregate_type=row["aggregate_type"],
+                aggregate_id=row["aggregate_id"],
                 payload=json.loads(row["payload_json"]),
-                occurred_at=datetime.fromisoformat(row["occurred_at"]), sequence=row["sequence"],
+                occurred_at=datetime.fromisoformat(row["occurred_at"]),
+                sequence=row["sequence"],
             )
             for row in rows
         ]
@@ -263,8 +267,7 @@ class ControlPlaneRepository:
     def get_session(self, token_hash: str, *, now: int) -> str | None:
         with self._connection() as db:
             row = db.execute(
-                "SELECT csrf_token FROM web_sessions "
-                "WHERE token_hash = ? AND expires_at > ?",
+                "SELECT csrf_token FROM web_sessions WHERE token_hash = ? AND expires_at > ?",
                 (token_hash, now),
             ).fetchone()
         return None if row is None else str(row["csrf_token"])
@@ -288,9 +291,7 @@ class ControlPlaneRepository:
             raise ValueError("all tasks must belong to the run")
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return False
             db.execute(
                 "INSERT INTO team_runs(run_id, goal, state, max_retries, created_at, updated_at) "
@@ -347,9 +348,7 @@ class ControlPlaneRepository:
 
     def get_team_run(self, run_id: str) -> TeamRunSnapshot:
         with self._connection() as db:
-            run_row = db.execute(
-                "SELECT * FROM team_runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
+            run_row = db.execute("SELECT * FROM team_runs WHERE run_id = ?", (run_id,)).fetchone()
             if run_row is None:
                 raise KeyError(run_id)
             agent_rows = db.execute(
@@ -407,9 +406,7 @@ class ControlPlaneRepository:
             ).fetchall()
         return [_message_from_row(row) for row in rows]
 
-    def mark_mailbox_delivered(
-        self, run_id: str, idempotency_key: str, *, now: datetime
-    ) -> None:
+    def mark_mailbox_delivered(self, run_id: str, idempotency_key: str, *, now: datetime) -> None:
         with self._connection() as db:
             db.execute(
                 "UPDATE mailbox_messages SET delivered_at = COALESCE(delivered_at, ?) "
@@ -437,8 +434,14 @@ class ControlPlaneRepository:
                 "managed_session_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(run_id, task_id, attempt) DO NOTHING",
                 (
-                    record.run_id, record.task_id, record.attempt, record.path, record.branch,
-                    record.managed_session_id, record.state, record.created_at.isoformat(),
+                    record.run_id,
+                    record.task_id,
+                    record.attempt,
+                    record.path,
+                    record.branch,
+                    record.managed_session_id,
+                    record.state,
+                    record.created_at.isoformat(),
                 ),
             )
             return cursor.rowcount == 1
@@ -451,7 +454,9 @@ class ControlPlaneRepository:
             ).fetchall()
         return [_task_worktree_from_row(row) for row in rows]
 
-    def release_task_worktree(self, run_id: str, task_id: str, attempt: int, *, now: datetime) -> bool:
+    def release_task_worktree(
+        self, run_id: str, task_id: str, attempt: int, *, now: datetime
+    ) -> bool:
         with self._connection() as db:
             cursor = db.execute(
                 "UPDATE task_worktrees SET state = 'released', released_at = ? WHERE run_id = ? "
@@ -515,14 +520,10 @@ class ControlPlaneRepository:
     ) -> TeamRunState:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT state FROM team_runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
+            row = db.execute("SELECT state FROM team_runs WHERE run_id = ?", (run_id,)).fetchone()
             if row is None:
                 raise KeyError(run_id)
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return TeamRunState(row["state"])
             current = TeamRunState(row["state"])
             if current not in allowed:
@@ -755,8 +756,7 @@ class ControlPlaneRepository:
             if row["state"] != TeamTaskState.ASSIGNED.value:
                 raise ValueError("task is not assigned")
             db.execute(
-                "UPDATE team_tasks SET state = ?, updated_at = ? "
-                "WHERE run_id = ? AND task_id = ?",
+                "UPDATE team_tasks SET state = ?, updated_at = ? WHERE run_id = ? AND task_id = ?",
                 (TeamTaskState.WORKING.value, now.isoformat(), run_id, task_id),
             )
             _append_event_db(
@@ -793,9 +793,7 @@ class ControlPlaneRepository:
             ).fetchone()
             if row is None:
                 raise KeyError(task_id)
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return _task_from_row(row)
             if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
                 raise ValueError("only the assigned working agent can complete the task")
@@ -837,8 +835,7 @@ class ControlPlaneRepository:
             if reviewer is None:
                 raise ValueError("run has no independent reviewer")
             db.execute(
-                "UPDATE team_tasks SET state = ?, updated_at = ? "
-                "WHERE run_id = ? AND task_id = ?",
+                "UPDATE team_tasks SET state = ?, updated_at = ? WHERE run_id = ? AND task_id = ?",
                 (TeamTaskState.REVIEW.value, now.isoformat(), run_id, task_id),
             )
             db.execute(
@@ -901,8 +898,7 @@ class ControlPlaneRepository:
             if row is None:
                 raise KeyError(task_id)
             existing = db.execute(
-                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? "
-                "AND idempotency_key = ?",
+                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? AND idempotency_key = ?",
                 (run_id, task_id, idempotency_key),
             ).fetchone()
             if existing is not None:
@@ -942,8 +938,7 @@ class ControlPlaneRepository:
                 ),
             )
             created = db.execute(
-                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? "
-                "AND idempotency_key = ?",
+                "SELECT * FROM artifacts WHERE run_id = ? AND task_id = ? AND idempotency_key = ?",
                 (run_id, task_id, idempotency_key),
             ).fetchone()
             assert created is not None
@@ -971,9 +966,7 @@ class ControlPlaneRepository:
             ).fetchone()
             if row is None:
                 raise KeyError(task_id)
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return _task_from_row(row)
             reviewer = db.execute(
                 "SELECT role FROM team_agents WHERE run_id = ? AND agent_id = ?",
@@ -994,8 +987,7 @@ class ControlPlaneRepository:
             else:
                 next_state = TeamTaskState.OPERATOR_REQUIRED
             db.execute(
-                "UPDATE team_tasks SET state = ?, updated_at = ? "
-                "WHERE run_id = ? AND task_id = ?",
+                "UPDATE team_tasks SET state = ?, updated_at = ? WHERE run_id = ? AND task_id = ?",
                 (next_state.value, now.isoformat(), run_id, task_id),
             )
             _append_event_db(
@@ -1039,15 +1031,12 @@ class ControlPlaneRepository:
             ).fetchone()
             if row is None:
                 raise KeyError(task_id)
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return _task_from_row(row)
             if row["state"] != TeamTaskState.WORKING.value or row["assignee_agent_id"] != agent_id:
                 raise ValueError("only the assigned working agent can block the task")
             db.execute(
-                "UPDATE team_tasks SET state = ?, updated_at = ? "
-                "WHERE run_id = ? AND task_id = ?",
+                "UPDATE team_tasks SET state = ?, updated_at = ? WHERE run_id = ? AND task_id = ?",
                 (TeamTaskState.BLOCKED.value, now.isoformat(), run_id, task_id),
             )
             db.execute(
@@ -1079,9 +1068,7 @@ class ControlPlaneRepository:
     def complete_run_if_accepted(self, run_id: str, *, now: datetime) -> bool:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT state FROM team_tasks WHERE run_id = ?", (run_id,)
-            ).fetchall()
+            rows = db.execute("SELECT state FROM team_tasks WHERE run_id = ?", (run_id,)).fetchall()
             if not rows or any(row["state"] != TeamTaskState.ACCEPTED.value for row in rows):
                 return False
             db.execute(
@@ -1101,14 +1088,10 @@ class ControlPlaneRepository:
             )
             return True
 
-    def stop_team_run(
-        self, run_id: str, *, reason: str, event_id: str, now: datetime
-    ) -> None:
+    def stop_team_run(self, run_id: str, *, reason: str, event_id: str, now: datetime) -> None:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute(
-                "SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)
-            ).fetchone():
+            if db.execute("SELECT 1 FROM run_events WHERE event_id = ?", (event_id,)).fetchone():
                 return
             db.execute(
                 "UPDATE team_runs SET state = ?, updated_at = ? WHERE run_id = ?",
@@ -1191,12 +1174,10 @@ class ControlPlaneRepository:
                 operator_runs.append(row["run_id"])
         return operator_runs
 
-
     def upsert_provider_profile(self, profile: ProviderProfile) -> ProviderProfile:
         with self._connection() as db:
             existing = db.execute(
-                "SELECT id FROM provider_profiles "
-                "WHERE binary_name = ? AND executable_path = ?",
+                "SELECT id FROM provider_profiles WHERE binary_name = ? AND executable_path = ?",
                 (profile.binary_name, profile.executable_path),
             ).fetchone()
             provider_id = profile.id if existing is None else str(existing["id"])
@@ -1250,9 +1231,7 @@ class ControlPlaneRepository:
 
     def delete_provider_profile(self, provider_id: str) -> bool:
         with self._connection() as db:
-            cursor = db.execute(
-                "DELETE FROM provider_profiles WHERE id = ?", (provider_id,)
-            )
+            cursor = db.execute("DELETE FROM provider_profiles WHERE id = ?", (provider_id,))
             return cursor.rowcount == 1
 
     def create_project(self, project: ProjectRecord) -> None:
@@ -1279,9 +1258,7 @@ class ControlPlaneRepository:
 
     def get_project(self, project_id: str) -> ProjectRecord | None:
         with self._connection() as db:
-            row = db.execute(
-                "SELECT * FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
+            row = db.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         return None if row is None else _project_record(row)
 
     def update_project(self, project: ProjectRecord) -> bool:
@@ -1326,9 +1303,7 @@ class ControlPlaneRepository:
 
     def list_managed_sessions(self) -> list[ManagedSession]:
         with self._connection() as db:
-            rows = db.execute(
-                "SELECT * FROM managed_sessions ORDER BY created_at, id"
-            ).fetchall()
+            rows = db.execute("SELECT * FROM managed_sessions ORDER BY created_at, id").fetchall()
         return [_managed_session(row) for row in rows]
 
     def get_managed_session(self, session_id: str) -> ManagedSession | None:
@@ -1358,21 +1333,21 @@ class ControlPlaneRepository:
 
     def delete_managed_session(self, session_id: str) -> bool:
         with self._connection() as db:
-            cursor = db.execute(
-                "DELETE FROM managed_sessions WHERE id = ?", (session_id,)
-            )
+            cursor = db.execute("DELETE FROM managed_sessions WHERE id = ?", (session_id,))
             return cursor.rowcount == 1
 
     def has_active_teamrun_for_managed_session(self, session_id: str) -> bool:
-        """A running plan must retain its agent session identity until it stops."""
+        """A non-terminal plan retains both role and isolated worktree CLI identities."""
         with self._connection() as db:
             row = db.execute(
-                "SELECT 1 FROM team_agents "
-                "JOIN team_runs ON team_runs.run_id = team_agents.run_id "
-                "WHERE team_agents.managed_session_id = ? "
+                "SELECT 1 FROM team_runs "
+                "LEFT JOIN team_agents ON team_agents.run_id = team_runs.run_id "
+                "LEFT JOIN task_worktrees ON task_worktrees.run_id = team_runs.run_id "
+                "WHERE (team_agents.managed_session_id = ? "
+                "OR (task_worktrees.managed_session_id = ? AND task_worktrees.state = 'active')) "
                 "AND team_runs.state IN ('draft', 'running', 'paused', 'operator_required') "
                 "LIMIT 1",
-                (session_id,),
+                (session_id, session_id),
             ).fetchone()
         return row is not None
 
@@ -1398,8 +1373,7 @@ class ControlPlaneRepository:
     def list_probe_results(self, provider_id: str) -> list[ProviderProbeResult]:
         with self._connection() as db:
             rows = db.execute(
-                "SELECT * FROM probe_results WHERE provider_id = ? "
-                "ORDER BY observed_at, id",
+                "SELECT * FROM probe_results WHERE provider_id = ? ORDER BY observed_at, id",
                 (provider_id,),
             ).fetchall()
         return [
@@ -1416,7 +1390,6 @@ class ControlPlaneRepository:
             )
             for row in rows
         ]
-
 
 
 def _run_from_row(row: sqlite3.Row) -> TeamRun:
@@ -1469,9 +1442,7 @@ def _message_from_row(row: sqlite3.Row) -> MailboxMessage:
         idempotency_key=row["idempotency_key"],
         created_at=datetime.fromisoformat(row["created_at"]),
         delivered_at=(
-            datetime.fromisoformat(row["delivered_at"])
-            if row["delivered_at"] is not None
-            else None
+            datetime.fromisoformat(row["delivered_at"]) if row["delivered_at"] is not None else None
         ),
     )
 
@@ -1501,8 +1472,7 @@ def _dispatch_command_from_row(row: sqlite3.Row) -> DispatchCommand:
         state=row["state"],
         created_at=datetime.fromisoformat(row["created_at"]),
         tmux_written_at=(
-            datetime.fromisoformat(row["tmux_written_at"])
-            if row["tmux_written_at"] else None
+            datetime.fromisoformat(row["tmux_written_at"]) if row["tmux_written_at"] else None
         ),
         last_error=row["last_error"],
     )
@@ -1510,9 +1480,14 @@ def _dispatch_command_from_row(row: sqlite3.Row) -> DispatchCommand:
 
 def _task_worktree_from_row(row: sqlite3.Row) -> TaskWorktreeRecord:
     return TaskWorktreeRecord(
-        run_id=row["run_id"], task_id=row["task_id"], attempt=row["attempt"],
-        path=row["path"], branch=row["branch"], managed_session_id=row["managed_session_id"],
-        state=row["state"], created_at=datetime.fromisoformat(row["created_at"]),
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        attempt=row["attempt"],
+        path=row["path"],
+        branch=row["branch"],
+        managed_session_id=row["managed_session_id"],
+        state=row["state"],
+        created_at=datetime.fromisoformat(row["created_at"]),
         released_at=datetime.fromisoformat(row["released_at"]) if row["released_at"] else None,
     )
 
@@ -1524,9 +1499,7 @@ def _lease_from_row(row: sqlite3.Row) -> WriteLease:
         task_id=row["task_id"],
         acquired_at=datetime.fromisoformat(row["acquired_at"]),
         released_at=(
-            datetime.fromisoformat(row["released_at"])
-            if row["released_at"] is not None
-            else None
+            datetime.fromisoformat(row["released_at"]) if row["released_at"] is not None else None
         ),
     )
 
@@ -1587,7 +1560,6 @@ def _managed_session(row: sqlite3.Row) -> ManagedSession:
     )
 
 
-
 def _secure_data_directory(path: Path) -> None:
     _reject_symlink_ancestors(path)
     try:
@@ -1611,9 +1583,7 @@ def _secure_data_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _secure_regular_file(
-    path: Path, *, create: bool = False, missing_ok: bool = False
-) -> None:
+def _secure_regular_file(path: Path, *, create: bool = False, missing_ok: bool = False) -> None:
     opened = _open_secure_regular_file(path, create=create, missing_ok=missing_ok)
     if opened is None:
         return

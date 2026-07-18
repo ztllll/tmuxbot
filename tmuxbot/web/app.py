@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import os
 import platform
 import re
@@ -88,26 +89,46 @@ COOKIE_NAME = "tmuxbot_session"
 BOOTSTRAP_COOKIE_NAME = "tmuxbot_bootstrap_csrf"
 BOOTSTRAP_COOKIE_MAX_AGE = 300
 STATIC_DIR = Path(__file__).with_name("static")
+log = logging.getLogger(__name__)
 
 
 def _rollback_teamrun_launch(
     repository: ControlPlaneRepository,
     project: ProjectRecord | None,
     sessions: list[ManagedSession],
-) -> None:
+    *,
+    run_id: str | None = None,
+) -> bool:
     """Best-effort compensation for a launch that failed before it became runnable."""
+    if run_id is not None:
+        try:
+            snapshot = repository.get_team_run(run_id)
+        except KeyError:
+            pass
+        else:
+            log.error(
+                "teamrun launch retained for operator recovery run=%s state=%s",
+                run_id,
+                snapshot.run.state,
+            )
+            return False
     tmux_binary = shutil.which("tmux")
     for session in reversed(sessions):
         if tmux_binary is not None:
             with suppress(OSError, subprocess.TimeoutExpired):
                 subprocess.run(
                     [tmux_binary, "kill-session", "-t", session.tmux_session],
-                    capture_output=True, text=True, timeout=5, check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
                 )
-        repository.delete_managed_session(session.id)
+        with suppress(Exception):
+            repository.delete_managed_session(session.id)
     if project is not None:
         with suppress(Exception):
             repository.delete_project(project.id)
+    return True
 
 
 def create_app(
@@ -146,6 +167,7 @@ def create_app(
     configured_origin = os.getenv("TMUXBOT_WEB_PUBLIC_ORIGIN")
     allowed_origin = configured_origin or f"http://{settings.host}:{settings.port}"
     if isinstance(terminal_service, TerminalService):
+
         def observed_target_is_current(target: str, pane_pid: int) -> bool:
             try:
                 panes = inventory.list_panes()
@@ -189,13 +211,9 @@ def create_app(
             submitted_setup_token = request.headers.get("x-setup-token") or ""
             now = int(time.time())
             if settings.setup_token is not None:
-                authorized = secrets.compare_digest(
-                    submitted_setup_token, settings.setup_token
-                )
+                authorized = secrets.compare_digest(submitted_setup_token, settings.setup_token)
             elif setup_grant is not None:
-                authorized = setup_grant.authorize(
-                    submitted_setup_token, now=now
-                )
+                authorized = setup_grant.authorize(submitted_setup_token, now=now)
             else:
                 return JSONResponse(
                     status_code=503,
@@ -216,9 +234,7 @@ def create_app(
         try:
             return auth.authenticate(tmuxbot_session, now=int(time.time()))
         except AuthError as exc:
-            raise HTTPException(
-                status_code=401, detail="authentication required"
-            ) from exc
+            raise HTTPException(status_code=401, detail="authentication required") from exc
 
     def csrf_session(
         session: AuthenticatedSession = Depends(current_session),
@@ -235,9 +251,7 @@ def create_app(
         return service
 
     def bootstrap_csrf(
-        cookie_token: str | None = Cookie(
-            default=None, alias=BOOTSTRAP_COOKIE_NAME
-        ),
+        cookie_token: str | None = Cookie(default=None, alias=BOOTSTRAP_COOKIE_NAME),
         header_token: str | None = Header(default=None, alias="X-CSRF-Token"),
     ) -> None:
         if (
@@ -247,9 +261,7 @@ def create_app(
         ):
             raise HTTPException(status_code=403, detail="invalid csrf token")
         try:
-            auth.validate_bootstrap_token(
-                cookie_token, max_age_seconds=BOOTSTRAP_COOKIE_MAX_AGE
-            )
+            auth.validate_bootstrap_token(cookie_token, max_age_seconds=BOOTSTRAP_COOKIE_MAX_AGE)
         except AuthError as exc:
             raise HTTPException(status_code=403, detail="invalid csrf token") from exc
 
@@ -299,9 +311,7 @@ def create_app(
             and setup_grant is not None
             and setup_grant.is_available(now=now)
         )
-        setup_available = not configured and (
-            settings.setup_token is not None or grant_available
-        )
+        setup_available = not configured and (settings.setup_token is not None or grant_available)
         return {
             "configured": configured,
             "setup_available": setup_available,
@@ -397,10 +407,7 @@ def create_app(
     def providers(
         _: AuthenticatedSession = Depends(current_session),
     ) -> list[dict[str, object]]:
-        return [
-            serialize_provider(profile)
-            for profile in repository.list_provider_profiles()
-        ]
+        return [serialize_provider(profile) for profile in repository.list_provider_profiles()]
 
     @app.post("/api/providers/scan")
     def scan_providers(
@@ -504,7 +511,10 @@ def create_app(
         try:
             git = subprocess.run(
                 ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, timeout=3, check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
             )
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
             git = None
@@ -514,7 +524,10 @@ def create_app(
             try:
                 branch_result = subprocess.run(
                     ["git", "-C", str(root), "branch", "--show-current"],
-                    capture_output=True, text=True, timeout=3, check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
                 )
             except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
                 branch_result = None
@@ -533,7 +546,9 @@ def create_app(
                 continue
             matching.append({"target": pane.target, "command": pane.command})
         return {
-            "root_path": str(root), "git_root": git_root, "branch": branch,
+            "root_path": str(root),
+            "git_root": git_root,
+            "branch": branch,
             "matching_panes": matching,
         }
 
@@ -545,9 +560,7 @@ def create_app(
             "created_at": project.created_at,
         }
 
-    def verified_project_record(
-        *, project_id: str, name: str, root_path: str
-    ) -> ProjectRecord:
+    def verified_project_record(*, project_id: str, name: str, root_path: str) -> ProjectRecord:
         existing = repository.get_project(project_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="project not found")
@@ -616,9 +629,7 @@ def create_app(
                     "provider_id": item.provider_id,
                     "provider": profile.binary_name if profile is not None else None,
                     "provider_capabilities": (
-                        provider_capabilities(profile.binary_name)
-                        if profile is not None
-                        else None
+                        provider_capabilities(profile.binary_name) if profile is not None else None
                     ),
                     "name": item.name,
                     "tmux_target": f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}",
@@ -705,7 +716,11 @@ def create_app(
         """
         project = repository.get_project(body.project_id)
         provider = repository.get_provider_profile(body.provider_id)
-        if project is None or provider is None or provider.binary_name not in managed_provider_names():
+        if (
+            project is None
+            or provider is None
+            or provider.binary_name not in managed_provider_names()
+        ):
             raise HTTPException(status_code=404, detail="project or provider not found")
         try:
             ProviderDiscovery._verify_identity(provider)
@@ -717,11 +732,15 @@ def create_app(
             raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
         pane = next((item for item in panes if item.target == body.target), None)
         if pane is None:
-            raise HTTPException(status_code=409, detail="tmux pane no longer exists; refresh inventory")
+            raise HTTPException(
+                status_code=409, detail="tmux pane no longer exists; refresh inventory"
+            )
         try:
             Path(pane.cwd).resolve().relative_to(Path(project.root_path).resolve())
         except (OSError, ValueError) as exc:
-            raise HTTPException(status_code=409, detail="tmux pane is outside the selected project") from exc
+            raise HTTPException(
+                status_code=409, detail="tmux pane is outside the selected project"
+            ) from exc
         if any(
             item.tmux_session == pane.session_name
             and item.tmux_window == pane.window_index
@@ -730,15 +749,23 @@ def create_app(
         ):
             raise HTTPException(status_code=409, detail="tmux pane is already managed")
         managed = ManagedSession(
-            id=f"session-{uuid.uuid4().hex}", project_id=project.id,
-            provider_id=provider.id, name=body.name.strip(),
-            tmux_session=pane.session_name, tmux_window=pane.window_index,
-            tmux_pane=pane.pane_index, status="running", created_at=int(time.time()),
+            id=f"session-{uuid.uuid4().hex}",
+            project_id=project.id,
+            provider_id=provider.id,
+            name=body.name.strip(),
+            tmux_session=pane.session_name,
+            tmux_window=pane.window_index,
+            tmux_pane=pane.pane_index,
+            status="running",
+            created_at=int(time.time()),
         )
         repository.create_managed_session(managed)
         return {
-            "id": managed.id, "name": managed.name, "provider": provider.binary_name,
-            "tmux_target": pane.target, "status": managed.status,
+            "id": managed.id,
+            "name": managed.name,
+            "provider": provider.binary_name,
+            "tmux_target": pane.target,
+            "status": managed.status,
         }
 
     @app.delete(
@@ -780,8 +807,14 @@ def create_app(
     ) -> list[dict[str, object]]:
         env_text = paths.env_file.read_text(encoding="utf-8") if paths.env_file.is_file() else ""
         return [
-            {"channel": "telegram", "configured": "TG_BOT_TOKEN=" in env_text or "TG_CODEX_BOT_TOKEN=" in env_text},
-            {"channel": "feishu", "configured": "FEISHU_APP_ID=" in env_text and "FEISHU_APP_SECRET=" in env_text},
+            {
+                "channel": "telegram",
+                "configured": "TG_BOT_TOKEN=" in env_text or "TG_CODEX_BOT_TOKEN=" in env_text,
+            },
+            {
+                "channel": "feishu",
+                "configured": "FEISHU_APP_ID=" in env_text and "FEISHU_APP_SECRET=" in env_text,
+            },
         ]
 
     @app.post("/api/channels/configure", status_code=status.HTTP_201_CREATED)
@@ -797,7 +830,12 @@ def create_app(
         project = repository.get_project(managed.project_id)
         if provider is None or project is None:
             raise HTTPException(status_code=409, detail="managed session is incomplete")
-        values = (body.credential_id, body.credential_secret or "", body.boss_id, body.remote_chat_id)
+        values = (
+            body.credential_id,
+            body.credential_secret or "",
+            body.boss_id,
+            body.remote_chat_id,
+        )
         if any("\n" in value or "\r" in value or "\0" in value for value in values):
             raise HTTPException(status_code=400, detail="invalid channel value")
         env_values: dict[str, str] = {}
@@ -807,21 +845,40 @@ def create_app(
             token_env = "TG_BOT_TOKEN" if provider.binary_name == "claude" else "TG_CODEX_BOT_TOKEN"
             env_values[token_env] = body.credential_id
             env_values["BOSS_USER_ID"] = body.boss_id
-            chat_id: int | str = int(body.remote_chat_id) if body.remote_chat_id.lstrip("-").isdigit() else body.remote_chat_id
+            chat_id: int | str = (
+                int(body.remote_chat_id)
+                if body.remote_chat_id.lstrip("-").isdigit()
+                else body.remote_chat_id
+            )
         else:
             if not body.credential_secret:
                 raise HTTPException(status_code=400, detail="Feishu secret is required")
             token_env = "FEISHU"
-            env_values.update({
-                "FEISHU_APP_ID": body.credential_id,
-                "FEISHU_APP_SECRET": body.credential_secret,
-                "FEISHU_BOSS_OPEN_IDS": body.boss_id,
-            })
+            env_values.update(
+                {
+                    "FEISHU_APP_ID": body.credential_id,
+                    "FEISHU_APP_SECRET": body.credential_secret,
+                    "FEISHU_BOSS_OPEN_IDS": body.boss_id,
+                }
+            )
             chat_id = body.remote_chat_id
-        existing_lines = paths.env_file.read_text(encoding="utf-8").splitlines() if paths.env_file.is_file() else []
-        retained = [line for line in existing_lines if line.split("=", 1)[0].strip() not in env_values]
-        rendered_env = "\n".join([*retained, *(f"{key}={value}" for key, value in env_values.items())]).strip() + "\n"
-        raw = yaml.safe_load(paths.bindings_file.read_text(encoding="utf-8")) if paths.bindings_file.is_file() else {}
+        existing_lines = (
+            paths.env_file.read_text(encoding="utf-8").splitlines()
+            if paths.env_file.is_file()
+            else []
+        )
+        retained = [
+            line for line in existing_lines if line.split("=", 1)[0].strip() not in env_values
+        ]
+        rendered_env = (
+            "\n".join([*retained, *(f"{key}={value}" for key, value in env_values.items())]).strip()
+            + "\n"
+        )
+        raw = (
+            yaml.safe_load(paths.bindings_file.read_text(encoding="utf-8"))
+            if paths.bindings_file.is_file()
+            else {}
+        )
         if not isinstance(raw, dict):
             raw = {}
         entries = raw.get("bindings")
@@ -841,11 +898,17 @@ def create_app(
             "cwd": project.root_path,
             "mention_required": body.mention_required,
         }
-        entries = [item for item in entries if not isinstance(item, dict) or item.get("name") != binding_name]
+        entries = [
+            item
+            for item in entries
+            if not isinstance(item, dict) or item.get("name") != binding_name
+        ]
         entries.append(entry)
         raw["bindings"] = entries
         write_private_text(paths.env_file, rendered_env)
-        write_private_text(paths.bindings_file, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        write_private_text(
+            paths.bindings_file, yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+        )
         bridge_snapshot = app.state.bridge_status() if callable(app.state.bridge_status) else {}
         restart_required = bridge_snapshot.get("state") == "running"
         return {
@@ -900,9 +963,7 @@ def create_app(
         try:
             panes = inventory.list_panes()
         except TmuxInventoryError as exc:
-            raise HTTPException(
-                status_code=503, detail="tmux inventory unavailable"
-            ) from exc
+            raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
         items = classify_inventory(panes, bindings, ignored_targets=set())
         return [
             {
@@ -932,7 +993,9 @@ def create_app(
             raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
         pane = next((item for item in panes if item.target == body.target), None)
         if pane is None:
-            raise HTTPException(status_code=409, detail="tmux pane no longer exists; refresh inventory")
+            raise HTTPException(
+                status_code=409, detail="tmux pane no longer exists; refresh inventory"
+            )
         terminal_id = service.register_observed_target(pane.target, pane_pid=pane.pid)
         ticket = service.issue_ticket(terminal_id, session.token, now=int(time.time()))
         assert ticket is not None
@@ -951,9 +1014,7 @@ def create_app(
         session: AuthenticatedSession = Depends(csrf_session),
         service: TerminalService = Depends(require_terminal_service),
     ) -> dict[str, str | int]:
-        ticket = service.issue_ticket(
-            managed_session_id, session.token, now=int(time.time())
-        )
+        ticket = service.issue_ticket(managed_session_id, session.token, now=int(time.time()))
         if ticket is None:
             raise HTTPException(status_code=404, detail="managed session not found")
         return {"ticket": ticket.token, "expires_at": ticket.expires_at}
@@ -977,9 +1038,7 @@ def create_app(
         session: AuthenticatedSession = Depends(csrf_session),
         service: TerminalService = Depends(require_terminal_service),
     ) -> dict[str, str]:
-        if not service.end_takeover(
-            managed_session_id, session.token, reason="api"
-        ):
+        if not service.end_takeover(managed_session_id, session.token, reason="api"):
             raise HTTPException(status_code=409, detail="terminal is not controlled")
         return {"mode": "observe"}
 
@@ -987,9 +1046,7 @@ def create_app(
         await websocket.accept()
         await websocket.close(code=code)
 
-    async def terminal_output_loop(
-        websocket: WebSocket, terminal: TerminalConnection
-    ) -> None:
+    async def terminal_output_loop(websocket: WebSocket, terminal: TerminalConnection) -> None:
         while True:
             data = await terminal.read(TERMINAL_MAX_FRAME_BYTES)
             if not data:
@@ -1013,23 +1070,17 @@ def create_app(
                     await websocket.close(code=1009)
                     return
                 if not service.can_input(ticket.managed_session_id, session_token):
-                    await websocket.send_json(
-                        {"type": "input_rejected", "reason": "observe_only"}
-                    )
+                    await websocket.send_json({"type": "input_rejected", "reason": "observe_only"})
                     continue
                 await terminal.write(data)
                 continue
             text = message.get("text")
             if text is None or len(text.encode("utf-8")) > TERMINAL_MAX_FRAME_BYTES:
-                await websocket.send_json(
-                    {"type": "message_rejected", "reason": "invalid_frame"}
-                )
+                await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
             resize = parse_resize_message(text)
             if resize is None:
-                await websocket.send_json(
-                    {"type": "message_rejected", "reason": "invalid_frame"}
-                )
+                await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
             rows, cols = resize
             await terminal.resize(rows, cols)
@@ -1053,9 +1104,7 @@ def create_app(
         except AuthError:
             await reject_terminal(websocket, 4401)
             return
-        terminal_ticket = service.consume_ticket(
-            ticket, session_token, now=int(time.time())
-        )
+        terminal_ticket = service.consume_ticket(ticket, session_token, now=int(time.time()))
         if terminal_ticket is None:
             await reject_terminal(websocket, 4403)
             return
@@ -1094,9 +1143,7 @@ def create_app(
                 )
             finally:
                 try:
-                    service.disconnect(
-                        terminal_ticket.managed_session_id, session_token
-                    )
+                    service.disconnect(terminal_ticket.managed_session_id, session_token)
                 finally:
                     await terminal.close()
 
@@ -1158,10 +1205,23 @@ def create_app(
                 detail="launch requires exactly one coordinator, implementer, and reviewer",
             )
         try:
+            existing = repository.get_team_run(body.run_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if existing.run.goal != body.goal:
+                raise HTTPException(
+                    status_code=409, detail="run id is already bound to another goal"
+                )
+            return _serialize_teamrun(existing)
+        try:
             root = Path(body.root_path).expanduser().resolve(strict=True)
             git = subprocess.run(
                 ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-                capture_output=True, text=True, timeout=3, check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise HTTPException(status_code=400, detail="project path is unavailable") from exc
@@ -1174,6 +1234,7 @@ def create_app(
         created_project: ProjectRecord | None = None
         created_sessions: list[ManagedSession] = []
         role_sessions: dict[AgentRole, ManagedSession] = {}
+        run_created = False
         try:
             project_payload_value = create_project(
                 ProjectCreateRequest(name=body.project_name, root_path=str(root)), None
@@ -1197,31 +1258,57 @@ def create_app(
             snapshot = scheduler_service().create_deterministic_run(
                 run_id=body.run_id,
                 goal=body.goal,
-                agents={
-                    role: role_sessions[role].id
-                    for role in required
-                },
+                agents={role: role_sessions[role].id for role in required},
                 tasks=[
                     {
-                        "task_id": "plan", "title": "制定实施计划", "goal": body.goal,
-                        "role": "coordinator", "dependencies": [], "requires_write": False,
+                        "task_id": "plan",
+                        "title": "制定实施计划",
+                        "goal": body.goal,
+                        "role": "coordinator",
+                        "dependencies": [],
+                        "requires_write": False,
                     },
                     {
-                        "task_id": "implementation", "title": "实施与验证", "goal": body.goal,
-                        "role": "implementer", "dependencies": ["plan"], "requires_write": True,
+                        "task_id": "implementation",
+                        "title": "实施与验证",
+                        "goal": body.goal,
+                        "role": "implementer",
+                        "dependencies": ["plan"],
+                        "requires_write": True,
                     },
                 ],
                 idempotency_key=body.idempotency_key,
             )
+            run_created = True
             snapshot = scheduler_service().start(
                 snapshot.run.run_id, idempotency_key=f"{body.idempotency_key}:start"
             )
             return _serialize_teamrun(snapshot)
         except HTTPException:
-            _rollback_teamrun_launch(repository, created_project, created_sessions)
+            cleaned = _rollback_teamrun_launch(
+                repository,
+                created_project,
+                created_sessions,
+                run_id=body.run_id if run_created else None,
+            )
+            if not cleaned:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"launch state retained for recovery: {body.run_id}",
+                )
             raise
-        except (ValueError, KeyError, StopIteration) as exc:
-            _rollback_teamrun_launch(repository, created_project, created_sessions)
+        except Exception as exc:
+            cleaned = _rollback_teamrun_launch(
+                repository,
+                created_project,
+                created_sessions,
+                run_id=body.run_id if run_created else None,
+            )
+            if not cleaned:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"launch state retained for recovery: {body.run_id}",
+                ) from exc
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/team-runs")
@@ -1238,9 +1325,7 @@ def create_app(
         run_id: str,
         _: AuthenticatedSession = Depends(current_session),
     ) -> dict[str, object]:
-        snapshot = scheduler_call(
-            lambda: scheduler_service().repository.get_team_run(run_id)
-        )
+        snapshot = scheduler_call(lambda: scheduler_service().repository.get_team_run(run_id))
         return _serialize_teamrun(snapshot)
 
     @app.get("/api/team-runs/{run_id}/mailbox")
@@ -1361,26 +1446,42 @@ def create_app(
         if task.state is not TeamTaskState.ACCEPTED:
             raise HTTPException(status_code=409, detail="only an accepted task may be merged")
         record = next(
-            (item for item in scheduler_service().repository.list_task_worktrees(run_id)
-             if item.task_id == task_id and item.attempt == attempt),
+            (
+                item
+                for item in scheduler_service().repository.list_task_worktrees(run_id)
+                if item.task_id == task_id and item.attempt == attempt
+            ),
             None,
         )
         if record is None:
             raise HTTPException(status_code=404, detail="worktree not found")
         managed = scheduler_service().repository.get_managed_session(record.managed_session_id)
-        project = scheduler_service().repository.get_project(managed.project_id) if managed is not None else None
+        project = (
+            scheduler_service().repository.get_project(managed.project_id)
+            if managed is not None
+            else None
+        )
         if project is None:
             raise HTTPException(status_code=409, detail="worktree project is unavailable")
         try:
             worktrees().merge_into_repository(
-                TaskWorktree(run_id, task_id, attempt, Path(project.root_path), Path(record.path), record.branch)
+                TaskWorktree(
+                    run_id,
+                    task_id,
+                    attempt,
+                    Path(project.root_path),
+                    Path(record.path),
+                    record.branch,
+                )
             )
         except WorktreeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         scheduler_service().repository.append_event(
             RunEvent(
                 event_id=f"teamrun:{run_id}:worktree:{task_id}:{attempt}:merge:{body.idempotency_key}",
-                event_type="teamtask.worktree_merged", aggregate_type="team_task", aggregate_id=task_id,
+                event_type="teamtask.worktree_merged",
+                aggregate_type="team_task",
+                aggregate_id=task_id,
                 payload={"run_id": run_id, "attempt": attempt, "branch": record.branch},
                 occurred_at=datetime.now(timezone.utc),
             )
@@ -1396,10 +1497,15 @@ def create_app(
     ) -> dict[str, object]:
         task = scheduler_call(lambda: scheduler_service().repository.get_team_task(run_id, task_id))
         if task.state is not TeamTaskState.ACCEPTED:
-            raise HTTPException(status_code=409, detail="only an accepted task worktree may be released")
+            raise HTTPException(
+                status_code=409, detail="only an accepted task worktree may be released"
+            )
         record = next(
-            (item for item in scheduler_service().repository.list_task_worktrees(run_id)
-             if item.task_id == task_id and item.attempt == attempt),
+            (
+                item
+                for item in scheduler_service().repository.list_task_worktrees(run_id)
+                if item.task_id == task_id and item.attempt == attempt
+            ),
             None,
         )
         if record is None:
@@ -1407,29 +1513,48 @@ def create_app(
         if record.state == "released":
             return {"released": True}
         managed = scheduler_service().repository.get_managed_session(record.managed_session_id)
-        project = scheduler_service().repository.get_project(managed.project_id) if managed is not None else None
+        project = (
+            scheduler_service().repository.get_project(managed.project_id)
+            if managed is not None
+            else None
+        )
         if managed is None or project is None:
             raise HTTPException(status_code=409, detail="worktree session is unavailable")
-        worktree = TaskWorktree(run_id, task_id, attempt, Path(project.root_path), Path(record.path), record.branch)
+        worktree = TaskWorktree(
+            run_id, task_id, attempt, Path(project.root_path), Path(record.path), record.branch
+        )
         try:
             if not worktrees().is_merged(worktree):
-                raise HTTPException(status_code=409, detail="merge the accepted branch before release")
+                raise HTTPException(
+                    status_code=409, detail="merge the accepted branch before release"
+                )
             tmux_binary = shutil.which("tmux")
             if tmux_binary is None:
                 raise HTTPException(status_code=503, detail="tmux is unavailable")
             subprocess.run(
                 [tmux_binary, "kill-session", "-t", managed.tmux_session],
-                capture_output=True, text=True, timeout=5, check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
             )
             worktrees().remove(worktree)
         except WorktreeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        scheduler_service().repository.release_task_worktree(run_id, task_id, attempt, now=datetime.now(timezone.utc))
+        scheduler_service().repository.release_task_worktree(
+            run_id, task_id, attempt, now=datetime.now(timezone.utc)
+        )
         scheduler_service().repository.update_managed_session(
             ManagedSession(
-                id=managed.id, project_id=managed.project_id, provider_id=managed.provider_id,
-                name=managed.name, tmux_session=managed.tmux_session, tmux_window=managed.tmux_window,
-                tmux_pane=managed.tmux_pane, status="released", created_at=managed.created_at,
+                id=managed.id,
+                project_id=managed.project_id,
+                provider_id=managed.provider_id,
+                name=managed.name,
+                tmux_session=managed.tmux_session,
+                tmux_window=managed.tmux_window,
+                tmux_pane=managed.tmux_pane,
+                status="released",
+                created_at=managed.created_at,
             )
         )
         return {"released": True}
@@ -1442,9 +1567,7 @@ def create_app(
     ) -> dict[str, object]:
         return _serialize_teamrun(
             scheduler_call(
-                lambda: scheduler_service().start(
-                    run_id, idempotency_key=body.idempotency_key
-                )
+                lambda: scheduler_service().start(run_id, idempotency_key=body.idempotency_key)
             )
         )
 
@@ -1456,9 +1579,7 @@ def create_app(
     ) -> dict[str, object]:
         return _serialize_teamrun(
             scheduler_call(
-                lambda: scheduler_service().pause(
-                    run_id, idempotency_key=body.idempotency_key
-                )
+                lambda: scheduler_service().pause(run_id, idempotency_key=body.idempotency_key)
             )
         )
 
@@ -1470,9 +1591,7 @@ def create_app(
     ) -> dict[str, object]:
         return _serialize_teamrun(
             scheduler_call(
-                lambda: scheduler_service().resume(
-                    run_id, idempotency_key=body.idempotency_key
-                )
+                lambda: scheduler_service().resume(run_id, idempotency_key=body.idempotency_key)
             )
         )
 
@@ -1505,8 +1624,7 @@ def create_app(
                 task_id,
                 agent_id=body.agent_id,
                 artifacts=[
-                    ArtifactInput(item.kind, item.uri, item.metadata)
-                    for item in body.artifacts
+                    ArtifactInput(item.kind, item.uri, item.metadata) for item in body.artifacts
                 ],
                 idempotency_key=body.idempotency_key,
             )
