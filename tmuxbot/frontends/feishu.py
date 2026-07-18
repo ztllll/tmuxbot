@@ -71,20 +71,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-DEFAULT_WS_MAX_CONNECTION_SECONDS = 6 * 60 * 60
-
-
-def feishu_ws_max_connection_seconds(environ: dict[str, str] | None = None) -> int:
-    """Bound a WS lifetime so a half-open long connection cannot live forever."""
-    value = (environ or os.environ).get(
-        "TMUXBOT_FEISHU_WS_MAX_CONNECTION_SECONDS", str(DEFAULT_WS_MAX_CONNECTION_SECONDS)
-    )
-    try:
-        parsed = int(value)
-    except ValueError:
-        return DEFAULT_WS_MAX_CONNECTION_SECONDS
-    return max(parsed, 60)
-
 # ────────── lark-oapi lazy import ──────────
 # 没装 lark-oapi 时抛清晰 ImportError, 不影响其他前端启动
 def _get_lark():
@@ -1828,7 +1814,6 @@ class FeishuFrontend(Frontend):
         stop_event = asyncio.Event()
         self._stop_event = stop_event
         retry_delay = 1.0
-        max_connection_age = feishu_ws_max_connection_seconds()
 
         while not stop_event.is_set():
             self._ws_client = lark.ws.Client(
@@ -1853,30 +1838,13 @@ class FeishuFrontend(Frontend):
 
             ws_task = asyncio.get_running_loop().run_in_executor(None, _run)
             stop_task = asyncio.create_task(stop_event.wait())
-            rotate_task = asyncio.create_task(asyncio.sleep(max_connection_age))
             pending: set[asyncio.Future] = set()
             try:
                 done, pending = await asyncio.wait(
-                    {ws_task, stop_task, rotate_task}, return_when=asyncio.FIRST_COMPLETED
+                    {ws_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if stop_task in done:
                     break
-
-                if rotate_task in done:
-                    log.info(
-                        "feishu ws rotating after %ss to avoid a half-open connection",
-                        max_connection_age,
-                    )
-                    try:
-                        self._ws_client.stop()
-                    except Exception as exc:
-                        log.debug("feishu ws rotation stop err: %s", exc)
-                    try:
-                        await asyncio.wait_for(asyncio.shield(ws_task), timeout=10)
-                    except asyncio.TimeoutError:
-                        log.warning("feishu ws rotation did not stop within 10s; retrying")
-                    retry_delay = 1.0
-                    continue
 
                 exc = ws_task.exception()
                 if exc is not None:
@@ -1892,7 +1860,6 @@ class FeishuFrontend(Frontend):
                 retry_delay = min(retry_delay * 2, 30.0)
             finally:
                 stop_task.cancel()
-                rotate_task.cancel()
                 for task in pending:
                     task.cancel()
 
