@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh tmuxbot channel bridge %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user restart %i.service
