@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -93,6 +94,38 @@ def test_channel_adapters_extract_commands_and_mentions():
     assert telegram.direct_chat
     assert feishu.command == "/status"
     assert feishu.direct_chat
+
+
+def test_feishu_interactive_task_card_normalizes_to_cli_ready_text():
+    card = {
+        "schema": "2.0",
+        "header": {"title": {"tag": "plain_text", "content": "任务：修复登录"}},
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": "请排查 **OAuth 回调**，补充回归测试。"},
+                {"tag": "button", "text": {"tag": "plain_text", "content": "查看详情"}, "value": {"action": "open"}},
+            ]
+        },
+    }
+    message = SimpleNamespace(
+        message_id="om_task",
+        chat_id="oc_dm",
+        chat_type="p2p",
+        message_type="interactive",
+        content=json.dumps(card, ensure_ascii=False),
+        mentions=[],
+        parent_id=None,
+        root_id=None,
+        reply_to_message_id=None,
+    )
+
+    incoming = FeishuChannelAdapter(bot_open_id="ou_bot").normalize_incoming(
+        message, sender_id="ou_42"
+    )
+
+    assert incoming.direct_chat is True
+    assert incoming.text == "任务：修复登录\n请排查 **OAuth 回调**，补充回归测试。\n查看详情"
+    assert incoming.metadata["message_type"] == "interactive"
 
 
 def test_attachment_ref_factory_is_provider_neutral(tmp_path):

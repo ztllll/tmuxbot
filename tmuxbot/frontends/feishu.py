@@ -1520,7 +1520,7 @@ class FeishuFrontend(Frontend):
             # 放 ACL 白名单后、/init 检测附近, 在"未绑定静默"分支之前判断:
             # 有 binding → deprovision (复用 provision.deprovision_chat, 不重写);
             # 无 binding → 回提示 (这里是回提示而非静默, 放 ACL 后即可)。
-            _text_now = incoming.text if msg_type == "text" else ""
+            _text_now = incoming.text
             if _text_now == "/deinit":
                 from tmuxbot.provision import deprovision_chat
                 if b is None:
@@ -1537,7 +1537,7 @@ class FeishuFrontend(Frontend):
                 return
 
             if b is None:
-                _text_for_init = incoming.text if msg_type == "text" else ""
+                _text_for_init = incoming.text
                 if _text_for_init == "/projects":
                     await self.send_html(chat_id, None, self._list_projects())
                     return
@@ -1708,15 +1708,29 @@ class FeishuFrontend(Frontend):
                 )
                 return
 
-            # ── 只处理 text 类型 ──
-            if msg_type != "text":
+            # ── text + 转发 interactive 任务卡片 ──
+            if msg_type not in {"text", "interactive"}:
                 log.debug(f"feishu: ignore non-text msg_type={msg_type}")
                 return
 
             text = incoming.text
 
             if not text:
+                if msg_type == "interactive":
+                    await self.send_html(
+                        chat_id,
+                        None,
+                        "⚠️ <b>任务卡片没有可读文本，未投递到 CLI</b>\n"
+                        "请将卡片转发为文本，或补充一条任务说明。",
+                    )
                 return
+
+            if msg_type == "interactive":
+                log.info(
+                    "feishu interactive card normalized: binding=%s chars=%s",
+                    b.name,
+                    len(text),
+                )
 
             if is_control_command(text):
                 if text.split(maxsplit=1)[0].split("@", 1)[0] in {"/menu", "/panel", "/settings"}:

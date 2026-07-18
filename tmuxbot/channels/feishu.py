@@ -87,6 +87,12 @@ def _content_text(message: Any) -> str:
                     if value:
                         parts.append(str(value))
         text = "\n".join(part for part in parts if part)
+    elif message_type == "interactive":
+        # Forwarded Feishu task cards arrive as interactive messages rather
+        # than text.  Their useful human payload is nested in Card JSON 1.0 or
+        # 2.0; extracting it here lets the normal ACL → tmux path handle cards
+        # exactly like a pasted task description.
+        text = _interactive_card_text(content)
     else:
         text = str(
             content.get("text")
@@ -96,6 +102,37 @@ def _content_text(message: Any) -> str:
             or ""
         )
     return re.sub(r"@_user_\d+\s*", "", text).strip()
+
+
+def _interactive_card_text(content: dict[str, Any]) -> str:
+    """Extract user-visible text from Feishu Card JSON without action metadata."""
+    values: list[str] = []
+
+    def visit(value: Any, key: str | None = None) -> None:
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                visit(child_value, str(child_key))
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item, key)
+            return
+        if key == "data" and isinstance(value, str):
+            try:
+                nested = json.loads(value)
+            except json.JSONDecodeError:
+                nested = None
+            if isinstance(nested, (dict, list)):
+                visit(nested)
+                return
+        if not isinstance(value, str) or key not in {"content", "text", "title", "label"}:
+            return
+        text = value.strip()
+        if text and text not in values:
+            values.append(text)
+
+    visit(content)
+    return "\n".join(values)
 
 
 def _command_from_text(text: str) -> str | None:
