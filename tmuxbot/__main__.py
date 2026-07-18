@@ -24,6 +24,7 @@ from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.paths import RuntimePaths
+from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
 from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
@@ -251,6 +252,10 @@ async def main(paths: RuntimePaths | None = None) -> None:
                 tmux_new_session(b.tmux_session, b.cwd)
             S.fire(jsonl_poll_loop(b, fe.backend, fe, S, paths.offsets_file))
         S.fire(heartbeat_typing_loop(S, fe))
+    control_plane = ControlPlaneRepository(paths.database_file)
+    control_plane.migrate()
+    from tmuxbot.teamrun.channel_projection import projection_loop
+    S.fire(projection_loop(control_plane, frontends))
     S.fire(lifecycle_watch_loop(frontends, S))
     log.info(
         f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"

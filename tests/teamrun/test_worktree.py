@@ -61,3 +61,5 @@ def test_task_worktree_merges_only_when_primary_repository_is_clean(tmp_path):
     (root / "dirty.txt").write_text("dirty\n", encoding="utf-8")
     with pytest.raises(WorktreeError, match="uncommitted"):
         manager.merge_into_repository(created)
+
+    assert manager.is_merged(created) is True
