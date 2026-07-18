@@ -46,6 +46,8 @@ from tmuxbot.control_plane.tmux_inventory import (
     classify_inventory,
 )
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
+from tmuxbot.backends.claude_code import ClaudeCodeBackend
+from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.providers.adapters import (
     get_provider_adapter,
     managed_provider_names,
@@ -53,6 +55,7 @@ from tmuxbot.providers.adapters import (
 )
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
+from tmuxbot.tmux import tmux_capture
 from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask, TeamTaskState
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 from tmuxbot.teamrun.worktree import GitWorktreeManager, TaskWorktree, WorktreeError
@@ -129,6 +132,21 @@ def _rollback_teamrun_launch(
         with suppress(Exception):
             repository.delete_project(project.id)
     return True
+
+
+def _read_runtime_model(provider_name: str | None, tmux_target: str) -> str | None:
+    """Read only the live provider status bar; model candidates remain CLI-owned."""
+    parser = {"claude": ClaudeCodeBackend(), "codex": CodexBackend()}.get(provider_name or "")
+    if parser is None:
+        return None
+    try:
+        status = parser.parse_terminal_status(tmux_capture(tmux_target, lines=30))
+    except Exception:
+        log.debug("unable to read runtime model target=%s", tmux_target, exc_info=True)
+        return None
+    if status is None or not status.model:
+        return None
+    return " ".join(part for part in (status.model, status.effort) if part)
 
 
 def create_app(
@@ -622,6 +640,7 @@ def create_app(
         payloads = []
         for item in repository.list_managed_sessions():
             profile = repository.get_provider_profile(item.provider_id)
+            target = f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}"
             payloads.append(
                 {
                     "id": item.id,
@@ -632,7 +651,10 @@ def create_app(
                         provider_capabilities(profile.binary_name) if profile is not None else None
                     ),
                     "name": item.name,
-                    "tmux_target": f"{item.tmux_session}:{item.tmux_window}.{item.tmux_pane}",
+                    "tmux_target": target,
+                    "runtime_model": _read_runtime_model(
+                        profile.binary_name if profile is not None else None, target
+                    ),
                     "status": item.status,
                 }
             )

@@ -60,6 +60,7 @@ export type ManagedSession = {
   provider_id: string;
   provider?: string | null;
   provider_capabilities?: ProviderCapabilities | null;
+  runtime_model?: string | null;
   name: string;
   tmux_target: string;
   status: string;
