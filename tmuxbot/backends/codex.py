@@ -335,15 +335,34 @@ class CodexBackend(Backend):
                 candidates.append(jl)
             if candidates:
                 return max(candidates, key=lambda path: path.stat().st_mtime)
+        matching = [
+            jl
+            for jl in all_files
+            if (metadata := self._session_metadata(jl))
+            and self._metadata_matches(metadata, target_cwd, None)
+        ]
         if b.transcript_path:
             pinned = Path(b.transcript_path)
             metadata = self._session_metadata(pinned)
             if metadata and self._metadata_matches(
                 metadata, target_cwd, b.provider_session_id
             ):
+                # A saved identity is normally authoritative.  However, Codex
+                # /new creates a new rollout while keeping the same tmux pane;
+                # after a bridge restart an old persisted path would otherwise
+                # be tailed forever and replies would never reach the channel.
+                newest = max(matching, key=lambda path: path.stat().st_mtime, default=pinned)
+                if newest != pinned and newest.stat().st_mtime > pinned.stat().st_mtime:
+                    log.warning(
+                        "[%s] stale Codex transcript %s; adopting newer rollout %s",
+                        b.name,
+                        pinned.name,
+                        newest.name,
+                    )
+                    return newest
                 return pinned
         if b.provider_session_id:
-            for jl in all_files:
+            for jl in matching:
                 metadata = self._session_metadata(jl)
                 if metadata and self._metadata_matches(
                     metadata, target_cwd, b.provider_session_id
@@ -351,10 +370,8 @@ class CodexBackend(Backend):
                     return jl
         # 按 mtime 倒序, 找第一个 cwd 匹配的。找不到就返回 None, 不能兜底到全局最新,
         # 否则多个 binding 会同时 tail 同一个 Codex rollout, 导致跨 chat 推送。
-        for jl in sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True):
-            metadata = self._session_metadata(jl)
-            if metadata and self._metadata_matches(metadata, target_cwd, None):
-                return jl
+        if matching:
+            return max(matching, key=lambda path: path.stat().st_mtime)
         return None
 
     def current_model(self, b: "Binding") -> str | None:

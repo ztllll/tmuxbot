@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import time
 from pathlib import Path
 
 from tmuxbot.backends.codex import CodexBackend
@@ -7,10 +9,16 @@ from tmuxbot.core.events import ProviderEventKind
 from tmuxbot.state import Binding
 
 
-def _write_rollout(path: Path, cwd: str) -> None:
+def _write_rollout(path: Path, cwd: str, session_id: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"type": "session_meta", "payload": {"cwd": cwd}}) + "\n",
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"cwd": cwd, "id": session_id, "session_id": session_id},
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -143,6 +151,25 @@ def test_codex_find_active_jsonl_does_not_fallback_to_global_latest(tmp_path, mo
     monkeypatch.setattr("tmuxbot.backends.codex.CODEX_SESSIONS_DIR", sessions)
 
     assert CodexBackend().find_active_jsonl(_binding(tmp_path)) is None
+
+
+def test_codex_adopts_newer_rollout_when_persisted_identity_is_stale(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    project = tmp_path / "project"
+    project.mkdir()
+    old = sessions / "2026" / "07" / "10" / "rollout-old.jsonl"
+    new = sessions / "2026" / "07" / "18" / "rollout-new.jsonl"
+    _write_rollout(old, str(project), "old-session")
+    _write_rollout(new, str(project), "new-session")
+    now = time.time()
+    os.utime(old, (now - 60, now - 60))
+    os.utime(new, (now, now))
+    monkeypatch.setattr("tmuxbot.backends.codex.CODEX_SESSIONS_DIR", sessions)
+    binding = _binding(tmp_path)
+    binding.provider_session_id = "old-session"
+    binding.transcript_path = old
+
+    assert CodexBackend().find_active_jsonl(binding) == new
 
 
 def test_codex_update_plan_function_call_forwards_full_plan():
