@@ -407,6 +407,7 @@ class TelegramFrontend(Frontend):
         self._unknown_chat_leave_tasks: dict[int, asyncio.Task] = {}
         self._status_messages: dict[int, tuple["Binding", str]] = {}
         self._register_handlers()
+        self.register_health()
 
     def find_binding(self, chat_id: int, thread_id: int | None) -> "Binding | None":
         """只在自己接的 bindings 子集里找, 避免跨 frontend 冲突"""
@@ -1027,6 +1028,10 @@ class TelegramFrontend(Frontend):
         # ─── ack middleware (👀 反应 + typing) ─────────
         @dp.message.middleware()
         async def ack_received(handler, event: Message, data):
+            # This is transport-level activity, including messages rejected by ACL.
+            # It prevents a healthy but idle private chat from being mistaken for a
+            # dead transport while keeping authorization semantics unchanged.
+            F_.state.channel_health.transport_activity(F_.health_id)
             # ★ ACL 全局规则: Boss 白名单 + source 必须有 binding 才 ack;
             # 未配置 source 直接 pass 到 handler (handler 内 _acl_ok 也会拒)
             if (
@@ -1038,6 +1043,7 @@ class TelegramFrontend(Frontend):
                 tid = thread_id_of(event)
                 b = F_.find_binding(event.chat.id, tid)
                 if b is not None:
+                    S.channel_health.inbound(F_.health_id)
                     try:
                         await event.bot.set_message_reaction(
                             chat_id=event.chat.id,
@@ -1708,15 +1714,21 @@ class TelegramFrontend(Frontend):
             me = await self.bot.get_me()
             self._bot_username = me.username
             self._bot_id = me.id
+            self.state.channel_health.connected(self.health_id)
         except Exception as e:
             log.warning(f"get_me err: {e}")
+            self.state.channel_health.error(self.health_id, e)
         try:
             await self.bot.set_my_commands(
                 [BotCommand(command=c, description=d) for c, d in self.backend.bot_commands]
             )
         except Exception as e:
             log.warning(f"set_my_commands err: {e}")
-        await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
+        try:
+            await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
+        except Exception as exc:
+            self.state.channel_health.error(self.health_id, exc)
+            raise
 
     async def stop(self) -> None:
         for chat_id in list(self._unknown_chat_leave_tasks):
@@ -1727,3 +1739,5 @@ class TelegramFrontend(Frontend):
             log.debug("telegram polling already stopped: %s", exc)
         finally:
             await self.bot.session.close()
+            if hasattr(self, "state"):
+                self.state.channel_health.stopped(self.health_id)

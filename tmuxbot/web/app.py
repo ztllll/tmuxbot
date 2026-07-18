@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import platform
@@ -317,6 +318,28 @@ def create_app(
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/channel-health")
+    def channel_health(
+        _session: AuthenticatedSession = Depends(current_session),
+    ) -> dict[str, object]:
+        """Read the bridge-owned, channel-neutral health audit without mutation."""
+        if runtime_paths is None:
+            return {"status": "unavailable", "channels": []}
+        try:
+            raw = runtime_paths.channel_health_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except FileNotFoundError:
+            return {"status": "starting", "channels": []}
+        except (OSError, ValueError):
+            log.warning("channel health audit is unreadable", exc_info=True)
+            return {"status": "degraded", "channels": []}
+        channels = data.get("channels") if isinstance(data, dict) else None
+        return {
+            "status": "ok" if isinstance(channels, list) else "degraded",
+            "generated_at": data.get("generated_at") if isinstance(data, dict) else None,
+            "channels": channels if isinstance(channels, list) else [],
+        }
 
     @app.get("/api/auth/status")
     def auth_status(response: Response) -> dict[str, bool | str | int | None]:

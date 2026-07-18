@@ -287,6 +287,7 @@ class FeishuFrontend(Frontend):
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_client = None   # lark.ws.Client 实例
+        self.register_health()
 
     # ────────── binding 查找 ──────────
 
@@ -1437,6 +1438,7 @@ class FeishuFrontend(Frontend):
 
     def _on_message(self, data) -> None:
         """lark worker 线程回调: P2ImMessageReceiveV1 → 跳回主 loop 处理"""
+        self.state.channel_health.transport_activity(self.health_id)
         if self._main_loop is None:
             return
         asyncio.run_coroutine_threadsafe(self._handle_message(data), self._main_loop)
@@ -1511,6 +1513,9 @@ class FeishuFrontend(Frontend):
             #     /init <目录名> → 用指定目录; /init → 用群名新建
             #   - 否则打印 chat_id 提示 (便于加新 binding) 后静默
             b = self.find_binding(str(incoming.source_id))
+            # An authorized, addressable message has entered the shared dispatch
+            # path. This is the same audit boundary used by Telegram.
+            self.state.channel_health.inbound(self.health_id)
             # ── /deinit 手动拆除该 source 的 binding (Boss; 已绑定群) ──
             # 放 ACL 白名单后、/init 检测附近, 在"未绑定静默"分支之前判断:
             # 有 binding → deprovision (复用 provision.deprovision_chat, 不重写);
@@ -1826,6 +1831,7 @@ class FeishuFrontend(Frontend):
             log.info(
                 f"feishu ws starting · app_id={self.app_id[:8]}… · {len(self.bindings)} bindings"
             )
+            self.state.channel_health.connected(self.health_id)
 
             def _run():
                 # ★ SDK 必须在同一 worker thread 里建新 event loop, 并覆盖 SDK 模块级 loop
@@ -1849,14 +1855,19 @@ class FeishuFrontend(Frontend):
                 exc = ws_task.exception()
                 if exc is not None:
                     log.warning("feishu ws exited with error: %r", exc)
+                    self.state.channel_health.error(self.health_id, exc)
                 else:
                     log.warning("feishu ws exited unexpectedly; reconnecting")
+                    self.state.channel_health.error(self.health_id, "websocket exited unexpectedly")
 
                 try:
                     self._ws_client.stop()
                 except Exception as e:
                     log.debug(f"feishu ws stop after exit err: {e}")
                 await asyncio.sleep(retry_delay)
+                self.state.channel_health.recovering(
+                    self.health_id, "websocket reconnect backoff"
+                )
                 retry_delay = min(retry_delay * 2, 30.0)
             finally:
                 stop_task.cancel()
@@ -1868,6 +1879,7 @@ class FeishuFrontend(Frontend):
                 self._ws_client.stop()
         except Exception as e:
             log.debug(f"feishu ws final stop err: {e}")
+        self.state.channel_health.stopped(self.health_id)
 
     async def stop(self) -> None:
         """停止 WebSocket 长连接"""

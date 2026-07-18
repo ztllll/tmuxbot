@@ -52,6 +52,7 @@ class State:
 
     def __init__(self) -> None:
         from aiogram import Bot  # 局部 import 避免顶层 aiogram 强依赖
+        from tmuxbot.channel_health import ChannelHealthRegistry
 
         self.boss_user_id: int = 0
         self.bindings: list[Binding] = []
@@ -82,6 +83,8 @@ class State:
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction
         self.command_transactions: dict[str, object] = {}
+        # 通道连接健康：Telegram/飞书共用同一份运行时审计口径。
+        self.channel_health = ChannelHealthRegistry()
 
     def fire(self, coro):
         """create_task + 强引用保存 + 完成时自动清理 + 异常自动 log"""

@@ -11,6 +11,7 @@ from tmuxbot.control_plane.models import RunEvent, TmuxPaneRecord
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.control_plane.tmux_inventory import TmuxInventory, TmuxInventoryError
 from tmuxbot.state import Binding
+from tmuxbot.paths import RuntimePaths
 from tmuxbot.web.app import BOOTSTRAP_COOKIE_NAME, COOKIE_NAME, create_app
 from tmuxbot.web.auth import AuthError, AuthService
 from tmuxbot.web.setup import SetupGrant
@@ -148,6 +149,27 @@ def test_web_api_requires_auth_and_csrf(tmp_path):
         "/api/auth/logout", headers={"X-CSRF-Token": csrf}
     ).status_code == 204
     assert client.get("/api/events").status_code == 401
+
+
+def test_channel_health_exposes_bridge_audit_after_login(tmp_path):
+    paths = RuntimePaths.discover({}, home=tmp_path)
+    paths.ensure_private_directories()
+    paths.channel_health_file.write_text(
+        '{"generated_at": 1, "channels": [{"id": "telegram:TG", "state": "connected"}]}',
+        encoding="utf-8",
+    )
+    settings = _settings(tmp_path)
+    repository = ControlPlaneRepository(settings.database_path)
+    repository.migrate()
+    client = TestClient(
+        create_app(settings, repository, FakeInventory(), [], runtime_paths=paths),
+        client=("127.0.0.1", 50000),
+    )
+    assert client.get("/api/channel-health").status_code == 401
+    _setup(client)
+    body = client.get("/api/channel-health").json()
+    assert body["status"] == "ok"
+    assert body["channels"][0]["id"] == "telegram:TG"
 
 
 def test_ephemeral_setup_grant_authorizes_loopback_setup_and_is_consumed(tmp_path):

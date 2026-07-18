@@ -23,6 +23,19 @@ class Frontend(ABC):
     name: str = "base"
     capabilities = ChannelCapabilities(name="base")
 
+    @property
+    def health_id(self) -> str:
+        """Stable per-credential identifier used by the shared supervisor."""
+        return f"{self.name}:{getattr(self, 'bot_token_env', 'default')}"
+
+    def register_health(self) -> None:
+        self.state.channel_health.register(
+            self.health_id,
+            channel=self.name,
+            credential_scope=getattr(self, "bot_token_env", "default"),
+            binding_count=len(getattr(self, "bindings", ())),
+        )
+
     @abstractmethod
     async def start_polling(self) -> None:
         """阻塞直到 polling 结束 (收 SIGTERM 或主动 stop)"""

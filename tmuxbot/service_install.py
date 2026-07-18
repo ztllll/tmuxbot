@@ -54,7 +54,30 @@ WantedBy=default.target
     temp.write_text(content, encoding="utf-8")
     os.chmod(temp, 0o600)
     os.replace(temp, unit_path)
+    refresh_service = unit_dir / "tmuxbot-bridge-refresh@.service"
+    refresh_service.write_text(
+        "[Unit]\nDescription=Refresh tmuxbot channel bridge %i\n\n"
+        "[Service]\nType=oneshot\n"
+        "ExecStart=/usr/bin/systemctl --user restart %i.service\n",
+        encoding="utf-8",
+    )
+    refresh_timer = unit_dir / "tmuxbot-bridge-refresh@.timer"
+    refresh_timer.write_text(
+        "[Unit]\nDescription=Refresh tmuxbot channel bridge %i every six hours\n\n"
+        "[Timer]\nOnBootSec=30min\nOnUnitInactiveSec=6h\nPersistent=true\n"
+        "Unit=tmuxbot-bridge-refresh@%i.service\n\n"
+        "[Install]\nWantedBy=timers.target\n",
+        encoding="utf-8",
+    )
+    os.chmod(refresh_service, 0o600)
+    os.chmod(refresh_timer, 0o600)
     runner(["systemctl", "--user", "daemon-reload"])
     if start_now:
         runner(["systemctl", "--user", "enable", "--now", "tmuxbot.service"])
+        runner(
+            [
+                "systemctl", "--user", "enable", "--now",
+                "tmuxbot-bridge-refresh@tmuxbot.timer",
+            ]
+        )
     return unit_path

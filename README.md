@@ -92,7 +92,10 @@ systemctl --user restart tmuxbot
 systemctl --user stop tmuxbot
 ```
 
-bot crash 后 5 秒内自动拉起,无需手动守护。
+bot crash 后 5 秒内自动拉起,无需手动守护。`tmuxbot install-service --now` 还会启用
+同一套通道刷新定时器：每 6 小时重启 bridge 服务一次，Telegram 和飞书都走这条
+统一恢复路径；tmux/CLI 会话不受影响。运行中可在 WebUI 的
+`/api/channel-health` 查看只读连接审计（连接时间、最近收包、最近有效入站、恢复次数）。
 
 ### Web control plane
 

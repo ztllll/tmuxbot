@@ -23,6 +23,7 @@ class RuntimePaths:
     offsets_file: Path
     lock_file: Path
     hook_spool_file: Path
+    channel_health_file: Path
 
     @classmethod
     def discover(
@@ -68,6 +69,8 @@ class RuntimePaths:
             lock_file=_path(environ, "TMUXBOT_LOCK") or state_dir / "tmuxbot.lock",
             hook_spool_file=_path(environ, "TMUXBOT_HOOK_SPOOL")
             or state_dir / "claude-hooks.jsonl",
+            channel_health_file=_path(environ, "TMUXBOT_CHANNEL_HEALTH")
+            or state_dir / "channel-health.json",
         )
 
     def ensure_private_directories(self) -> None:

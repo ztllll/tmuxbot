@@ -21,4 +21,10 @@ def test_install_service_writes_user_unit_without_secrets(tmp_path: Path) -> Non
     assert calls == [
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", "tmuxbot.service"],
+        [
+            "systemctl", "--user", "enable", "--now",
+            "tmuxbot-bridge-refresh@tmuxbot.timer",
+        ],
     ]
+    assert (tmp_path / ".config/systemd/user/tmuxbot-bridge-refresh@.service").exists()
+    assert (tmp_path / ".config/systemd/user/tmuxbot-bridge-refresh@.timer").exists()

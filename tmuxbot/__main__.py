@@ -16,6 +16,7 @@ from pathlib import Path
 
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.channel_health import channel_health_audit_loop
 from tmuxbot import __version__
 from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
@@ -274,6 +275,10 @@ async def main(paths: RuntimePaths | None = None) -> None:
             loop.add_signal_handler(sig, handler)
         except Exception:
             pass
+
+    # One atomic audit file serves every installed frontend. WebUI and operators
+    # can inspect the exact same surface regardless of Telegram or Feishu.
+    S.fire(channel_health_audit_loop(S.channel_health, paths.channel_health_file, stop))
 
     # 多个 frontend 并发 polling
     polling_tasks = [asyncio.create_task(fe.start_polling()) for fe in frontends]
