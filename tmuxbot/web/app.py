@@ -1281,6 +1281,53 @@ def create_app(
         )
         return {"merged": True, "branch": record.branch}
 
+    @app.delete("/api/team-runs/{run_id}/worktrees/{task_id}/{attempt}")
+    def release_task_worktree(
+        run_id: str,
+        task_id: str,
+        attempt: int,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> dict[str, object]:
+        task = scheduler_call(lambda: scheduler_service().repository.get_team_task(run_id, task_id))
+        if task.state is not TeamTaskState.ACCEPTED:
+            raise HTTPException(status_code=409, detail="only an accepted task worktree may be released")
+        record = next(
+            (item for item in scheduler_service().repository.list_task_worktrees(run_id)
+             if item.task_id == task_id and item.attempt == attempt),
+            None,
+        )
+        if record is None:
+            raise HTTPException(status_code=404, detail="worktree not found")
+        if record.state == "released":
+            return {"released": True}
+        managed = scheduler_service().repository.get_managed_session(record.managed_session_id)
+        project = scheduler_service().repository.get_project(managed.project_id) if managed is not None else None
+        if managed is None or project is None:
+            raise HTTPException(status_code=409, detail="worktree session is unavailable")
+        worktree = TaskWorktree(run_id, task_id, attempt, Path(project.root_path), Path(record.path), record.branch)
+        try:
+            if not worktrees().is_merged(worktree):
+                raise HTTPException(status_code=409, detail="merge the accepted branch before release")
+            tmux_binary = shutil.which("tmux")
+            if tmux_binary is None:
+                raise HTTPException(status_code=503, detail="tmux is unavailable")
+            subprocess.run(
+                [tmux_binary, "kill-session", "-t", managed.tmux_session],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            worktrees().remove(worktree)
+        except WorktreeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        scheduler_service().repository.release_task_worktree(run_id, task_id, attempt, now=datetime.now(timezone.utc))
+        scheduler_service().repository.update_managed_session(
+            ManagedSession(
+                id=managed.id, project_id=managed.project_id, provider_id=managed.provider_id,
+                name=managed.name, tmux_session=managed.tmux_session, tmux_window=managed.tmux_window,
+                tmux_pane=managed.tmux_pane, status="released", created_at=managed.created_at,
+            )
+        )
+        return {"released": True}
+
     @app.post("/api/team-runs/{run_id}/start")
     def start_team_run(
         run_id: str,

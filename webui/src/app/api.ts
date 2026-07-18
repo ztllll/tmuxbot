@@ -361,3 +361,10 @@ export async function mergeTaskWorktree(runId: string, taskId: string, attempt: 
     { idempotency_key: `merge-${taskId}-${attempt}-${Date.now()}` },
   );
 }
+
+export async function releaseTaskWorktree(runId: string, taskId: string, attempt: number, csrfToken: string) {
+  return readJson<{ released: boolean }>(await fetch(
+    `/api/team-runs/${encodeURIComponent(runId)}/worktrees/${encodeURIComponent(taskId)}/${attempt}`,
+    { method: "DELETE", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken } },
+  ));
+}

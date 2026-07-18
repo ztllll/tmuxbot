@@ -65,6 +65,14 @@ class GitWorktreeManager:
         if merged.returncode != 0:
             raise WorktreeError(_git_error(merged))
 
+    def is_merged(self, worktree: TaskWorktree) -> bool:
+        result = self._git(
+            worktree.repository_root, "merge-base", "--is-ancestor", worktree.branch, "HEAD"
+        )
+        if result.returncode in {0, 1}:
+            return result.returncode == 0
+        raise WorktreeError(_git_error(result))
+
     def _existing_worktree(self, path: Path, repository_root: Path) -> TaskWorktree | None:
         if not (path / ".git").exists():
             return None
