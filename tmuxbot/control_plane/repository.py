@@ -587,6 +587,7 @@ class ControlPlaneRepository:
         task_id: str,
         *,
         event_id: str,
+        dispatch_session_id: str | None = None,
         now: datetime,
     ) -> tuple[TeamTask, TeamAgent] | None:
         with self._connection() as db:
@@ -685,7 +686,7 @@ class ControlPlaneRepository:
                     run_id,
                     task_id,
                     next_attempt,
-                    agent_row["managed_session_id"],
+                    dispatch_session_id or agent_row["managed_session_id"],
                     json.dumps(envelope, ensure_ascii=False, sort_keys=True),
                     now.isoformat(),
                 ),

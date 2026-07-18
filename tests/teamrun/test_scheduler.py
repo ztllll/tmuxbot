@@ -31,6 +31,15 @@ class FailingTmuxSender(FakeTmuxSender):
         raise RuntimeError("tmux transport failed after unknown write boundary")
 
 
+class FakeWorkspaceFactory:
+    def __init__(self):
+        self.calls = []
+
+    def prepare(self, *, run_id, task, agent, attempt):
+        self.calls.append((run_id, task.task_id, agent.agent_id, attempt))
+        return "tmux-isolated-worktree"
+
+
 def scheduler(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
@@ -131,6 +140,29 @@ def test_failed_dispatch_is_persisted_as_uncertain_and_never_blindly_resent(tmp_
     assert affected == ["uncertain-run"]
     assert len(sender.calls) == 1
     assert repo.get_team_run("uncertain-run").tasks[0].state is TeamTaskState.OPERATOR_REQUIRED
+
+
+def test_writing_task_dispatches_to_its_isolated_workspace_session(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    sender = FakeTmuxSender()
+    factory = FakeWorkspaceFactory()
+    service = TeamRunScheduler(repo, sender, clock=lambda: NOW, workspace_factory=factory)
+    service.create_deterministic_run(
+        run_id="worktree-run", goal="isolated write", agents={
+            AgentRole.COORDINATOR: "tmux-coordinator",
+            AgentRole.IMPLEMENTER: "tmux-implementer",
+            AgentRole.REVIEWER: "tmux-reviewer",
+        }, tasks=[{
+            "task_id": "write", "title": "write", "goal": "write safely", "role": "implementer",
+            "dependencies": [], "requires_write": True, "max_attempts": 1,
+        }], idempotency_key="create",
+    )
+
+    service.start("worktree-run", idempotency_key="start")
+
+    assert factory.calls == [("worktree-run", "write", "worktree-run:implementer", 1)]
+    assert sender.calls[0][0] == "tmux-isolated-worktree"
 
 
 @pytest.mark.parametrize(

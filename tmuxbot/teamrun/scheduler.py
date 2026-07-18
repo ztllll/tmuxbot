@@ -28,6 +28,10 @@ class TmuxTaskSender(Protocol):
     def send(self, managed_session_id: str, envelope: dict[str, Any]) -> None: ...
 
 
+class TaskWorkspaceFactory(Protocol):
+    def prepare(self, *, run_id: str, task: TeamTask, agent: TeamAgent, attempt: int) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ArtifactInput:
     kind: str
@@ -42,10 +46,12 @@ class TeamRunScheduler:
         sender: TmuxTaskSender,
         *,
         clock: Callable[[], datetime] | None = None,
+        workspace_factory: TaskWorkspaceFactory | None = None,
     ) -> None:
         self.repository = repository
         self.sender = sender
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.workspace_factory = workspace_factory
 
     def create_deterministic_run(
         self,
@@ -246,11 +252,20 @@ class TeamRunScheduler:
 
     def _dispatch_ready(self, run_id: str) -> None:
         self.repository.refresh_task_readiness(run_id, now=self.clock())
+        snapshot = self.repository.get_team_run(run_id)
+        agents_by_role = {agent.role: agent for agent in snapshot.agents}
         for task in self.repository.list_ready_tasks(run_id):
+            dispatch_session_id = None
+            if task.requires_write and self.workspace_factory is not None:
+                agent = agents_by_role[task.role]
+                dispatch_session_id = self.workspace_factory.prepare(
+                    run_id=run_id, task=task, agent=agent, attempt=task.attempt + 1
+                )
             claimed = self.repository.claim_team_task(
                 run_id,
                 task.task_id,
                 event_id=f"teamrun:{run_id}:dispatch:{task.task_id}:{task.attempt + 1}",
+                dispatch_session_id=dispatch_session_id,
                 now=self.clock(),
             )
             if claimed is None:

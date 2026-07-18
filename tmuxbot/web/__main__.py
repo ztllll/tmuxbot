@@ -19,6 +19,8 @@ from tmuxbot.web.settings import WebSettings
 from tmuxbot.web.terminal import TerminalService
 from tmuxbot.teamrun.scheduler import TeamRunScheduler
 from tmuxbot.teamrun.tmux_sender import TmuxManagedSender
+from tmuxbot.teamrun.workspace import TaskWorkspaceFactory
+from tmuxbot.teamrun.worktree import GitWorktreeManager
 
 
 def create_automatic_setup_grant(
@@ -88,7 +90,13 @@ def build_app():
             settings, repository, S.bindings
         )
         options["runtime_paths"] = paths
-        scheduler = TeamRunScheduler(repository, TmuxManagedSender(repository))
+        scheduler = TeamRunScheduler(
+            repository,
+            TmuxManagedSender(repository),
+            workspace_factory=TaskWorkspaceFactory(
+                repository, GitWorktreeManager(paths.data_dir / "worktrees")
+            ),
+        )
         scheduler.reconcile()
         options["teamrun_scheduler"] = scheduler
     app = create_app(
