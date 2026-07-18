@@ -1741,6 +1741,16 @@ class FeishuFrontend(Frontend):
                 await self.send_html(chat_id, None, self._list_projects())
                 return
 
+            if text.split(maxsplit=1)[0] in {"/teamrun", "/team"}:
+                from tmuxbot.paths import RuntimePaths
+                from tmuxbot.teamrun.projection import render_latest_teamrun
+
+                paths = RuntimePaths.discover(
+                    os.environ, legacy_project_dir=Path(__file__).resolve().parents[2]
+                )
+                await self.send_html(chat_id, None, render_latest_teamrun(paths.database_file))
+                return
+
             # ── 👀 已读 reaction (ACL 通过后打, 失败不影响主流程) ──
             self.state.last_active[b.name] = time.time()
             try:

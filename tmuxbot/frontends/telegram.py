@@ -1117,6 +1117,17 @@ class TelegramFrontend(Frontend):
             except Exception:
                 pass
 
+        @dp.message(Command("teamrun", "team"))
+        async def cmd_teamrun(m: Message):
+            b = await F_._resolve_binding_or_reply(m)
+            if not b:
+                return
+            from tmuxbot.paths import RuntimePaths
+            from tmuxbot.teamrun.projection import render_latest_teamrun
+
+            paths = RuntimePaths.discover(os.environ, legacy_project_dir=Path(__file__).resolve().parents[2])
+            await F_.send_html(m.chat.id, thread_id_of(m), render_latest_teamrun(paths.database_file))
+
         # ─── /esc /cc /eof ─────────
         async def _send_key(m: Message, key: str, label: str):
             b = await F_._resolve_binding_or_reply(m)
