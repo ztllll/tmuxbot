@@ -1,5 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
+import asyncio
+import json
 
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.frontends.feishu import FeishuFrontend
@@ -129,3 +131,52 @@ def test_feishu_panel_model_action_schedules_native_model_command(tmp_path):
 
     assert response.toast.type == "success"
     assert scheduled == [(b, "oc_alpha", "cmd_model")]
+
+
+def test_feishu_forwarded_interactive_card_is_dispatched_to_tmux(tmp_path, monkeypatch):
+    b = binding(tmp_path)
+    instance = FeishuFrontend.__new__(FeishuFrontend)
+    instance.bindings = [b]
+    instance.boss_open_ids = {"ou_boss"}
+    instance.group_only_when_mentioned = False
+    instance.bot_open_id = "ou_bot"
+    instance._outbound_message_ids = set()
+    instance.bot_token_env = "FEISHU"
+    instance.backend = SimpleNamespace(name="codex")
+    from tmuxbot.state import State
+
+    instance.state = State()
+    instance.state.channel_health.register(
+        instance.health_id, channel="feishu", credential_scope="FEISHU", binding_count=1
+    )
+    delivered: list[str] = []
+
+    async def dispatch(_frontend, _backend, _binding, _state, _chat_id, _thread_id, text):
+        delivered.append(text)
+
+    monkeypatch.setattr("tmuxbot.dispatch.dispatch_incoming_text", dispatch)
+    card = {
+        "schema": "2.0",
+        "header": {"title": {"content": "任务：发布"}},
+        "body": {"elements": [{"tag": "markdown", "content": "部署并验证。"}]},
+    }
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            message=SimpleNamespace(
+                chat_id="oc_alpha",
+                chat_type="p2p",
+                message_type="interactive",
+                message_id="om_card",
+                content=json.dumps(card, ensure_ascii=False),
+                mentions=[],
+                parent_id=None,
+                root_id=None,
+                reply_to_message_id=None,
+            ),
+            sender=SimpleNamespace(sender_id=SimpleNamespace(open_id="ou_boss")),
+        )
+    )
+
+    asyncio.run(instance._handle_message(data))
+
+    assert delivered == ["任务：发布\n部署并验证。"]
