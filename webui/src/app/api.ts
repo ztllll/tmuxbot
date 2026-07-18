@@ -297,6 +297,10 @@ export type DispatchReceipt = {
   state: "pending" | "tmux_written" | "uncertain"; created_at: string;
   tmux_written_at: string | null; last_error: string | null;
 };
+export type TaskWorktree = {
+  task_id: string; attempt: number; path: string; branch: string;
+  managed_session_id: string; state: "active" | "released";
+};
 
 export async function createTeamRun(
   input: { runId: string; goal: string; coordinator: string; implementer: string; reviewer: string; tasks: TeamTaskInput[] },
@@ -344,4 +348,8 @@ export async function getTeamRunEvents(runId: string): Promise<TeamRunEvent[]> {
 
 export async function getDispatchReceipts(runId: string): Promise<DispatchReceipt[]> {
   return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/dispatches`, { credentials: "same-origin" }));
+}
+
+export async function getTaskWorktrees(runId: string): Promise<TaskWorktree[]> {
+  return readJson(await fetch(`/api/team-runs/${encodeURIComponent(runId)}/worktrees`, { credentials: "same-origin" }));
 }

@@ -10,7 +10,7 @@ function response(body: unknown): Response {
 
 test("重新打开页面时恢复进行中的 TeamRun", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
-    if (String(input).includes("/events") || String(input).includes("/dispatches")) {
+    if (String(input).includes("/events") || String(input).includes("/dispatches") || String(input).includes("/worktrees")) {
       return Promise.resolve(response([]));
     }
     return Promise.resolve(response({
