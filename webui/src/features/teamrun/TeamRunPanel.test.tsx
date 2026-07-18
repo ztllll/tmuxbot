@@ -33,5 +33,5 @@ test("重新打开页面时恢复进行中的 TeamRun", async () => {
   );
 
   expect(await screen.findByText("恢复发布任务")).toBeVisible();
-  expect(screen.getByText("状态 working · 尝试 1")).toBeVisible();
+  expect(screen.getByText("状态 工作中 · working · 第 1 次尝试")).toBeVisible();
 });

@@ -7,6 +7,26 @@ import {
 
 type DraftTask = TeamTaskInput;
 
+const stateLabel: Record<string, string> = {
+  draft: "待启动", running: "运行中", paused: "已暂停", completed: "已完成",
+  failed: "失败", operator_required: "需要人工处理", stopped: "已停止",
+  pending: "等待依赖", ready: "等待调度", assigned: "已分配", working: "工作中",
+  review: "等待审查", accepted: "已验收", blocked: "已阻塞", retrying: "准备重试",
+};
+const eventLabel: Record<string, string> = {
+  "teamrun.created": "已创建协作任务", "teamrun.running": "协作已启动",
+  "teamrun.paused": "协作已暂停", "teamrun.completed": "协作已完成",
+  "teamtask.ready": "任务依赖已满足", "teamtask.assigned": "任务已分配给 CLI",
+  "teamtask.working": "CLI 开始执行", "worker.task.claimed": "CLI 已确认领取",
+  "worker.task.progress": "CLI 已更新进度", "worker.artifact.published": "CLI 已发布证据",
+  "worker.task.completed": "CLI 已提交完成", "teamtask.review_requested": "已交给独立审查",
+  "worker.review.completed": "审查员已提交结论", "teamtask.review_approved": "审查通过",
+  "teamtask.review_rejected": "审查退回修改", "teamtask.blocked": "任务已阻塞",
+  "teamtask.dispatch_uncertain": "tmux 投递状态不确定",
+};
+function labelState(value: string) { return `${stateLabel[value] || value} · ${value}`; }
+function labelEvent(value: string) { return eventLabel[value] || value; }
+
 function defaultTask(goal = ""): DraftTask {
   return { taskId: "implementation", title: "实现与验证", goal, role: "implementer", dependencies: [], requiresWrite: true };
 }
@@ -82,7 +102,7 @@ export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
   }
 
   return <section className="teamrun-panel" id="teamrun">
-    <header><div><span>MULTI-LLM / 协作调度</span><h2>TeamRun 协作台</h2></div>{snapshot && <strong className={`run-state is-${snapshot.run.state}`}>{snapshot.run.state}</strong>}</header>
+    <header><div><span>MULTI-LLM / 协作调度</span><h2>TeamRun 协作台</h2></div>{snapshot && <strong className={`run-state is-${snapshot.run.state}`}>{labelState(snapshot.run.state)}</strong>}</header>
     <p className="operator-notice" role="status">{notice}</p>
     {!snapshot ? <form className="teamrun-form" onSubmit={create}>
       <label className="goal-field"><span>统一目标</span><textarea value={goal} onChange={(event) => { setGoal(event.target.value); if (tasks.length === 1 && !tasks[0].goal) updateTask(0, { goal: event.target.value }); }} placeholder="例如：完成 WebUI 调度页，由 Codex 编码，Claude 审查" required /></label>
@@ -91,8 +111,8 @@ export default function TeamRunPanel({ sessions, csrfToken, runs, onRefresh }: {
       <button className="primary-action" disabled={busy || sessions.length < 3}>{busy ? "正在调度…" : "创建并启动任务图"}</button>{sessions.length < 3 && <small>请先创建至少 3 个受管 CLI 会话。</small>}
     </form> : <div className="run-console">
       <div className="run-goal"><span>协作目标 / GOAL</span><strong>{snapshot.run.goal}</strong></div>
-      <div className="task-board">{snapshot.tasks.map((task) => { const dependencies = task.dependencies || []; return <article className={`task-track is-${task.state}`} key={task.task_id}><span className={`status-mark is-${task.state}`} /><div><strong>{task.title}</strong><small>状态 {task.state} · 尝试 {task.attempt}</small>{(task.role || dependencies.length > 0) && <small>{task.role || "实施"} · {dependencies.length ? `依赖 ${dependencies.join("、")}` : "无依赖"}</small>}</div><div className="task-actions">{task.state === "working" && <button className="primary-action" disabled={busy} onClick={() => void complete(task.task_id, task.assignee_agent_id)}>登记证据</button>}{task.state === "review" && <button className="primary-action" disabled={busy} onClick={() => { setReviewingTask(task.task_id); setReviewNotes(""); }}>审查任务</button>}</div>{reviewingTask === task.task_id && <div className="review-sheet"><label>审查结论<textarea autoFocus value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} placeholder="说明通过依据或退回原因" /></label><button className="secondary-action" onClick={() => setReviewingTask(null)}>取消</button><button className="danger-action" disabled={busy} onClick={() => void review(task.task_id, "rejected")}>退回修改</button><button className="primary-action" disabled={busy} onClick={() => void review(task.task_id, "approved")}>通过审查</button></div>}</article>; })}</div>
-      <section className="teamrun-audit" aria-label="协作事件审计"><header><div><span>EVENT AUDIT / 可审计协作过程</span><h3>运行事件与 tmux 投递回执</h3></div><button className="secondary-action" onClick={() => void refresh()}>刷新</button></header><div className="dispatch-receipts">{dispatches.map((dispatch) => <div key={dispatch.command_id} className={`dispatch-receipt is-${dispatch.state}`}><strong>{dispatch.task_id} · #{dispatch.attempt}</strong><span>{dispatch.state === "tmux_written" ? "已写入 tmux" : dispatch.state === "pending" ? "等待投递" : "投递不确定，需人工确认"}</span>{dispatch.last_error && <small>{dispatch.last_error}</small>}</div>)}{!dispatches.length && <small>尚未生成 tmux 投递记录。</small>}</div><ol className="event-timeline">{events.slice().reverse().map((item) => <li key={item.event_id}><time>{new Date(item.occurred_at).toLocaleTimeString()}</time><strong>{item.event_type}</strong><span>{item.aggregate_id}</span></li>)}{!events.length && <li>尚无事件；开始 TeamRun 后会显示可核验的协作过程。</li>}</ol></section>
+      <div className="task-board">{snapshot.tasks.map((task) => { const dependencies = task.dependencies || []; return <article className={`task-track is-${task.state}`} key={task.task_id}><span className={`status-mark is-${task.state}`} /><div><strong>{task.title}</strong><small>状态 {labelState(task.state)} · 第 {task.attempt} 次尝试</small>{(task.role || dependencies.length > 0) && <small>{task.role || "实施"} · {dependencies.length ? `依赖 ${dependencies.join("、")}` : "无依赖"}</small>}</div><div className="task-actions">{task.state === "working" && <button className="primary-action" disabled={busy} onClick={() => void complete(task.task_id, task.assignee_agent_id)}>登记证据</button>}{task.state === "review" && <button className="primary-action" disabled={busy} onClick={() => { setReviewingTask(task.task_id); setReviewNotes(""); }}>审查任务</button>}</div>{reviewingTask === task.task_id && <div className="review-sheet"><label>审查结论<textarea autoFocus value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} placeholder="说明通过依据或退回原因" /></label><button className="secondary-action" onClick={() => setReviewingTask(null)}>取消</button><button className="danger-action" disabled={busy} onClick={() => void review(task.task_id, "rejected")}>退回修改</button><button className="primary-action" disabled={busy} onClick={() => void review(task.task_id, "approved")}>通过审查</button></div>}</article>; })}</div>
+      <section className="teamrun-audit" aria-label="协作事件审计"><header><div><span>EVENT AUDIT / 可审计协作过程</span><h3>运行事件与 tmux 投递回执</h3></div><button className="secondary-action" onClick={() => void refresh()}>刷新</button></header><div className="dispatch-receipts">{dispatches.map((dispatch) => <div key={dispatch.command_id} className={`dispatch-receipt is-${dispatch.state}`}><strong>{dispatch.task_id} · #{dispatch.attempt}</strong><span>{dispatch.state === "tmux_written" ? "已写入 tmux" : dispatch.state === "pending" ? "等待投递" : "投递不确定，需人工确认"}</span>{dispatch.last_error && <small>{dispatch.last_error}</small>}</div>)}{!dispatches.length && <small>尚未生成 tmux 投递记录。</small>}</div><ol className="event-timeline">{events.slice().reverse().map((item) => <li key={item.event_id}><time>{new Date(item.occurred_at).toLocaleTimeString()}</time><strong>{labelEvent(item.event_type)}</strong><span>{item.aggregate_id}</span></li>)}{!events.length && <li>尚无事件；开始 TeamRun 后会显示可核验的协作过程。</li>}</ol></section>
       <div className="run-actions"><button className="secondary-action" onClick={() => snapshot && void commandTeamRun(snapshot.run.run_id, "pause", csrfToken).then(setSnapshot)}>暂停</button><button className="secondary-action" onClick={() => snapshot && void commandTeamRun(snapshot.run.run_id, "resume", csrfToken).then(setSnapshot)}>继续</button></div>
     </div>}
   </section>;
