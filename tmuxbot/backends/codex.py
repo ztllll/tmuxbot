@@ -30,7 +30,7 @@ from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.core.sessions import SessionIdentity
-from tmuxbot.providers.codex_config import codex_config_path, codex_model_from_config
+from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import (
     tmux_capture, tmux_has_session, tmux_new_session,
     tmux_pane_command, tmux_pane_process_commands, tmux_safe_launch, tmux_send_key,
@@ -44,33 +44,22 @@ log = logging.getLogger("tmuxbot")
 
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
-CODEX_DEFAULT_MODEL = "gpt-5.6-terra"
 # --dangerously-bypass-approvals-and-sandbox: codex 最高权限(跳过所有审批 + 无沙箱),
 # 等价 claude 的 --dangerously-skip-permissions。bot 是 tmux 桥接, 命令需无人值守自动执行。
 # CODEX_BIN 仍可配绝对路径(防 tmux shell PATH 不含 ~/.npm-global/bin)。
-# 保留 start_cmd 属性给状态/调试代码读取；真正启动时用 _start_cmd() 运行时读 config.toml。
-START_CMD = f"{CODEX_BIN} --dangerously-bypass-approvals-and-sandbox"
-
-
 def _start_cmd() -> str:
     """Build a fresh Codex launch from the current user config at launch time."""
-    model = codex_model_from_config(codex_config_path())
-    arguments = [CODEX_BIN, "--dangerously-bypass-approvals-and-sandbox"]
-    if model is not None:
-        arguments.extend(("-m", model))
+    arguments = [CODEX_BIN, *(provider_launch_arguments("codex") or ())]
     return " ".join(shlex.quote(argument) for argument in arguments)
 
 
 def _resume_cmd(session_id: str) -> str:
     """Resume a transcript while explicitly applying Codex's current default model."""
-    model = codex_model_from_config(codex_config_path())
     arguments = [
         CODEX_BIN,
         "resume",
-        "--dangerously-bypass-approvals-and-sandbox",
+        *(provider_launch_arguments("codex") or ()),
     ]
-    if model is not None:
-        arguments.extend(("-m", model))
     arguments.append(session_id)
     return " ".join(shlex.quote(argument) for argument in arguments)
 
@@ -270,7 +259,11 @@ class CodexBackend(Backend):
     pane_command_name = "node"
     pane_command_names = frozenset({"node", "codex"})
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
-    start_cmd = START_CMD
+
+    @property
+    def start_cmd(self) -> str:
+        """Current launch command, including the CLI-owned configured model."""
+        return _start_cmd()
 
     @property
     def capabilities(self) -> ProviderCapabilities:

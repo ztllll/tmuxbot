@@ -59,7 +59,8 @@ def _run_ensure_running(monkeypatch, tmp_path: Path, pane_commands: list[str]) -
 
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
     monkeypatch.setattr(
-        "tmuxbot.backends.codex.codex_config_path", lambda: tmp_path / "missing-config.toml"
+        "tmuxbot.providers.adapters.codex_launch_arguments",
+        lambda: ("--dangerously-bypass-approvals-and-sandbox",),
     )
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_pane_command", pane_command)
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_safe_launch", safe_launch)
@@ -85,7 +86,7 @@ def test_codex_ensure_running_accepts_standalone_binary(tmp_path, monkeypatch):
 def test_codex_ensure_running_starts_from_shell_once(tmp_path, monkeypatch):
     sent = _run_ensure_running(monkeypatch, tmp_path, ["bash", "node"])
 
-    assert sent == [CodexBackend.start_cmd]
+    assert sent == [CodexBackend().start_cmd]
 
 
 def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeypatch):
@@ -97,7 +98,8 @@ def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeyp
 
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
     monkeypatch.setattr(
-        "tmuxbot.backends.codex.codex_config_path", lambda: tmp_path / "missing-config.toml"
+        "tmuxbot.providers.adapters.codex_launch_arguments",
+        lambda: ("--dangerously-bypass-approvals-and-sandbox",),
     )
     monkeypatch.setattr(
         "tmuxbot.backends.codex.tmux_pane_command", lambda _target: next(commands, "node")
@@ -122,8 +124,6 @@ def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeyp
 
 
 def test_codex_ensure_running_passes_configured_model_on_resume(tmp_path, monkeypatch):
-    config = tmp_path / "config.toml"
-    config.write_text('model = "gpt-5.6-sol"\n', encoding="utf-8")
     session_id = "019f450e-c966-7b51-b9c0-975d2b1acf7b"
     b = _binding(tmp_path)
     b.provider_session_id = session_id
@@ -134,7 +134,10 @@ def test_codex_ensure_running_passes_configured_model_on_resume(tmp_path, monkey
     monkeypatch.setattr(
         "tmuxbot.backends.codex.tmux_pane_command", lambda _target: next(commands, "node")
     )
-    monkeypatch.setattr("tmuxbot.backends.codex.codex_config_path", lambda: config)
+    monkeypatch.setattr(
+        "tmuxbot.providers.adapters.codex_launch_arguments",
+        lambda: ("--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-sol"),
+    )
 
     async def safe_launch(_target: str, text: str, *, allowed_shells) -> bool:
         sent.append(text)

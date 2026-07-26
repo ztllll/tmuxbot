@@ -7,7 +7,10 @@ model command may be offered in the terminal workspace instead.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+
+from tmuxbot.providers.codex_config import codex_launch_arguments
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +20,7 @@ class ProviderAdapter:
     launch_arguments: tuple[str, ...]
     model_command: str | None
     teamrun_instruction: str
+    launch_arguments_resolver: Callable[[], tuple[str, ...]] | None = None
 
     @property
     def supports_model_picker(self) -> bool:
@@ -37,6 +41,7 @@ _ADAPTERS = {
         launch_arguments=("--dangerously-bypass-approvals-and-sandbox",),
         model_command="/model",
         teamrun_instruction="使用 Codex 的 shell 工具执行 worker 回报命令。",
+        launch_arguments_resolver=lambda: codex_launch_arguments(),
     ),
 }
 
@@ -51,6 +56,20 @@ def managed_provider_names() -> frozenset[str]:
     """Names that can be launched as managed LLM sessions."""
 
     return frozenset(_ADAPTERS)
+
+
+def provider_launch_arguments(binary_name: str) -> tuple[str, ...] | None:
+    """Return current safe launch arguments for one registered provider.
+
+    Providers without a dynamic resolver retain their adapter's static
+    permission arguments.  A new provider only needs one registry entry, with
+    an optional resolver for its own config format.
+    """
+    adapter = get_provider_adapter(binary_name)
+    if adapter is None:
+        return None
+    resolver = adapter.launch_arguments_resolver
+    return resolver() if resolver is not None else adapter.launch_arguments
 
 
 def provider_capabilities(binary_name: str) -> dict[str, object]:

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.hooks.claude import default_hook_spool_path, read_hook_spool
 from tmuxbot.quota import fetch_quota
+from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_safe_launch
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
 
@@ -38,13 +40,13 @@ _CONTEXT_USAGE_MODEL_RE = re.compile(
     r"\*\*Model:\*\*\s*`?([A-Za-z0-9][A-Za-z0-9_.-]*)`?",
     re.I,
 )
-# 保留 start_cmd 属性给状态/调试代码读取;真正启动时用 _start_cmd() 运行时读 CLAUDE_BIN。
-START_CMD = f'{os.getenv("CLAUDE_BIN", "claude")} --dangerously-skip-permissions'
-
-
 def _start_cmd() -> str:
     # CLAUDE_BIN 可配绝对路径, 防 systemd/tmux shell PATH 不含 ~/.local/bin 或命中旧 npm 入口。
-    return f'{os.getenv("CLAUDE_BIN", "claude")} --dangerously-skip-permissions'
+    arguments = [
+        os.getenv("CLAUDE_BIN", "claude"),
+        *(provider_launch_arguments("claude") or ()),
+    ]
+    return " ".join(shlex.quote(argument) for argument in arguments)
 
 
 # ────────── tool 中文化 + 关键参数提取 ──────────
@@ -488,7 +490,11 @@ def _parse_duration(raw: str) -> int:
 class ClaudeCodeBackend(Backend):
     name = "claude_code"
     pane_command_name = "claude"
-    start_cmd = START_CMD
+
+    @property
+    def start_cmd(self) -> str:
+        """Current launch command using the provider registry's policy."""
+        return _start_cmd()
 
     def __init__(self, hook_spool_path: Path | None = None) -> None:
         self.hook_spool_path = hook_spool_path or default_hook_spool_path()

@@ -11,8 +11,7 @@ from pathlib import Path
 
 from tmuxbot.control_plane.models import ManagedSession, RunEvent
 from tmuxbot.control_plane.repository import ControlPlaneRepository
-from tmuxbot.providers.adapters import get_provider_adapter
-from tmuxbot.providers.codex_config import codex_launch_arguments
+from tmuxbot.providers.adapters import get_provider_adapter, provider_launch_arguments
 from tmuxbot.teamrun.domain import TeamAgent, TeamTask
 from tmuxbot.teamrun.domain import TaskWorktreeRecord
 from tmuxbot.teamrun.worktree import GitWorktreeManager, TaskWorktree, WorktreeError
@@ -50,11 +49,7 @@ class TaskWorkspaceFactory:
             capture_output=True, text=True, timeout=5, check=False,
         )
         if check.returncode != 0:
-            launch_arguments = (
-                codex_launch_arguments()
-                if provider.binary_name == "codex"
-                else adapter.launch_arguments
-            )
+            launch_arguments = provider_launch_arguments(provider.binary_name) or ()
             launched = subprocess.run(
                 [
                     tmux_binary, "new-session", "-d", "-s", tmux_session, "-c", str(worktree.path),

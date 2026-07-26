@@ -1,6 +1,7 @@
 from tmuxbot.providers.adapters import (
     get_provider_adapter,
     managed_provider_names,
+    provider_launch_arguments,
     provider_capabilities,
 )
 
@@ -23,3 +24,18 @@ def test_provider_capabilities_do_not_expose_launch_arguments():
         "model_command": "/model",
     }
     assert provider_capabilities("unknown")["managed"] is False
+
+
+def test_provider_launch_arguments_uses_the_registered_dynamic_resolver(monkeypatch):
+    monkeypatch.setattr(
+        "tmuxbot.providers.adapters.codex_launch_arguments",
+        lambda: ("--dangerously-bypass-approvals-and-sandbox", "-m", "configured-model"),
+    )
+
+    assert provider_launch_arguments("codex") == (
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-m",
+        "configured-model",
+    )
+    assert provider_launch_arguments("claude") == ("--dangerously-skip-permissions",)
+    assert provider_launch_arguments("unknown") is None

@@ -52,9 +52,9 @@ from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.providers.adapters import (
     get_provider_adapter,
     managed_provider_names,
+    provider_launch_arguments,
     provider_capabilities,
 )
-from tmuxbot.providers.codex_config import codex_launch_arguments
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
 from tmuxbot.tmux import tmux_capture
@@ -709,11 +709,7 @@ def create_app(
             raise HTTPException(status_code=503, detail="tmux is unavailable")
         safe_provider = re.sub(r"[^a-z0-9]+", "-", provider.binary_name.lower()).strip("-")
         tmux_session = f"tmuxbot-{safe_provider}-{uuid.uuid4().hex[:8]}"
-        launch_arguments = (
-            codex_launch_arguments()
-            if provider.binary_name == "codex"
-            else adapter.launch_arguments
-        )
+        launch_arguments = provider_launch_arguments(provider.binary_name) or ()
         provider_argv = [provider.executable_path, *launch_arguments]
         # tmux accepts a command argv after its options. No browser-supplied command or target
         # enters this call; provider path and cwd come from server-verified records.
