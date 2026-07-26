@@ -58,6 +58,9 @@ def _run_ensure_running(monkeypatch, tmp_path: Path, pane_commands: list[str]) -
         return None
 
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        "tmuxbot.backends.codex.codex_config_path", lambda: tmp_path / "missing-config.toml"
+    )
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_pane_command", pane_command)
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_safe_launch", safe_launch)
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_capture", lambda _target, _lines: "›\ngpt-5")
@@ -94,6 +97,9 @@ def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeyp
 
     monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
     monkeypatch.setattr(
+        "tmuxbot.backends.codex.codex_config_path", lambda: tmp_path / "missing-config.toml"
+    )
+    monkeypatch.setattr(
         "tmuxbot.backends.codex.tmux_pane_command", lambda _target: next(commands, "node")
     )
 
@@ -112,6 +118,40 @@ def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeyp
 
     assert sent == [
         "codex resume --dangerously-bypass-approvals-and-sandbox " + session_id
+    ]
+
+
+def test_codex_ensure_running_passes_configured_model_on_resume(tmp_path, monkeypatch):
+    config = tmp_path / "config.toml"
+    config.write_text('model = "gpt-5.6-sol"\n', encoding="utf-8")
+    session_id = "019f450e-c966-7b51-b9c0-975d2b1acf7b"
+    b = _binding(tmp_path)
+    b.provider_session_id = session_id
+    commands = iter(["bash", "node"])
+    sent: list[str] = []
+
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        "tmuxbot.backends.codex.tmux_pane_command", lambda _target: next(commands, "node")
+    )
+    monkeypatch.setattr("tmuxbot.backends.codex.codex_config_path", lambda: config)
+
+    async def safe_launch(_target: str, text: str, *, allowed_shells) -> bool:
+        sent.append(text)
+        return True
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_safe_launch", safe_launch)
+    monkeypatch.setattr("tmuxbot.backends.codex.tmux_capture", lambda _target, _lines: "›\ngpt-5")
+    monkeypatch.setattr("tmuxbot.backends.codex.asyncio.sleep", no_sleep)
+
+    asyncio.run(CodexBackend().ensure_running(b))
+
+    assert sent == [
+        "codex resume --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-sol "
+        + session_id
     ]
 
 

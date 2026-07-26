@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "requests>=2.31",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +41,6 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "httpx>=0.28,<1",
-    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [tool.pytest.ini_options]

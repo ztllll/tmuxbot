@@ -73,6 +73,10 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 
 `CLAUDE_BIN` 会在拉起 Claude 时读取,避免 systemd/tmux 的非交互 shell `PATH` 找不到 `claude`,也避免命中坏掉的 npm 全局安装。`CODEX_BIN` 同理可指向 codex 绝对路径。
 
+Codex 的模型不由 tmuxbot 写死。每次新建或恢复 Codex TUI 时，tmuxbot 都读取
+`~/.codex/config.toml` 顶层 `model`，存在时传递 `-m <model>`；因此只要修改 Codex
+自身配置，之后的新会话和恢复会话都会自动使用新默认模型。配置缺失或无效时会省略 `-m`，交由 Codex 原生默认行为处理。
+
 Runtime V2 仍然直接操作 tmux 内的交互式 CLI。建议先配置
 `TMUXBOT_RUNTIME_V2=shadow`:线上继续发送兼容路径结果,同时只比较脱敏后的事件结构;
 日志无 mismatch 后再切 `on`。`TMUXBOT_CLAUDE_HOOKS=true` 会幂等安装 tmuxbot

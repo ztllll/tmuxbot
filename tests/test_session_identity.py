@@ -98,7 +98,7 @@ def test_claude_pending_handoff_prefers_newer_project_transcript(tmp_path, monke
     assert ClaudeCodeBackend().find_active_jsonl(b) == newer
 
 
-def test_codex_prefers_pinned_transcript_for_same_cwd(tmp_path, monkeypatch):
+def test_codex_prefers_pinned_transcript_when_no_newer_rollout_exists(tmp_path, monkeypatch):
     sessions = tmp_path / "codex-sessions"
     project = tmp_path / "project"
     project.mkdir()
@@ -106,8 +106,8 @@ def test_codex_prefers_pinned_transcript_for_same_cwd(tmp_path, monkeypatch):
     other = sessions / "2026" / "07" / "10" / "rollout-b.jsonl"
     _write_codex_rollout(pinned, project, "session-a")
     _write_codex_rollout(other, project, "session-b")
-    os.utime(pinned, (1, 1))
-    os.utime(other, (2, 2))
+    os.utime(pinned, (2, 2))
+    os.utime(other, (1, 1))
 
     b = _binding(tmp_path, "codex")
     b.provider_session_id = "session-a"
