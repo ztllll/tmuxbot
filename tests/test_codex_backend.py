@@ -82,7 +82,9 @@ def test_codex_ensure_running_accepts_standalone_binary(tmp_path, monkeypatch):
 def test_codex_ensure_running_starts_from_shell_once(tmp_path, monkeypatch):
     sent = _run_ensure_running(monkeypatch, tmp_path, ["bash", "node"])
 
-    assert sent == [CodexBackend.start_cmd]
+    assert sent == [
+        "codex --dangerously-bypass-approvals-and-sandbox -m gpt-5.6-terra"
+    ]
 
 
 def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeypatch):
@@ -111,7 +113,9 @@ def test_codex_ensure_running_resumes_bound_session_from_shell(tmp_path, monkeyp
     asyncio.run(CodexBackend().ensure_running(b))
 
     assert sent == [
-        "codex resume --dangerously-bypass-approvals-and-sandbox " + session_id
+        "codex resume --dangerously-bypass-approvals-and-sandbox "
+        "-m gpt-5.6-terra "
+        + session_id
     ]
 
 

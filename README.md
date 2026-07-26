@@ -123,12 +123,12 @@ journalctl --user -u tmuxbot -f
 
 ## 当前能力
 
-- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型选择始终调用当前 CLI 的原生 `/model` picker。
+- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型候选仍由当前 CLI 的原生 `/model` picker 提供。
 - **原生 Web TUI**:xterm.js 直接 attach 已登记 tmux target，默认只观察；显式接管后才允许键盘输入，断开浏览器不会终止 tmux 会话
 - **Web 通道向导**:可为受管会话配置 Telegram 或飞书，密钥只写入本机 `0600` 配置，不通过 API 回显
 - **TeamRun 多 LLM**:确定性 Coordinator / Implementer / Reviewer 三角色协作，唯一写租约、DAG、mailbox、Artifact、重试、独立验收和恢复；Implementer 交付证据后 Reviewer 自动收到只读审查包
 - **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
-- **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，不在 bot 中写死；面板会显示已读取的当前模型。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
+- **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时固定使用 `gpt-5.6-terra`；可在当前会话中用原生 `/model` 临时切换，但下次 bot 重启会恢复 Terra。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**:`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
 - **双 bot 共存**:`@your_claude_bot` 接 claude_code,`@your_codex_bot` 接 codex
 - **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart`

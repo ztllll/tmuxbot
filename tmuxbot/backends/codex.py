@@ -43,10 +43,14 @@ log = logging.getLogger("tmuxbot")
 
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
 CODEX_BIN = os.getenv("CODEX_BIN", "codex")
+CODEX_DEFAULT_MODEL = "gpt-5.6-terra"
 # --dangerously-bypass-approvals-and-sandbox: codex 最高权限(跳过所有审批 + 无沙箱),
 # 等价 claude 的 --dangerously-skip-permissions。bot 是 tmux 桥接, 命令需无人值守自动执行。
 # CODEX_BIN 仍可配绝对路径(防 tmux shell PATH 不含 ~/.npm-global/bin)。
-START_CMD = f"{CODEX_BIN} --dangerously-bypass-approvals-and-sandbox"
+CODEX_LAUNCH_OPTIONS = (
+    f"--dangerously-bypass-approvals-and-sandbox -m {CODEX_DEFAULT_MODEL}"
+)
+START_CMD = f"{CODEX_BIN} {CODEX_LAUNCH_OPTIONS}"
 
 
 # ────────── 工具名中文化 (codex 工具集) ──────────
@@ -647,7 +651,7 @@ class CodexBackend(Backend):
         start = START_CMD
         if session_id:
             start = (
-                f"{CODEX_BIN} resume --dangerously-bypass-approvals-and-sandbox "
+                f"{CODEX_BIN} resume {CODEX_LAUNCH_OPTIONS} "
                 f"{shlex.quote(session_id)}"
             )
         launched = await tmux_safe_launch(
