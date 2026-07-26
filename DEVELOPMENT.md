@@ -386,10 +386,12 @@ RestartSec=5s
 `ensure_running(binding)` 逻辑(每次收到消息都会调):
 
 1. 检查 tmux session 是否存在,不存在则新建
-2. 检查 pane 当前命令是否为 claude,已在跑则跳过
-3. `${CLAUDE_BIN:-claude} --dangerously-skip-permissions --resume <session_id>` 重启(上下文不丢)
+2. 检查 pane 当前命令是否为对应 CLI,已在跑则跳过
+3. Claude 使用 `${CLAUDE_BIN:-claude} --dangerously-skip-permissions --resume <session_id>` 重启(上下文不丢)
+4. Codex 使用 `${CODEX_BIN:-codex} resume --dangerously-bypass-approvals-and-sandbox [-m <~/.codex/config.toml 的 model>] <session_id>` 重启(上下文不丢)；无历史会话的新启动同样读取该配置。配置缺失时不传 `-m`。
 
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
+> Codex 在受管会话重启后会应用当前 `~/.codex/config.toml` 的模型默认值；原生 `/model` 仍可用于当前运行会话的临时选择。
 
 ---
 

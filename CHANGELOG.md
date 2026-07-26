@@ -32,6 +32,7 @@
 
 ### Changed
 
+- 受管 Codex 会话的新建与 `--resume` 恢复均读取 `~/.codex/config.toml` 的 `model` 并显式传入 `-m`；配置变更会自动用于下一次启动或恢复。
 - Telegram 与飞书统一使用 `IncomingMessage` / `ReplyEnvelope`;回复尾部由 Claude/Codex provider 解析 `TerminalStatus`,不再由渠道猜测屏幕最后一行。
 - Claude `Stop.last_assistant_message` 作为优先最终回复源,JSONL 保留工具、思考、用量与历史数据并对重复最终回复去重。
 - `pyproject.toml` 补齐标准 package metadata、console entry point 与项目链接。
