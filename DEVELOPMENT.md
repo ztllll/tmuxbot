@@ -393,6 +393,13 @@ RestartSec=5s
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
 > Codex 在受管会话重启后会应用当前 `~/.codex/config.toml` 的模型默认值；原生 `/model` 仍可用于当前运行会话的临时选择。
 
+默认 `TMUXBOT_LIFECYCLE_ENABLED=0`：bridge 启动和后台巡检不会创建缺失的 tmux。
+人工 `tmux kill-session -t <name>` 或 IM `/tmuxstop` 后，会话保持关闭；下一条消息进入共享
+dispatch 时才调用 `ensure_running` 恢复。若部署明确需要常驻自愈，设置
+`TMUXBOT_LIFECYCLE_ENABLED=1` 启用周期巡检。
+Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
+不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
+
 ---
 
 ## 7. 当前命令清单
@@ -404,6 +411,7 @@ RestartSec=5s
 | `/esc` | 发 Escape 到 TUI(中断当前生成) |
 | `/cc` | 发 C-c(取消/清空输入) |
 | `/eof` | 发 C-d(退出 claude) |
+| `/tmuxstop` | 关闭整个 tmux，保留 binding/历史；下一条消息按需恢复 |
 | `/screen` | 抓 tmux 屏幕推回 |
 | `/info` | 聚合统计(累计 token / 缓存命中率,只读 jsonl) |
 | `/restart` | C-c + C-d + ensure_running |

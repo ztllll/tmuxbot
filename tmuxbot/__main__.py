@@ -27,7 +27,6 @@ from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
-from tmuxbot.tmux import tmux_has_session, tmux_new_session
 from tmuxbot.utils import save_offsets
 from tmuxbot.validation import TELEGRAM_TOKEN_BACKENDS
 
@@ -248,9 +247,6 @@ async def main(paths: RuntimePaths | None = None) -> None:
     # 启动每个 binding 的 jsonl tailer + 每个 frontend 一个 heartbeat
     for fe in frontends:
         for b in fe.bindings:
-            if not tmux_has_session(b.tmux_session):
-                log.warning(f"[{b.name}] tmux session not found, creating")
-                tmux_new_session(b.tmux_session, b.cwd)
             S.fire(jsonl_poll_loop(b, fe.backend, fe, S, paths.offsets_file))
         S.fire(heartbeat_typing_loop(S, fe))
     control_plane = ControlPlaneRepository(paths.database_file)

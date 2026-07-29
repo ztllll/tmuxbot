@@ -43,12 +43,14 @@ def test_telegram_panel_markup_is_chinese_and_contains_common_commands(tmp_path)
         "Esc",
         "Ctrl-C",
         "重启 CLI",
+        "关闭 tmux",
         "刷新",
         "关闭",
     ]
     assert any(value.endswith(":cmd_model") for value in callbacks)
     assert any(value.endswith(":confirm_new") for value in callbacks)
     assert any(value.endswith(":confirm_restart") for value in callbacks)
+    assert any(value.endswith(":confirm_stop") for value in callbacks)
 
 
 def test_telegram_panel_new_session_uses_confirmation_keyboard(tmp_path):
@@ -63,6 +65,13 @@ def test_telegram_panel_restart_uses_confirmation_keyboard(tmp_path):
     labels = [button.text for row in markup.inline_keyboard for button in row]
 
     assert labels == ["确认重启 CLI", "返回面板"]
+
+
+def test_telegram_panel_stop_uses_confirmation_keyboard(tmp_path):
+    markup = build_telegram_panel_markup(binding(tmp_path), confirm_stop=True)
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+
+    assert labels == ["确认关闭 tmux", "返回面板"]
 
 
 def test_telegram_send_control_panel_uses_chinese_text_and_keyboard(tmp_path):

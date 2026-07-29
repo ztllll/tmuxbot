@@ -26,7 +26,12 @@ def test_project_and_managed_session_wizard_uses_server_records(
     assert project.status_code == 201
 
     observed: list[list[str]] = []
+    stopped_sessions: list[str] = []
     monkeypatch.setattr("tmuxbot.web.app.shutil.which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(
+        "tmuxbot.web.app.tmux_kill_session",
+        lambda name: stopped_sessions.append(name) or True,
+    )
 
     def run(argv, **kwargs):
         observed.append(argv)
@@ -52,6 +57,21 @@ def test_project_and_managed_session_wizard_uses_server_records(
     assert "browser-controlled" not in observed[0]
     assert client.get("/api/projects").json()[0]["name"] == "演示项目"
     assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
+
+    stopped = client.post(
+        f"/api/managed-sessions/{session.json()['id']}/stop",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert stopped.status_code == 204
+    assert stopped_sessions == [session.json()["tmux_target"].split(":", 1)[0]]
+    assert client.get("/api/managed-sessions").json()[0]["name"] == "Codex 实施"
+
+    monkeypatch.setattr("tmuxbot.web.app.tmux_kill_session", lambda _name: False)
+    failed_stop = client.post(
+        f"/api/managed-sessions/{session.json()['id']}/stop",
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert failed_stop.status_code == 503
 
     released = client.delete(
         f"/api/managed-sessions/{session.json()['id']}",

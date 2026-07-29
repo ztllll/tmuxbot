@@ -1,7 +1,7 @@
 """tmux/CLI 生命周期巡检。
 
-现有消息入口会按需调用 backend.ensure_running()。本模块把同一能力提升为后台
-watchdog: 按 bindings 周期性确认 tmux session、pane 内 CLI 都处于可用状态。
+消息入口会按需调用 backend.ensure_running()。后台 watchdog 是显式 opt-in：
+默认尊重人工关闭的 tmux，仅在下一条消息到达时重建；需要常驻自愈时才启用巡检。
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ DEFAULT_STARTUP_DELAY = 3.0
 
 
 def lifecycle_enabled() -> bool:
-    raw = os.getenv("TMUXBOT_LIFECYCLE_ENABLED", "1").strip().lower()
+    raw = os.getenv("TMUXBOT_LIFECYCLE_ENABLED", "0").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

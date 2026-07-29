@@ -12,6 +12,7 @@ from tmuxbot.control_plane.models import (
     TmuxPaneRecord,
 )
 from tmuxbot.state import Binding
+from tmuxbot.tmux import tmux_error_is_no_server
 
 
 PANE_ID_FORMAT = "#{pane_id}"
@@ -24,7 +25,6 @@ PANE_FIELD_FORMATS = (
     "#{pane_pid}",
 )
 PANE_ID_PATTERN = re.compile(rb"%\d+")
-NO_SERVER_PATTERN = re.compile(rb"no server running on /\S+")
 
 
 class TmuxInventoryError(RuntimeError):
@@ -106,11 +106,7 @@ class TmuxInventory:
                 raise TmuxInventoryError(
                     "permission", "tmux inventory access was denied"
                 )
-            if (
-                allow_no_server
-                and b"socket error" not in normalized_stderr
-                and NO_SERVER_PATTERN.fullmatch(stderr)
-            ):
+            if allow_no_server and tmux_error_is_no_server(stderr):
                 return None
             if pane_id is not None and stderr == f"can't find pane: {pane_id}".encode():
                 raise TmuxInventoryError(

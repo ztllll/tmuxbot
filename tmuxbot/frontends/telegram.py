@@ -288,6 +288,7 @@ def build_telegram_panel_markup(
     *,
     confirm_new: bool = False,
     confirm_restart: bool = False,
+    confirm_stop: bool = False,
 ) -> InlineKeyboardMarkup:
     token = binding_token(binding.name)
     if confirm_new:
@@ -320,6 +321,21 @@ def build_telegram_panel_markup(
                 ]
             ]
         )
+    if confirm_stop:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="确认关闭 tmux",
+                        callback_data=f"panel:{token}:cmd_stop",
+                    ),
+                    InlineKeyboardButton(
+                        text="返回面板",
+                        callback_data=f"panel:{token}:refresh",
+                    ),
+                ]
+            ]
+        )
     rows = [
         [
             InlineKeyboardButton(text="无需 @", callback_data=f"panel:{token}:mention_on"),
@@ -344,7 +360,11 @@ def build_telegram_panel_markup(
             InlineKeyboardButton(
                 text="重启 CLI",
                 callback_data=f"panel:{token}:confirm_restart",
-            )
+            ),
+            InlineKeyboardButton(
+                text="关闭 tmux",
+                callback_data=f"panel:{token}:confirm_stop",
+            ),
         ],
         [
             InlineKeyboardButton(text="刷新", callback_data=f"panel:{token}:refresh"),
@@ -1482,6 +1502,15 @@ class TelegramFrontend(Frontend):
                     )
                 )
                 await cq.answer("请再次确认重启 CLI")
+                return
+            if action == "confirm_stop":
+                await cq.message.edit_reply_markup(
+                    reply_markup=build_telegram_panel_markup(
+                        b,
+                        confirm_stop=True,
+                    )
+                )
+                await cq.answer("请再次确认关闭 tmux")
                 return
             if action == "refresh":
                 await cq.message.edit_text(

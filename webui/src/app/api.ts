@@ -220,6 +220,12 @@ export async function releaseManagedSession(id: string, csrfToken: string): Prom
   }));
 }
 
+export async function stopManagedSession(id: string, csrfToken: string): Promise<void> {
+  await readJson<void>(await fetch(`/api/managed-sessions/${encodeURIComponent(id)}/stop`, {
+    method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrfToken },
+  }));
+}
+
 export async function adoptManagedSession(
   input: { name: string; projectId: string; providerId: string; target: string }, csrfToken: string,
 ): Promise<ManagedSession> {

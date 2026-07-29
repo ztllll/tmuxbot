@@ -33,7 +33,7 @@ from tmuxbot.command_adapter import (
     CommandKind,
 )
 from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
+from tmuxbot.tmux import tmux_capture, tmux_kill_session, tmux_send_key, tmux_send_text
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -44,10 +44,6 @@ log = logging.getLogger("tmuxbot")
 
 # stop 命令集: 这些命令不注入 claude, 直接操作 tmux key
 _STOP_CMDS = frozenset({"/esc", "/cc", "/eof"})
-
-# capture-only 命令集 (不走 command_opts 但也是命令行为): /screen /info /restart
-_LOCAL_CMDS = frozenset({"/screen", "/info", "/restart"})
-
 
 async def dispatch_incoming_text(
     frontend: "Frontend",
@@ -75,6 +71,19 @@ async def dispatch_incoming_text(
     """
     from tmuxbot.commands import capture_and_push
 
+    parsed = parse_slash_text(
+        text, bot_username=bot_username, aliases=backend.command_aliases()
+    )
+    if parsed and parsed.command == "/tmuxstop":
+        stopped = tmux_kill_session(b.tmux_session)
+        notice = (
+            "💤 <b>tmux 会话已关闭</b>\n下一条消息到达时会自动恢复。"
+            if stopped
+            else "❌ <b>tmux 会话关闭失败</b>\n请检查服务日志或在主机上手动关闭。"
+        )
+        await frontend.send_html(chat_id, thread_id, notice)
+        return
+
     await ensure_binding_running(backend, b, state, reason="incoming", wait=True)
 
     # ── /rename pending 态: 下一条文本作为名字 ──
@@ -101,10 +110,6 @@ async def dispatch_incoming_text(
 
     raw_text = text
     cmd_for_feedback: str | None = None
-    parsed = parse_slash_text(
-        text, bot_username=bot_username, aliases=backend.command_aliases()
-    )
-
     if parsed:
         raw_text = parsed.injected_text
         cmd_for_feedback = parsed.command

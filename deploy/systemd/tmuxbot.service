@@ -20,7 +20,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Keep native tmux/CLI sessions alive when the bridge service is restarted.
+# Existing tmux/CLI sessions outlive bridge restarts. Missing sessions stay dormant
+# by default and are recreated by the next IM message.
 KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
 Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid

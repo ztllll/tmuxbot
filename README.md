@@ -101,6 +101,12 @@ bot crash 后 5 秒内自动拉起,无需手动守护。`tmuxbot install-service
 统一恢复路径；tmux/CLI 会话不受影响。运行中可在 WebUI 的
 `/api/channel-health` 查看只读连接审计（连接时间、最近收包、最近有效入站、恢复次数）。
 
+tmux 会话默认按消息懒启动：手动执行 `tmux kill-session -t <name>`，或在
+Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一条消息到达时会自动重建
+tmux，并恢复已绑定的 Claude/Codex provider 会话。需要旧版常驻自愈行为时，可显式设置
+`TMUXBOT_LIFECYCLE_ENABLED=1`。Telegram、飞书和 Web 控制面板都提供带确认的
+“关闭 tmux”操作，管理记录和历史不会被删除。
+
 ### Web control plane
 
 推荐统一入口会启动 Web，并按配置状态监督独立 bridge child：
@@ -135,7 +141,7 @@ journalctl --user -u tmuxbot -f
 - **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时读取 `~/.codex/config.toml` 的 `model`；可在当前会话中用原生 `/model` 临时切换，下一次 bot 重启则应用最新配置。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**:`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
 - **双 bot 共存**:`@your_claude_bot` 接 claude_code,`@your_codex_bot` 接 codex
-- **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart`
+- **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`
 - **TUI 透传**:`/context` `/cost` `/usage` `/compact` `/clear` 等,抓屏结构化反馈
 - **工具调用聚合**:一个 turn 内的 tool_use 流式刷同一条 IM 消息,真说话单独 push 触发通知
 - **Codex 计划跟随**:`update_plan` 会维护一条可编辑的“当前计划”消息,TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态

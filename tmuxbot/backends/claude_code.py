@@ -576,6 +576,7 @@ class ClaudeCodeBackend(Backend):
         ("esc", "⎋ 中断当前生成"),
         ("cc", "⌃C 取消/清空输入"),
         ("eof", "⌃D 退出 claude"),
+        ("tmuxstop", "💤 关闭 tmux，来消息再恢复"),
         ("screen", "📷 抓 tmux 屏幕"),
         ("restart", "🔄 重启 claude"),
     ]

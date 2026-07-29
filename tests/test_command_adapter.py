@@ -42,6 +42,10 @@ def test_classify_known_capture_interactive_blocked_and_unknown():
 
     assert classify_command(backend, "/context").kind == CommandKind.CAPTURE
     assert classify_command(backend, "/model").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/tmuxstop").kind == CommandKind.LOCAL
+    codex = FakeBackend()
+    codex.name = "codex"
+    assert classify_command(codex, "/stop").kind == CommandKind.INTERACTIVE
     assert classify_command(backend, "/logout").kind == CommandKind.BLOCKED
     assert classify_command(backend, "/whatever").kind == CommandKind.PASSTHROUGH
 

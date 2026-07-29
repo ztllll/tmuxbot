@@ -23,6 +23,7 @@ _PANEL_ACTION_COMMANDS = {
     "cmd_esc": "/esc",
     "cmd_cc": "/cc",
     "cmd_restart": "/restart",
+    "cmd_stop": "/tmuxstop",
 }
 _PANEL_WRITE_LOCK = threading.Lock()
 
@@ -93,6 +94,7 @@ def render_panel_text(
             "",
             "🧠 点“切换模型”会打开当前 CLI 的原生 /model 选择器；候选由 CLI 实时提供，不写死候选模型。",
             "选择后会保留当前会话上下文；可刷新 /menu 或用 /status 确认当前模型。",
+            "💤 /tmuxstop 会关闭当前 tmux；下一条消息到达时按需恢复。",
             "⚠️ /new 会创建新会话；普通助手回复仍保持无按钮。",
         ]
     )

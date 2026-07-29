@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from tmuxbot.lifecycle import ensure_binding_running
+from tmuxbot.lifecycle import ensure_binding_running, lifecycle_enabled, lifecycle_watch_loop
 from tmuxbot.state import Binding
 
 
@@ -28,6 +28,30 @@ def binding(name="alpha"):
         tmux_pane=0,
         cwd=Path("/tmp/tmuxbot-alpha"),
     )
+
+
+def test_lifecycle_watchdog_is_opt_in(monkeypatch):
+    monkeypatch.delenv("TMUXBOT_LIFECYCLE_ENABLED", raising=False)
+    assert lifecycle_enabled() is False
+
+    monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
+    assert lifecycle_enabled() is True
+
+
+def test_disabled_watchdog_leaves_missing_bindings_dormant(monkeypatch):
+    monkeypatch.delenv("TMUXBOT_LIFECYCLE_ENABLED", raising=False)
+    backend = FakeBackend()
+    frontend = SimpleNamespace(backend=backend, bindings=[binding()])
+
+    asyncio.run(
+        lifecycle_watch_loop(
+            [frontend],
+            SimpleNamespace(ensure_locks={}),
+            startup_delay=0,
+        )
+    )
+
+    assert backend.calls == 0
 
 
 def test_ensure_binding_running_skips_background_when_lock_is_busy():

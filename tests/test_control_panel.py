@@ -48,6 +48,7 @@ def test_parse_mention_command_and_control_command_detection():
     assert is_control_command("/mention off")
     assert not is_control_command("/status")
     assert panel_command_for_action("cmd_restart") == "/restart"
+    assert panel_command_for_action("cmd_stop") == "/tmuxstop"
 
 
 def test_render_panel_text_is_chinese_and_explains_native_model_picker(tmp_path):

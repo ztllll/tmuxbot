@@ -1047,6 +1047,7 @@ class FeishuFrontend(Frontend):
             "cmd_esc",
             "cmd_cc",
             "cmd_restart",
+            "cmd_stop",
         }
         allowed_actions = {
             "refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c",

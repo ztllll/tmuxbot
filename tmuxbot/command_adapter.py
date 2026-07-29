@@ -81,7 +81,7 @@ class InteractionState:
     actions: tuple[SemanticAction, ...] = ()
 
 
-_LOCAL_COMMANDS = {"/screen", "/info", "/restart", "/esc", "/cc", "/eof"}
+_LOCAL_COMMANDS = {"/screen", "/info", "/restart", "/tmuxstop", "/esc", "/cc", "/eof"}
 
 _BLOCKED_COMMANDS = {
     "/logout": "会清除本机 CLI 登录态, 已阻止。需要退出 CLI 请用 /eof, 需要重启用 /restart。",

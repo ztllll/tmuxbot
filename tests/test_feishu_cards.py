@@ -10,6 +10,7 @@ from tmuxbot.core.rich_messages import build_reply_document, render_telegram_doc
 from tmuxbot.frontends.feishu_cards import (
     FeishuCardTooLarge,
     build_feishu_card_v2,
+    build_feishu_control_panel,
     serialize_feishu_card,
 )
 from tmuxbot.state import Binding
@@ -27,6 +28,24 @@ def binding(tmp_path: Path) -> Binding:
         backend="claude_code",
         channel="feishu",
     )
+
+
+def test_feishu_control_panel_offers_confirmed_tmux_stop():
+    card = build_feishu_control_panel("控制面板", "token")
+    buttons = [
+        element
+        for row in card["body"]["elements"]
+        for column in row.get("columns", [])
+        for element in column.get("elements", [])
+    ]
+    stop = next(
+        button
+        for button in buttons
+        if button.get("behaviors", [{}])[0].get("value", {}).get("action") == "cmd_stop"
+    )
+
+    assert stop["text"]["content"] == "关闭 tmux"
+    assert stop["confirm"]["title"]["content"] == "确认关闭 tmux？"
 
 
 def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(tmp_path):

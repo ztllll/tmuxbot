@@ -32,6 +32,7 @@
 
 ### Changed
 
+- tmux 会话改为默认按消息懒启动：人工关闭或 IM `/tmuxstop` 后不再被后台周期复活；Telegram、飞书和 Web 控制台都可关闭 tmux 并保留 binding/provider 历史，下一条 IM 消息自动重建并 resume。常驻自愈改为 `TMUXBOT_LIFECYCLE_ENABLED=1` 显式 opt-in。
 - 受管 Codex 会话的新建与 `--resume` 恢复均读取 `~/.codex/config.toml` 的 `model` 并显式传入 `-m`；配置变更会自动用于下一次启动或恢复。
 - Telegram 与飞书统一使用 `IncomingMessage` / `ReplyEnvelope`;回复尾部由 Claude/Codex provider 解析 `TerminalStatus`,不再由渠道猜测屏幕最后一行。
 - Claude `Stop.last_assistant_message` 作为优先最终回复源,JSONL 保留工具、思考、用量与历史数据并对重复最终回复去重。

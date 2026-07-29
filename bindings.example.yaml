@@ -11,7 +11,7 @@
 #   chat_id       Telegram: int(正数=DM user_id,负数=群 chat_id);飞书: str(oc_xxx)
 #                 不知道填啥 → 先随便配,在该端点发 /whoami,bot 回 chat_id/thread_id
 #   thread_id     仅 Telegram supergroup forum topic 需要;DM / 普通群 / 飞书 → null
-#   tmux_session  tmux 会话名(bot 会 ensure_running 自动建 + 起 cli)
+#   tmux_session  tmux 会话名(收到消息时 ensure_running 自动建 + 起 cli)
 #   tmux_window   tmux window 序号,通常 0
 #   tmux_pane     tmux pane 序号,通常 0
 #   cwd           项目目录(cli 在此目录启动,加载该目录的 CLAUDE.md / AGENTS.md)

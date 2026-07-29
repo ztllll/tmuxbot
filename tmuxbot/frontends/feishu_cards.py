@@ -276,6 +276,11 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
             token,
         ),
         _button_row(
+            "panel_stop",
+            (("关闭 tmux", "cmd_stop", "danger"),),
+            token,
+        ),
+        _button_row(
             "panel_close",
             (("关闭面板", "close_panel", "default"),),
             token,
@@ -445,6 +450,14 @@ def _button_row(
             button["confirm"] = {
                 "title": {"tag": "plain_text", "content": "确认重启 CLI？"},
                 "text": {"tag": "plain_text", "content": "当前 tmux pane 会退出并重新启动 provider CLI。"},
+            }
+        if action == "cmd_stop":
+            button["confirm"] = {
+                "title": {"tag": "plain_text", "content": "确认关闭 tmux？"},
+                "text": {
+                    "tag": "plain_text",
+                    "content": "绑定和历史会保留，下一条消息到达时自动恢复。",
+                },
             }
         columns.append(
             {

@@ -43,10 +43,38 @@ def tmux_new_session(s: str, cwd) -> None:
     _tmux("new-session", "-d", "-s", s, "-c", str(cwd))
 
 
+def tmux_error_is_no_server(value: str | bytes) -> bool:
+    """Match only tmux's standard no-server diagnostic, with no extra errors."""
+    text = value.decode(errors="replace") if isinstance(value, bytes) else value
+    if text.endswith("\r\n"):
+        text = text[:-2]
+    elif text.endswith("\n"):
+        text = text[:-1]
+    lowered = text.lower()
+    if any(
+        marker in lowered
+        for marker in ("permission denied", "access denied", "authentication failed")
+    ):
+        return False
+    return bool(re.fullmatch(r"no server running on /\S+", text))
+
+
 def tmux_kill_session(s: str) -> bool:
-    """杀掉整个 tmux session (deprovision 用)。session 名可能含中文/空格,
-    交给 _tmux 以参数数组方式传, 不走 shell 不需手动引号。返回是否成功。"""
-    return _tmux("kill-session", "-t", s).returncode == 0
+    """Ensure a tmux session is stopped, distinguishing absence from real failure."""
+    try:
+        result = _tmux("kill-session", "-t", s)
+    except OSError:
+        return False
+    if result.returncode == 0:
+        return True
+    stderr = result.stderr or ""
+    if tmux_error_is_no_server(stderr):
+        return True
+    if stderr.endswith("\r\n"):
+        stderr = stderr[:-2]
+    elif stderr.endswith("\n"):
+        stderr = stderr[:-1]
+    return stderr == f"can't find session: {s}"
 
 
 def tmux_pane_command(target: str) -> str:

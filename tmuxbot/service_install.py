@@ -36,7 +36,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# tmux panes outlive bridge/WebUI deploys; only stop the supervisor itself.
+# Existing tmux panes outlive deploys; missing panes stay dormant until an IM message.
 KillMode=process
 EnvironmentFile=-{env_file}
 Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid

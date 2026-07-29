@@ -57,7 +57,7 @@ from tmuxbot.providers.adapters import (
 )
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.state import Binding
-from tmuxbot.tmux import tmux_capture
+from tmuxbot.tmux import tmux_capture, tmux_kill_session
 from tmuxbot.teamrun.domain import AgentRole, TeamRunSnapshot, TeamTask, TeamTaskState
 from tmuxbot.teamrun.scheduler import ArtifactInput, TeamRunScheduler
 from tmuxbot.teamrun.worktree import GitWorktreeManager, TaskWorktree, WorktreeError
@@ -830,6 +830,30 @@ def create_app(
             )
         if not repository.delete_managed_session(managed_session_id):
             raise HTTPException(status_code=404, detail="managed session not found")
+
+    @app.post(
+        "/api/managed-sessions/{managed_session_id}/stop",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def stop_managed_session(
+        managed_session_id: str,
+        _: AuthenticatedSession = Depends(csrf_session),
+    ) -> None:
+        """Stop the live tmux while retaining its project/session/channel records."""
+        if repository.has_active_teamrun_for_managed_session(managed_session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="managed session belongs to an active team run; stop that run first",
+            )
+        managed = repository.get_managed_session(managed_session_id)
+        if managed is None:
+            raise HTTPException(status_code=404, detail="managed session not found")
+        try:
+            stopped = tmux_kill_session(managed.tmux_session)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="unable to stop tmux session") from exc
+        if not stopped:
+            raise HTTPException(status_code=503, detail="unable to stop tmux session")
 
     def require_runtime_paths() -> RuntimePaths:
         paths = app.state.runtime_paths
