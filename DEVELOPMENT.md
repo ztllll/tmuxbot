@@ -108,7 +108,7 @@ tmuxbot/                       ← 仓库根
                  │                         │
     ┌────────────▼─────────────────────────▼────────────┐
     │              tmux pane (各 binding 独立)            │
-    │  paste-buffer inject → TUI idle 轮询 → Enter       │
+    │  TUI idle → paste-buffer → composer 渲染与提交确认  │
     │  jsonl tailer → parse_event → aggregator → 推前端  │
     └───────────────────────────────────────────────────┘
 ```
@@ -434,7 +434,7 @@ Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指�
 参见 `CLAUDE.md` 第 2 节。摘要:
 
 - `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
-- `paste-buffer -p` 后必须等 TUI idle 再 send Enter(idle 轮询, 超时 10s 强发)
+- `paste-buffer -p` 前先等 TUI idle；发送 Enter 后读取 Claude/Codex 活动输入框确认。仅当原草稿仍在且 CLI 未进入 busy 时有限重试，输入框清空、内容变化或 CLI 开始工作后立即停止，避免漏交与重复提交。
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
 - TG 4096 限 UTF-16 单位
 - `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)

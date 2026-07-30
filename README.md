@@ -154,7 +154,7 @@ journalctl --user -u tmuxbot -f
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)
-- **健壮性**:tmux paste 等 TUI idle 才 send Enter;jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
+- **健壮性**:tmux paste 等 TUI idle 后提交，并读取 Claude/Codex 活动输入框确认；草稿仍在时有限重试 Enter，CLI 已工作或输入框已清空则停止，避免漏交与重复提交；jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
 
 ---
 
@@ -180,8 +180,8 @@ ClaudeCodeBackend  CodexBackend
      └────────┬────────┘
               │
          tmux pane(s)
-     paste-buffer inject
-     → TUI idle 轮询 → Enter
+     TUI idle 轮询 → paste-buffer
+     → composer 渲染 → Enter → 确认/有限重试
               │
          jsonl tailer
      parse_event + aggregator

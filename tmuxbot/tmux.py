@@ -10,6 +10,7 @@ import re
 import subprocess
 
 from tmuxbot.runtime.tmux_runtime import TmuxRuntime
+from tmuxbot.utils import strip_decorations
 
 TMUX = "tmux"
 IDLE_WAIT_MAX = 300.0
@@ -25,6 +26,11 @@ POST_PASTE_DELAY = 0.5
 _TUI_BUSY_VERBS = r"(?:Working|Doing|Crunching|Thinking|Generating|Pondering|Reasoning|Cooking|Brewing|Simmering|Reading|Searching|Loading|Analyzing|Processing|Querying)"
 _TUI_BUSY_RE = re.compile(
     _TUI_BUSY_VERBS + r"[…\.]*\s*[^\n]{0,30}?\(\s*\d+(?:m\s+\d+)?s",  # 必须 ( 开头时间
+    re.I,
+)
+_COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")
+_CODEX_STATUS_RE = re.compile(
+    r"^\s*gpt-[\w.-]+(?:\s+[\w-]+)?\s*[·•]\s*(?:~?/|/)\S+",
     re.I,
 )
 
@@ -126,6 +132,61 @@ def _is_tui_busy(pane: str) -> bool:
     return bool(_TUI_BUSY_RE.search(pane))
 
 
+def _active_input_text(pane: str) -> str | None:
+    """Read only the active Claude/Codex composer, excluding prompt history."""
+    lines = strip_decorations(pane).splitlines()
+
+    separators = [
+        index
+        for index, line in enumerate(lines)
+        if _COMPOSER_SEPARATOR_RE.fullmatch(line.strip())
+    ]
+    if len(separators) >= 2:
+        composer = lines[separators[-2] + 1 : separators[-1]]
+        claude_input = _composer_body(composer, "❯")
+        if claude_input is not None:
+            return claude_input
+
+    status_index = next(
+        (
+            index
+            for index in range(len(lines) - 1, -1, -1)
+            if _CODEX_STATUS_RE.match(lines[index])
+        ),
+        None,
+    )
+    if status_index is None:
+        return None
+    prompt_index = next(
+        (
+            index
+            for index in range(status_index - 1, -1, -1)
+            if lines[index].lstrip().startswith("›")
+        ),
+        None,
+    )
+    if prompt_index is None:
+        return None
+    return _composer_body(lines[prompt_index:status_index], "›")
+
+
+def _composer_body(lines: list[str], marker: str) -> str | None:
+    first_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.lstrip().startswith(marker)
+        ),
+        None,
+    )
+    if first_index is None:
+        return None
+    first = lines[first_index].lstrip()[len(marker) :].strip()
+    body = [first] if first else []
+    body.extend(line.strip() for line in lines[first_index + 1 :] if line.strip())
+    return "\n".join(body)
+
+
 async def tmux_send_text(
     target: str,
     text: str,
@@ -133,7 +194,7 @@ async def tmux_send_text(
     with_enter: bool = True,
     expected_commands=None,
 ) -> None:
-    """Queue input, wait for an idle pane, then paste and submit exactly once."""
+    """Queue input, wait for idle, then paste and verify a bounded submission."""
     await _RUNTIME.send_text(
         target,
         text,
@@ -169,4 +230,5 @@ _RUNTIME = TmuxRuntime(
     poll_interval=IDLE_POLL_INTERVAL,
     wait_timeout=IDLE_WAIT_MAX,
     post_paste_delay=POST_PASTE_DELAY,
+    input_reader=_active_input_text,
 )

@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 from tmuxbot.attachments import attachment_prompt
-from tmuxbot.runtime.tmux_runtime import TmuxRuntime
+from tmuxbot.runtime.tmux_runtime import TmuxRuntime, TmuxSubmissionTimeout
+from tmuxbot.tmux import _active_input_text
 
 
 class FakeTmux:
@@ -31,6 +32,63 @@ class FakeTmux:
         self.operations.append(f"key:{key}")
 
 
+class SubmissionAwareFakeTmux:
+    def __init__(
+        self,
+        *,
+        accepts_enter_at: float,
+        visible_at: float = 0.0,
+        clear_delay: float = 0.0,
+        rendered_draft: str | None = None,
+        transient_hide_after_ignored: float = 0.0,
+    ) -> None:
+        self.accepts_enter_at = accepts_enter_at
+        self.visible_at = visible_at
+        self.clear_delay = clear_delay
+        self.rendered_draft = rendered_draft
+        self.transient_hide_after_ignored = transient_hide_after_ignored
+        self.now = 0.0
+        self.draft = ""
+        self.accepted_at: float | None = None
+        self.last_ignored_at: float | None = None
+        self.enter_count = 0
+        self.submission_count = 0
+
+    def capture(self, _target: str, _lines: int) -> str:
+        if not self.draft or self.now < self.visible_at:
+            return ""
+        if (
+            self.last_ignored_at is not None
+            and self.now < self.last_ignored_at + self.transient_hide_after_ignored
+        ):
+            return ""
+        if self.accepted_at is not None and self.now >= self.accepted_at + self.clear_delay:
+            self.draft = ""
+            return ""
+        return self.rendered_draft or self.draft
+
+    def pane_command(self, _target: str) -> str:
+        return "claude"
+
+    async def paste(self, _target: str, text: str) -> None:
+        self.draft = text
+
+    def send_key(self, _target: str, key: str) -> None:
+        assert key == "Enter"
+        self.enter_count += 1
+        if self.now >= self.accepts_enter_at and self.draft:
+            self.submission_count += 1
+            if self.accepted_at is None:
+                self.accepted_at = self.now
+            if self.clear_delay == 0:
+                self.draft = ""
+        else:
+            self.last_ignored_at = self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def runtime_for(fake: FakeTmux, *, post_paste_delay: float = 0.5) -> TmuxRuntime:
     async def record_sleep(delay: float) -> None:
         fake.operations.append(f"sleep:{delay}")
@@ -49,6 +107,30 @@ def runtime_for(fake: FakeTmux, *, post_paste_delay: float = 0.5) -> TmuxRuntime
     )
 
 
+def submission_runtime_for(
+    fake: SubmissionAwareFakeTmux,
+    *,
+    busy_detector=None,
+    input_reader=None,
+) -> TmuxRuntime:
+    return TmuxRuntime(
+        capture_func=fake.capture,
+        pane_command_func=fake.pane_command,
+        paste_func=fake.paste,
+        send_key_func=fake.send_key,
+        busy_detector=busy_detector or (lambda pane: False),
+        sleep_func=fake.sleep,
+        post_paste_delay=0.5,
+        input_reader=input_reader or (lambda pane: pane),
+        submit_check_delay=0.1,
+        post_render_delay=0.3,
+        paste_render_timeout=0.6,
+        submit_confirm_timeout=0.4,
+        submit_transition_stability=0.3,
+        max_submit_attempts=3,
+    )
+
+
 def test_paste_settles_before_enter():
     fake = FakeTmux()
 
@@ -60,6 +142,163 @@ def test_paste_settles_before_enter():
         "sleep:0.5",
         "key:Enter",
     ]
+
+
+def test_retries_enter_when_tui_keeps_the_pasted_draft():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=1.3, visible_at=0.8)
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "请分析这张图片\n/tmp/example.png"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 2
+    assert fake.draft == ""
+
+
+def test_does_not_retry_after_first_enter_is_accepted():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=0.0)
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "普通消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+
+
+def test_does_not_retry_when_cli_is_busy_even_if_composer_render_is_stale():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=0.0, clear_delay=99.0)
+    runtime = submission_runtime_for(
+        fake,
+        busy_detector=lambda pane: fake.submission_count > 0,
+    )
+
+    asyncio.run(runtime.send_text("pane", "普通消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+
+
+def test_does_not_retry_while_an_accepted_composer_is_redrawing():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=0.0, clear_delay=0.25)
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "普通消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+
+
+def test_multiline_paste_uses_the_rendered_placeholder_as_draft_snapshot():
+    fake = SubmissionAwareFakeTmux(
+        accepts_enter_at=1.3,
+        visible_at=0.8,
+        rendered_draft="[Pasted text #1 +2 lines]",
+    )
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "请分析这张图片\n\n@/tmp/example.png"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 2
+
+
+def test_waits_after_draft_render_before_first_enter():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=0.75, visible_at=0.5)
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "图片消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+
+
+def test_transient_empty_composer_does_not_false_confirm_submission():
+    fake = SubmissionAwareFakeTmux(
+        accepts_enter_at=1.0,
+        visible_at=0.5,
+        transient_hide_after_ignored=0.15,
+    )
+    runtime = submission_runtime_for(fake)
+
+    asyncio.run(runtime.send_text("pane", "图片消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 2
+
+
+def test_stable_unreadable_composer_after_enter_confirms_transition():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=0.0)
+    runtime = submission_runtime_for(
+        fake,
+        input_reader=lambda pane: None if fake.enter_count else pane,
+    )
+
+    asyncio.run(runtime.send_text("pane", "图片消息"))
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+
+
+def test_submission_retry_is_bounded():
+    fake = SubmissionAwareFakeTmux(accepts_enter_at=99.0)
+    runtime = submission_runtime_for(fake)
+
+    with pytest.raises(TmuxSubmissionTimeout):
+        asyncio.run(runtime.send_text("pane", "无法提交的消息"))
+
+    assert fake.enter_count == 3
+    assert fake.submission_count == 0
+
+
+@pytest.mark.parametrize(
+    ("pane", "expected"),
+    [
+        (
+            """历史回复
+────────────────────────────────────────
+❯ 请分析图片
+  @/tmp/tmuxbot-feishu/image.png
+────────────────────────────────────────
+  ⏵⏵ bypass permissions on
+""",
+            "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
+        ),
+        (
+            """历史回复
+────────────────────────────────────────
+❯\u00a0
+────────────────────────────────────────
+  ⏵⏵ bypass permissions on
+""",
+            "",
+        ),
+        (
+            """• Working (2s • esc to interrupt)
+
+› 请分析图片
+  @/tmp/tmuxbot-feishu/image.png
+
+  gpt-5.6 high · ~/project · Main
+""",
+            "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
+        ),
+        (
+            """历史回复
+────────────────────────────────────────
+分隔内容
+────────────────────────────────────────
+
+› 请分析图片
+  @/tmp/tmuxbot-feishu/image.png
+
+  gpt-5.6 high · ~/project · Main
+""",
+            "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
+        ),
+    ],
+)
+def test_active_input_text_reads_claude_and_codex_composers(pane, expected):
+    assert _active_input_text(pane) == expected
 
 
 @pytest.mark.parametrize("backend_name", ["claude_code", "codex"])
@@ -179,3 +418,51 @@ def test_launch_from_shell_uses_the_same_safe_queue():
 
     assert launched
     assert fake.pasted == ["codex --dangerously-bypass-approvals-and-sandbox"]
+
+
+def test_launch_from_shell_does_not_require_a_tui_composer():
+    fake = FakeTmux()
+
+    async def record_sleep(delay: float) -> None:
+        fake.operations.append(f"sleep:{delay}")
+
+    runtime = TmuxRuntime(
+        capture_func=fake.capture,
+        pane_command_func=fake.pane_command,
+        paste_func=fake.paste,
+        send_key_func=fake.send_key,
+        busy_detector=lambda pane: False,
+        sleep_func=record_sleep,
+        input_reader=lambda pane: None,
+    )
+    fake.foreground = "bash"
+
+    launched = asyncio.run(
+        runtime.safe_launch("pane", "codex", allowed_shells={"bash", "zsh"})
+    )
+
+    assert launched
+    assert fake.operations == ["inspect", "paste:codex", "sleep:0.5", "key:Enter"]
+
+
+def test_unreadable_tui_composer_falls_back_to_one_enter():
+    fake = FakeTmux()
+
+    async def record_sleep(delay: float) -> None:
+        fake.operations.append(f"sleep:{delay}")
+
+    runtime = TmuxRuntime(
+        capture_func=fake.capture,
+        pane_command_func=fake.pane_command,
+        paste_func=fake.paste,
+        send_key_func=fake.send_key,
+        busy_detector=lambda pane: False,
+        sleep_func=record_sleep,
+        input_reader=lambda pane: None,
+        submit_check_delay=0.1,
+        paste_render_timeout=0.2,
+    )
+
+    asyncio.run(runtime.send_text("pane", "仍需兼容投递"))
+
+    assert fake.operations.count("key:Enter") == 1
