@@ -113,7 +113,7 @@ def test_codex_terminal_status_omits_missing_effort_cleanly():
     assert CodexBackend().format_status_footer(status) == "gpt-5.6-sol · ~/repo"
 
 
-def test_codex_current_model_falls_back_to_active_transcript(tmp_path, monkeypatch):
+def test_codex_runtime_metadata_falls_back_to_active_transcript(tmp_path, monkeypatch):
     sessions = tmp_path / "codex-sessions"
     rollout = sessions / "2026" / "07" / "12" / "rollout-test.jsonl"
     rollout.parent.mkdir(parents=True)
@@ -121,13 +121,105 @@ def test_codex_current_model_falls_back_to_active_transcript(tmp_path, monkeypat
         "\n".join(
             (
                 json.dumps({"type": "session_meta", "payload": {"id": "s-1", "cwd": str(tmp_path)}}),
-                json.dumps({"type": "event_msg", "payload": {"type": "thread_settings_applied", "thread_settings": {"model": "gpt-5.6-terra"}}}),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "thread_settings_applied",
+                            "thread_settings": {
+                                "model": "gpt-5.6-terra",
+                                "reasoning_effort": "medium",
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "turn_context",
+                        "payload": {
+                            "model": "gpt-5.6-terra",
+                            "effort": "medium",
+                            "cwd": str(tmp_path),
+                        },
+                    }
+                ),
             )
         ) + "\n"
     )
     monkeypatch.setattr(codex, "CODEX_SESSIONS_DIR", sessions)
 
-    assert CodexBackend().current_model(_binding(tmp_path, "codex")) == "gpt-5.6-terra"
+    backend = CodexBackend()
+    binding = _binding(tmp_path, "codex")
+    metadata = backend.current_runtime_metadata(binding)
+    assert metadata.model == "gpt-5.6-terra"
+    assert metadata.effort == "medium"
+
+    with rollout.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "thread_settings_applied",
+                        "thread_settings": {
+                            "model": "gpt-5.6-sol",
+                            "reasoning_effort": "high",
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    updated = backend.current_runtime_metadata(binding)
+    assert updated.model == "gpt-5.6-sol"
+    assert updated.effort == "high"
+
+
+def test_codex_runtime_metadata_does_not_reuse_stale_effort(tmp_path, monkeypatch):
+    sessions = tmp_path / "codex-sessions"
+    rollout = sessions / "2026" / "07" / "12" / "rollout-test.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "type": "session_meta",
+                        "payload": {"id": "s-1", "cwd": str(tmp_path)},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "thread_settings_applied",
+                            "thread_settings": {
+                                "model": "gpt-5.6-terra",
+                                "reasoning_effort": "high",
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "thread_settings_applied",
+                            "thread_settings": {"model": "gpt-5.6-sol"},
+                        },
+                    }
+                ),
+            )
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(codex, "CODEX_SESSIONS_DIR", sessions)
+
+    metadata = CodexBackend().current_runtime_metadata(_binding(tmp_path, "codex"))
+
+    assert metadata.model == "gpt-5.6-sol"
+    assert metadata.effort is None
 
 
 def test_codex_permission_mode_falls_back_to_cli_launch_flag(tmp_path, monkeypatch):

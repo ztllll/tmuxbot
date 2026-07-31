@@ -46,7 +46,7 @@
 ### Fixed
 
 - 补齐 Claude Code 档位回填：当 TUI 状态栏不显示档位时，从当前绑定的活动 transcript 顶层 `effort` 读取并写入统一 `TerminalStatus`，飞书“同传系统开发”等 Claude binding 的回复末尾现在可显示 `high` 等档位。
-- 修复 Codex 新版状态栏带 Git 分支后缀或工作目录为 `~` 时无法解析推理档位的问题；Telegram/飞书回复末尾现在会随模型显示 `low`、`medium`、`high`、`xhigh` 等当前档位。
+- 修复 Codex 新版状态栏带 Git 分支后缀、工作目录为 `~`，或工作态暂时隐藏模型行时无法解析推理档位的问题；缺失的模型与档位会从当前 binding 的活动 rollout 运行时设置（`thread_settings` / `turn_context`）同次回填，Telegram/飞书回复末尾现在会显示 `low`、`medium`、`high`、`xhigh` 等当前档位。
 - 修复飞书图片等多行附件已粘贴到 Claude/Codex 输入框、但首个 Enter 被 TUI 忽略后一直停留未提交的问题；现在会读取活动输入框确认提交，原草稿仍在时有限重试，CLI 已工作或输入框已清空时不会重复发送。
 - Web 首次设置同时要求 loopback peer 与一次性 `X-Setup-Token`,避免同机反向代理后的远程客户端抢占初始密码。
 - Telegram 多 bot 服务重启时即使 polling 已先停止,也保证关闭 aiogram HTTP session,不再残留 `Unclosed client session`。

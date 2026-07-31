@@ -28,7 +28,13 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
+from tmuxbot.core.events import (
+    ProviderEvent,
+    ProviderEventKind,
+    ProviderRuntimeMetadata,
+    TerminalState,
+    TerminalStatus,
+)
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import (
@@ -260,6 +266,12 @@ class CodexBackend(Backend):
     pane_command_names = frozenset({"node", "codex"})
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
 
+    def __init__(self) -> None:
+        self._runtime_metadata_cache: dict[
+            Path,
+            tuple[tuple[int, int], ProviderRuntimeMetadata],
+        ] = {}
+
     @property
     def start_cmd(self) -> str:
         """Current launch command, including the CLI-owned configured model."""
@@ -397,13 +409,38 @@ class CodexBackend(Backend):
 
     def current_model(self, b: "Binding") -> str | None:
         """Read Codex's effective model from the active rollout transcript."""
+        return self._current_transcript_metadata(b).model
+
+    def current_effort(self, b: "Binding") -> str | None:
+        """Read Codex's reasoning effort from the active rollout transcript."""
+        return self._current_transcript_metadata(b).effort
+
+    def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
+        """Return rollout metadata and live permissions as one status snapshot."""
+        transcript = self._current_transcript_metadata(b)
+        return ProviderRuntimeMetadata(
+            model=transcript.model,
+            effort=transcript.effort,
+            permission_mode=self.current_permission_mode(b),
+        )
+
+    def _current_transcript_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
         transcript = self.find_active_jsonl(b)
         if transcript is None:
-            return None
+            return ProviderRuntimeMetadata()
+        try:
+            stat = transcript.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return ProviderRuntimeMetadata()
+        cached = self._runtime_metadata_cache.get(transcript)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
         try:
             rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            return None
+            return ProviderRuntimeMetadata()
+        metadata = ProviderRuntimeMetadata()
         for line in reversed(rows):
             try:
                 row = json.loads(line)
@@ -413,11 +450,32 @@ class CodexBackend(Backend):
             if not isinstance(payload, dict):
                 continue
             settings = payload.get("thread_settings")
-            if isinstance(settings, dict) and isinstance(settings.get("model"), str):
-                return settings["model"]
-            if isinstance(payload.get("model"), str):
-                return payload["model"]
-        return None
+            if isinstance(settings, dict):
+                metadata = ProviderRuntimeMetadata(
+                    model=(
+                        settings["model"]
+                        if isinstance(settings.get("model"), str)
+                        else None
+                    ),
+                    effort=(
+                        settings["reasoning_effort"]
+                        if isinstance(settings.get("reasoning_effort"), str)
+                        else None
+                    ),
+                )
+                break
+            model = payload.get("model")
+            effort = payload.get("effort")
+            if not isinstance(effort, str):
+                effort = payload.get("reasoning_effort")
+            if isinstance(model, str) or isinstance(effort, str):
+                metadata = ProviderRuntimeMetadata(
+                    model=model if isinstance(model, str) else None,
+                    effort=effort if isinstance(effort, str) else None,
+                )
+                break
+        self._runtime_metadata_cache[transcript] = signature, metadata
+        return metadata
 
     def current_permission_mode(self, b: "Binding") -> str | None:
         """Infer YOLO from the live Codex process if its status bar hides it."""
