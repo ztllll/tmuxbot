@@ -119,6 +119,7 @@ class Frontend(ABC):
         html_text: str,
         *,
         final: bool = False,
+        footer: TerminalStatus | None = None,
     ) -> None:
         """Update or finalize an incremental assistant reply."""
         await self.edit_html(binding.chat_id, message_id, html_text)

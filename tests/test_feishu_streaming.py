@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,7 +133,19 @@ def test_feishu_frontend_uses_cardkit_stream_and_closes_without_actions(tmp_path
     async def run():
         message = await frontend.send_reply_stream_start(b, "正在")
         await frontend.edit_reply_stream(b, message.message_id, "正在检查")
-        await frontend.edit_reply_stream(b, message.message_id, "检查完成", final=True)
+        await frontend.edit_reply_stream(
+            b,
+            message.message_id,
+            "检查完成",
+            final=True,
+            footer=TerminalStatus(
+                state=TerminalState.WORKING,
+                model="gpt-5.6-terra",
+                effort="medium",
+                permission_mode="YOLO",
+                duration_seconds=1063,
+            ),
+        )
 
     asyncio.run(run())
 
@@ -143,8 +156,66 @@ def test_feishu_frontend_uses_cardkit_stream_and_closes_without_actions(tmp_path
     assert calls[2][0:2] == ("close", "card-1")
     assert calls[2][2]["config"]["streaming_mode"] is False
     assert calls[2][2]["header"]["template"] == "green"
+    assert "gpt-5.6-terra medium" in json.dumps(calls[2][2], ensure_ascii=False)
     assert not any(item["tag"] == "button" for item in calls[2][2]["body"]["elements"])
     assert frontend._streaming_cards == {}
+
+
+def test_feishu_reply_stream_fallback_finalizes_with_provider_footer(tmp_path):
+    cards = []
+    b = Binding(
+        name="alpha",
+        chat_id="oc_alpha",
+        thread_id=None,
+        tmux_session="alpha",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=Path(tmp_path),
+        backend="codex",
+        channel="feishu",
+    )
+    frontend = FeishuFrontend.__new__(FeishuFrontend)
+    frontend.bindings = [b]
+    frontend.streaming_enabled = False
+    frontend.card_v2_enabled = True
+    frontend.backend = SimpleNamespace(
+        format_status_footer=lambda status: "gpt-5.6-terra medium · YOLO"
+    )
+    frontend._outbound_message_ids = set()
+    frontend._v2_message_ids = set()
+    frontend._v2_message_states = {}
+    frontend._v2_message_footers = {}
+    frontend._send_card_sync = lambda chat_id, content: (
+        cards.append(("send", json.loads(content))) or "om-1"
+    )
+    frontend._patch_card_sync = lambda message_id, content: (
+        cards.append(("edit", json.loads(content))) or True
+    )
+
+    async def run():
+        message = await frontend.send_reply_stream_start(b, "正在")
+        await frontend.edit_reply_stream(
+            b,
+            message.message_id,
+            "检查完成",
+            final=True,
+            footer=TerminalStatus(
+                state=TerminalState.WORKING,
+                model="gpt-5.6-terra",
+                effort="medium",
+                permission_mode="YOLO",
+                duration_seconds=1063,
+            ),
+        )
+
+    asyncio.run(run())
+
+    final_card = cards[-1][1]
+    assert final_card["header"]["template"] == "green"
+    rendered = json.dumps(final_card, ensure_ascii=False)
+    assert "gpt-5.6-terra medium" in rendered
+    assert "YOLO" in rendered
+    assert "working" not in rendered
 
 
 def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
@@ -179,7 +250,12 @@ def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
             b.thread_id,
             "工作中",
             display_state="working",
-            footer=TerminalStatus(state=TerminalState.WORKING, model="gpt-5.6-terra"),
+            footer=TerminalStatus(
+                state=TerminalState.WORKING,
+                model="gpt-5.6-terra",
+                effort="medium",
+                duration_seconds=1063,
+            ),
         )
         await frontend.edit_html(b.chat_id, message.message_id, "仍在工作")
         await frontend.finalize_status_html(b.chat_id, message.message_id, "任务完成")
@@ -192,3 +268,6 @@ def test_feishu_status_card_keeps_working_color_when_edited(tmp_path):
     assert cards[2][1]["header"]["title"]["content"].startswith("已完成")
     assert "gpt-5.6-terra" in json.dumps(cards[0][1], ensure_ascii=False)
     assert "gpt-5.6-terra" in json.dumps(cards[1][1], ensure_ascii=False)
+    final_card = json.dumps(cards[2][1], ensure_ascii=False)
+    assert "gpt-5.6-terra medium" in final_card
+    assert "working" not in final_card

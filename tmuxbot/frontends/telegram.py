@@ -678,6 +678,7 @@ class TelegramFrontend(Frontend):
         html_text: str,
         *,
         final: bool = False,
+        footer: TerminalStatus | None = None,
     ) -> None:
         """Finalize long streamed replies without truncating their overflow."""
         chunks = split_for_tg(sanitize_telegram_html(html_text))

@@ -281,7 +281,7 @@ async def on_tmux_event(
         footer = render_task_footer(backend.read_tasks(b))
         out = f"{text}\n\n{footer}" if footer else text
         if out.strip():
-            if await _finalize_reply_stream(frontend, b, state, out):
+            if await _finalize_reply_stream(frontend, b, state, out, backend):
                 return
             if _consume_recent_live_text(state, b, out):
                 return
@@ -452,6 +452,7 @@ async def _append_reply_stream(
 
 async def _finalize_reply_stream(
     frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+    backend: "Backend",
 ) -> bool:
     streams = getattr(state, "reply_streams", None)
     if not streams:
@@ -465,7 +466,10 @@ async def _finalize_reply_stream(
             if current.get("content") != html_text:
                 await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
         else:
-            await edit_stream(b, current["msg_id"], html_text, final=True)
+            footer = await _capture_terminal_status(b, backend)
+            await edit_stream(
+                b, current["msg_id"], html_text, final=True, footer=footer
+            )
         _remember_live_text(state, b, html_text)
         return True
     except Exception:

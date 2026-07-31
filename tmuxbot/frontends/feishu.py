@@ -41,7 +41,7 @@ from tmuxbot.channels.feishu import (
 )
 from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
 from tmuxbot.core.capabilities import ChannelCapabilities
-from tmuxbot.core.events import TerminalStatus
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import build_reply_document
 from tmuxbot.control_panel import (
@@ -661,15 +661,34 @@ class FeishuFrontend(Frontend):
     async def finalize_status_html(
         self, chat_id: int | str, message_id: str, html_text: str
     ) -> None:
-        """Close a V2 status card with completed state and no stale TUI footer."""
+        """Close a V2 status card while retaining its provider details."""
         if message_id in getattr(self, "_v2_message_ids", set()):
-            if not hasattr(self, "_v2_message_states"):
-                self._v2_message_states = {}
-            if not hasattr(self, "_v2_message_footers"):
-                self._v2_message_footers = {}
-            self._v2_message_states[message_id] = "completed"
-            self._v2_message_footers[message_id] = None
+            self._remember_completed_v2_message(
+                message_id,
+                getattr(self, "_v2_message_footers", {}).get(message_id),
+            )
         await self.edit_html(chat_id, message_id, html_text)
+
+    def _remember_completed_v2_message(
+        self, message_id: str, footer: TerminalStatus | None
+    ) -> None:
+        if not hasattr(self, "_v2_message_states"):
+            self._v2_message_states = {}
+        if not hasattr(self, "_v2_message_footers"):
+            self._v2_message_footers = {}
+        self._v2_message_states[message_id] = "completed"
+        self._v2_message_footers[message_id] = self._completed_footer(footer)
+
+    @staticmethod
+    def _completed_footer(footer: TerminalStatus | None) -> TerminalStatus | None:
+        if footer is None:
+            return None
+        return replace(
+            footer,
+            state=TerminalState.IDLE,
+            label="ready",
+            duration_seconds=None,
+        )
 
     def _status_footer_text(self, footer: TerminalStatus | None) -> str | None:
         if footer is None:
@@ -892,20 +911,26 @@ class FeishuFrontend(Frontend):
         html_text: str,
         *,
         final: bool = False,
+        footer: TerminalStatus | None = None,
     ) -> None:
         session = getattr(self, "_streaming_cards", {}).get(str(message_id))
         if session is None:
+            if final and str(message_id) in getattr(self, "_v2_message_ids", set()):
+                self._remember_completed_v2_message(str(message_id), footer)
             await self.edit_html(b.chat_id, str(message_id), html_text)
             return
 
         if final:
+            footer = self._completed_footer(footer)
             document = build_reply_document(
                 b,
                 ReplyEnvelope(
                     title="回复",
                     body=html_text,
+                    footer=footer,
                     metadata={"display_state": "completed"},
                 ),
+                footer_text=self._status_footer_text(footer),
             )
             card = build_feishu_card_v2(document, binding_token(b.name), streaming=False)
             ok = await session.close(card)
@@ -916,6 +941,7 @@ class FeishuFrontend(Frontend):
                     ReplyEnvelope(
                         title="回复",
                         body=html_text,
+                        footer=footer,
                         metadata={"display_state": "completed"},
                     ),
                 )

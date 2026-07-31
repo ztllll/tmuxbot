@@ -61,6 +61,20 @@ class EnhancedFakeFrontend(FakeFrontend):
         )
 
 
+class StreamingFooterFrontend(FakeFrontend):
+    async def send_reply_stream_start(self, binding, html_text):
+        self.sent.append(("stream_start", binding.chat_id, html_text))
+        self.next_message_id += 1
+        return SimpleNamespace(message_id=self.next_message_id)
+
+    async def edit_reply_stream(
+        self, binding, message_id, html_text, *, final=False, footer=None
+    ):
+        self.sent.append(
+            ("stream_edit", binding.chat_id, message_id, html_text, final, footer)
+        )
+
+
 class FakeBackend:
     def read_tasks(self, binding):
         return []
@@ -317,5 +331,40 @@ def test_text_delta_stream_edits_one_reply_and_finalizes(tmp_path):
             ("edit", 123, 101, "正在检查"),
             ("edit", 123, 101, "正在检查配置。"),
         ]
+
+    asyncio.run(run())
+
+
+def test_text_delta_stream_finalizes_with_provider_footer(tmp_path, monkeypatch):
+    class BackendWithMetadata(FakeBackend):
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata(
+                model="gpt-5.6-terra",
+                effort="medium",
+                permission_mode="YOLO",
+            )
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "working")
+
+    async def run():
+        frontend = StreamingFooterFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+
+        await on_tmux_event(
+            b, "assistant_text_delta", "正在", frontend, state, BackendWithMetadata()
+        )
+        await on_tmux_event(
+            b, "assistant_text", "检查完成。", frontend, state, BackendWithMetadata()
+        )
+
+        final = frontend.sent[-1]
+        assert final[:5] == ("stream_edit", 123, 101, "检查完成。", True)
+        assert final[5] == TerminalStatus(
+            state=TerminalState.IDLE,
+            model="gpt-5.6-terra",
+            effort="medium",
+            permission_mode="YOLO",
+        )
 
     asyncio.run(run())
