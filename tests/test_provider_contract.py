@@ -145,11 +145,68 @@ def test_claude_current_model_falls_back_to_active_transcript(tmp_path, monkeypa
     monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)
     project = projects / claude_code.encode_cwd(tmp_path)
     project.mkdir(parents=True)
-    (project / "session-1.jsonl").write_text(
+    transcript = project / "session-1.jsonl"
+    transcript.write_text(
         json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-8"}}) + "\n"
     )
 
     assert ClaudeCodeBackend().current_model(_binding(tmp_path, "claude_code")) == "claude-opus-4-8"
+
+
+def test_claude_current_effort_falls_back_to_active_transcript(tmp_path, monkeypatch):
+    projects = tmp_path / "claude-projects"
+    monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)
+    project = projects / claude_code.encode_cwd(tmp_path)
+    project.mkdir(parents=True)
+    transcript = project / "session-1.jsonl"
+    transcript.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "effort": "high",
+                        "message": {"model": "claude-opus-4-8"},
+                    }
+                ),
+                json.dumps({"type": "user", "message": {"content": "继续"}}),
+            )
+        )
+        + "\n"
+    )
+
+    backend = ClaudeCodeBackend()
+    binding = _binding(tmp_path, "claude_code")
+    assert backend.current_effort(binding) == "high"
+
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"type": "assistant", "effort": "low"}) + "\n")
+
+    assert backend.current_effort(binding) == "low"
+
+
+def test_claude_current_effort_ignores_newer_sidechain_rows(tmp_path, monkeypatch):
+    projects = tmp_path / "claude-projects"
+    monkeypatch.setattr(claude_code, "CLAUDE_PROJECTS_DIR", projects)
+    project = projects / claude_code.encode_cwd(tmp_path)
+    project.mkdir(parents=True)
+    (project / "session-1.jsonl").write_text(
+        "\n".join(
+            (
+                json.dumps({"type": "assistant", "effort": "high"}),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "effort": "low",
+                        "isSidechain": True,
+                    }
+                ),
+            )
+        )
+        + "\n"
+    )
+
+    assert ClaudeCodeBackend().current_effort(_binding(tmp_path, "claude_code")) == "high"
 
 
 def test_claude_current_model_prefers_latest_context_usage_model(tmp_path, monkeypatch):

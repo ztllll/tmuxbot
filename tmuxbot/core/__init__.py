@@ -1,7 +1,13 @@
 """Provider- and channel-neutral runtime contracts."""
 
 from tmuxbot.core.capabilities import ChannelCapabilities, ProviderCapabilities
-from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
+from tmuxbot.core.events import (
+    ProviderEvent,
+    ProviderEventKind,
+    ProviderRuntimeMetadata,
+    TerminalState,
+    TerminalStatus,
+)
 from tmuxbot.core.messages import AttachmentRef, IncomingMessage
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.rich_messages import ReplyBlock, ReplyDocument
@@ -14,6 +20,7 @@ __all__ = [
     "ProviderCapabilities",
     "ProviderEvent",
     "ProviderEventKind",
+    "ProviderRuntimeMetadata",
     "ReplyEnvelope",
     "ReplyBlock",
     "ReplyDocument",

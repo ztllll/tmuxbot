@@ -28,6 +28,15 @@ class TerminalState(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderRuntimeMetadata:
+    """Provider-authoritative fields used to enrich a captured terminal status."""
+
+    model: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TerminalStatus:
     state: TerminalState
     label: str = ""

@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
+from tmuxbot.core.events import (
+    ProviderEvent,
+    ProviderEventKind,
+    ProviderRuntimeMetadata,
+    TerminalState,
+    TerminalStatus,
+)
 from tmuxbot.hooks.claude import default_hook_spool_path, read_hook_spool
 from tmuxbot.quota import fetch_quota
 from tmuxbot.providers.adapters import provider_launch_arguments
@@ -501,6 +507,10 @@ class ClaudeCodeBackend(Backend):
         self._hook_offsets: dict[str, int] = {}
         self._seen_hook_event_ids: set[str] = set()
         self._hook_final_texts: set[tuple[str, str]] = set()
+        self._runtime_metadata_cache: dict[
+            Path,
+            tuple[tuple[int, int], ProviderRuntimeMetadata],
+        ] = {}
 
     @property
     def capabilities(self) -> ProviderCapabilities:
@@ -620,29 +630,62 @@ class ClaudeCodeBackend(Backend):
         Claude's ``/context`` records a newer selected model in a user metadata
         row even when no assistant turn has yet been produced with that model.
         """
+        return self._current_transcript_metadata(b).model
+
+    def current_effort(self, b: "Binding") -> str | None:
+        """Read Claude Code's reasoning effort from the active transcript."""
+        return self._current_transcript_metadata(b).effort
+
+    def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
+        """Return model and effort from the same active-transcript snapshot."""
+        return self._current_transcript_metadata(b)
+
+    def _current_transcript_metadata(
+        self,
+        b: "Binding",
+    ) -> ProviderRuntimeMetadata:
         transcript = self.find_active_jsonl(b)
         if transcript is None:
-            return None
+            return ProviderRuntimeMetadata()
+        try:
+            stat = transcript.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return ProviderRuntimeMetadata()
+        cached = self._runtime_metadata_cache.get(transcript)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
         try:
             rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            return None
+            return ProviderRuntimeMetadata()
+        model = effort = None
         for line in reversed(rows):
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            message = row.get("message")
-            if not isinstance(message, dict):
+            if row.get("isSidechain") is True:
                 continue
-            content = message.get("content")
-            if isinstance(content, str):
-                context_model = _CONTEXT_USAGE_MODEL_RE.search(content)
-                if context_model:
-                    return context_model.group(1)
-            if isinstance(message.get("model"), str):
-                return message["model"]
-        return None
+            if effort is None:
+                row_effort = row.get("effort")
+                if isinstance(row_effort, str) and row_effort:
+                    effort = row_effort
+            if model is None:
+                message = row.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        context_model = _CONTEXT_USAGE_MODEL_RE.search(content)
+                        if context_model:
+                            model = context_model.group(1)
+                    if model is None and isinstance(message.get("model"), str):
+                        model = message["model"]
+            if model is not None and effort is not None:
+                break
+        metadata = ProviderRuntimeMetadata(model=model, effort=effort)
+        self._runtime_metadata_cache[transcript] = signature, metadata
+        return metadata
 
     def poll_provider_events(self, b: "Binding") -> list[ProviderEvent]:
         if b.name not in self._hook_offsets:

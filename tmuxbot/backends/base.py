@@ -16,7 +16,13 @@ from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 from tmuxbot.core.capabilities import ProviderCapabilities
-from tmuxbot.core.events import ProviderEvent, ProviderEventKind, TerminalState, TerminalStatus
+from tmuxbot.core.events import (
+    ProviderEvent,
+    ProviderEventKind,
+    ProviderRuntimeMetadata,
+    TerminalState,
+    TerminalStatus,
+)
 from tmuxbot.core.sessions import SessionIdentity
 
 if TYPE_CHECKING:
@@ -76,9 +82,21 @@ class Backend(ABC):
         """
         return None
 
+    def current_effort(self, b: "Binding") -> str | None:
+        """Return the reasoning effort recorded by the active provider session."""
+        return None
+
     def current_permission_mode(self, b: "Binding") -> str | None:
         """Return the effective permission mode when the TUI omits it."""
         return None
+
+    def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
+        """Return one coherent provider snapshot for terminal-status enrichment."""
+        return ProviderRuntimeMetadata(
+            model=self.current_model(b),
+            effort=self.current_effort(b),
+            permission_mode=self.current_permission_mode(b),
+        )
 
     def format_status_footer(self, status: TerminalStatus | None) -> str | None:
         if status is None:

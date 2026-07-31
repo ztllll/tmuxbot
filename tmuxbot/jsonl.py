@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
 from tmuxbot.core.replies import ReplyEnvelope
-from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState, TerminalStatus
 from tmuxbot.core.runtime_v2 import RuntimeV2Router
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.tmux import tmux_capture
@@ -373,32 +373,40 @@ async def _send_assistant_reply(
 async def _capture_terminal_status(
     b: "Binding", backend: "Backend",
 ) -> TerminalStatus | None:
-    """Capture runtime state and fill a missing TUI model from provider metadata."""
+    """Capture runtime state and enrich it with one provider metadata snapshot."""
     try:
         pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
         status = backend.parse_terminal_status(pane)
-        model_getter = getattr(backend, "current_model", None)
-        model = model_getter(b) if callable(model_getter) else None
-        permission_getter = getattr(backend, "current_permission_mode", None)
-        permission = permission_getter(b) if callable(permission_getter) else None
+        metadata_getter = getattr(backend, "current_runtime_metadata", None)
+        metadata = (
+            metadata_getter(b)
+            if callable(metadata_getter)
+            else ProviderRuntimeMetadata()
+        )
     except Exception:
         log.exception("[%s] provider status capture failed", b.name)
         return None
     if status is None:
-        if model or permission:
+        if metadata.model or metadata.effort or metadata.permission_mode:
             return TerminalStatus(
                 state=TerminalState.IDLE,
-                model=model,
-                permission_mode=permission,
+                model=metadata.model,
+                effort=metadata.effort,
+                permission_mode=metadata.permission_mode,
             )
         return None
     # Transcript metadata is authoritative. TUI scrollback can contain a tool/subagent
     # label (for example ``claude-code-guide``) that looks like a model name.
-    if (model and status.model != model) or (status.permission_mode is None and permission):
+    if (
+        (metadata.model and status.model != metadata.model)
+        or (metadata.effort and status.effort != metadata.effort)
+        or (status.permission_mode is None and metadata.permission_mode)
+    ):
         return replace(
             status,
-            model=model or status.model,
-            permission_mode=status.permission_mode or permission,
+            model=metadata.model or status.model,
+            effort=metadata.effort or status.effort,
+            permission_mode=status.permission_mode or metadata.permission_mode,
         )
     return status
 

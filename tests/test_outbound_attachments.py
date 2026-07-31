@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot import jsonl
-from tmuxbot.core.events import TerminalState, TerminalStatus
+from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState, TerminalStatus
 from tmuxbot.jsonl import _capture_terminal_status, on_tmux_event
 from tmuxbot.attachments import is_image_file
 from tmuxbot.state import Binding
@@ -141,11 +141,12 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
             # TUI scrollback may contain a subagent/tool label that looks like a model.
             return TerminalStatus(state=TerminalState.WORKING, model="claude-code-guide")
 
-        def current_model(self, binding):
-            return "claude-opus-4-8"
-
-        def current_permission_mode(self, binding):
-            return "YOLO"
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata(
+                model="claude-opus-4-8",
+                effort="high",
+                permission_mode="YOLO",
+            )
 
     monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "working")
 
@@ -153,6 +154,7 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
 
     assert status is not None
     assert status.model == "claude-opus-4-8"
+    assert status.effort == "high"
     assert status.permission_mode == "YOLO"
 
 
