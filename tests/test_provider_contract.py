@@ -67,7 +67,7 @@ def test_claude_terminal_status_normalizes_permission_and_context():
 def test_codex_terminal_status_normalizes_working_model_and_cwd():
     status = CodexBackend().parse_terminal_status(
         "• Working (9s • esc to interrupt)\n"
-        "gpt-5.6-sol high · ~/repo"
+        "gpt-5.6-sol high · ~/repo · Main [default]"
     )
 
     assert status is not None
@@ -79,6 +79,38 @@ def test_codex_terminal_status_normalizes_working_model_and_cwd():
     assert CodexBackend().format_status_footer(status) == (
         "gpt-5.6-sol high · working 9s · ~/repo"
     )
+
+
+def test_codex_terminal_status_keeps_effort_when_cwd_is_home():
+    status = CodexBackend().parse_terminal_status(
+        "gpt-5.6-terra medium · ~ · Main [default]"
+    )
+
+    assert status is not None
+    assert status.model == "gpt-5.6-terra"
+    assert status.effort == "medium"
+    assert status.cwd == "~"
+    assert CodexBackend().format_status_footer(status) == "gpt-5.6-terra medium · ~"
+
+
+def test_codex_terminal_status_renders_xhigh_effort():
+    status = CodexBackend().parse_terminal_status(
+        "gpt-5.6-sol xhigh · ~/repo · feature/footer"
+    )
+
+    assert status is not None
+    assert status.effort == "xhigh"
+    assert CodexBackend().format_status_footer(status) == "gpt-5.6-sol xhigh · ~/repo"
+
+
+def test_codex_terminal_status_omits_missing_effort_cleanly():
+    status = CodexBackend().parse_terminal_status(
+        "gpt-5.6-sol · ~/repo · Main [default]"
+    )
+
+    assert status is not None
+    assert status.effort is None
+    assert CodexBackend().format_status_footer(status) == "gpt-5.6-sol · ~/repo"
 
 
 def test_codex_current_model_falls_back_to_active_transcript(tmp_path, monkeypatch):

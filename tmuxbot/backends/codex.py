@@ -295,7 +295,8 @@ class CodexBackend(Backend):
 
         model = effort = cwd = None
         status_match = re.search(
-            r"^\s*(gpt-[\w.-]+)(?:\s+([\w-]+))?\s*[·•]\s*(~?/\S+|/\S+)\s*$",
+            r"^\s*(gpt-[\w.-]+)(?:\s+([\w-]+))?\s*[·•]\s*"
+            r"(~(?:/\S+)?|/\S+)(?:\s*[·•]\s*.*)?$",
             clean,
             re.M | re.I,
         )
