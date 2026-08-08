@@ -313,6 +313,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     route_parser.add_argument("--file", type=Path, dest="route_file")
     route_parser.add_argument("route_args", nargs=argparse.REMAINDER)
+    admin_parser = subparsers.add_parser(
+        "admin", help="plan, apply, and verify deterministic Admin route operations"
+    )
+    admin_parser.add_argument("--file", type=Path, dest="admin_file")
+    admin_parser.add_argument("--service", default="tmuxbot.service")
+    admin_parser.add_argument("admin_args", nargs=argparse.REMAINDER)
     from tmuxbot.teamrun.worker_cli import add_worker_parser
 
     add_worker_parser(subparsers)
@@ -359,6 +365,20 @@ def run(argv: list[str] | None = None) -> None:
             *args.route_args,
         ]
         raise SystemExit(run_route_command(route_args))
+    if args.command == "admin":
+        from tmuxbot.admin_cli import run_admin_command
+
+        paths = RuntimePaths.discover(
+            os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
+        )
+        admin_args = [
+            "--file",
+            str(args.admin_file or paths.bindings_file),
+            "--service",
+            args.service,
+            *args.admin_args,
+        ]
+        raise SystemExit(run_admin_command(admin_args))
     if args.command == "worker":
         from tmuxbot.teamrun.worker_cli import run_worker
 

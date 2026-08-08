@@ -60,7 +60,21 @@ tmuxbot serve --open
 
 首次运行会自动打开中文 WebUI，并生成 10 分钟有效、设置成功后立即失效的一次性本机授权。没有 `.env`、通道或 binding 时 WebUI 也会保持可用；bridge 显示“尚未配置”。运行 `tmuxbot doctor` 可检查 tmux、Claude Code、Codex、Pi 和运行目录。
 
-源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。通过 Boss DM 用自然语言创建或绑定 tmux 与 Telegram 话题，见 [Admin DM 运维指南](./docs/admin-dm-operations.md)；完整 route 模型见 [Topic Routes and Admin DM](./docs/topic-routing.md)。
+源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。通过 Boss DM 用自然语言创建或绑定 tmux 与 Telegram/飞书话题，见 [Admin DM 运维指南](./docs/admin-dm-operations.md)；完整 route 模型见 [Topic Routes and Admin DM](./docs/topic-routing.md)。
+
+为避免弱模型手工拼错 YAML、thread ID、tmux 或 systemd，Admin 会话应安装统一的 **Admin Operations Contract**，并只调用确定性事务命令：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  install-contract --cwd /home/you
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service inventory --json
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  bind-topic ...             # 默认仅输出 plan；核对后增加 --apply
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  verify ROUTE --json
+```
+
+事务内部负责完整候选校验、原子 YAML 替换、监督服务重启、post-apply verify 和失败回滚；LLM 只负责提供明确的 endpoint、target、cwd 与 adapter。
 
 ### 生产部署(systemd,推荐)
 

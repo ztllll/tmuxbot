@@ -87,6 +87,22 @@ A group mention can never acquire admin capability. Once authenticated, the mana
 
 The operator-facing natural-language workflow, prompt templates, deterministic execution order, and acceptance checklist are documented in [`admin-dm-operations.md`](admin-dm-operations.md). The recommended layout uses a root-directory Admin Pi for management and separate project panes for group topics.
 
+Every Admin LLM receives the same **Admin Operations Contract** through a managed block installed into the Admin cwd's `AGENTS.md` and `CLAUDE.md`. The contract deliberately stays short: discover exact endpoints and panes, produce a plan, apply through a deterministic transaction, then verify. Provider-specific prompt skill is optional; correctness belongs to `tmuxbot admin`, not to the model's memory.
+
+The transaction interface is:
+
+```text
+tmuxbot admin contract
+tmuxbot admin install-contract --cwd PATH
+tmuxbot admin inventory [--json]
+tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
+tmuxbot admin bind-topic ... [--create-target] [--apply]
+tmuxbot admin move-topic ROUTE ... [--apply]
+tmuxbot admin verify ROUTE [--json]
+```
+
+`bind-topic` and `move-topic` are plan-only by default. `--apply` validates the complete candidate, atomically replaces YAML, restarts the explicitly named supervised bridge, and runs post-apply verification. Failure restores the old YAML and bridge; a newly created session is also removed. Existing tmux sessions are never destroyed by rollback.
+
 ## Route CLI
 
 The deterministic management surface is:
@@ -104,7 +120,7 @@ tmuxbot route restart NAME
 tmuxbot route replace-cli NAME BACKEND
 ```
 
-The first implementation slice provides `list`, `inspect`, `validate`, `bind`, and `unbind`, plus per-route adapter dispatch. `attach`, in-process reload, and lifecycle operations remain planned behind the same command namespace; until then operators restart the supervised bridge after YAML changes.
+The route-store slice provides `list`, `inspect`, `validate`, `bind`, and `unbind`, plus per-route adapter dispatch. The Admin transaction layer now owns the common create/move/verify workflow and supervised restart. `attach`, in-process reload, and broader lifecycle operations remain planned behind the route namespace; direct YAML edits still require an explicit bridge restart.
 
 ## Pi adapter
 

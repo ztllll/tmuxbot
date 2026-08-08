@@ -125,6 +125,32 @@ class RouteStore:
         self._atomic_write(raw)
         return binding
 
+    def replace(self, name: str, item: Mapping[str, Any]) -> Binding:
+        raw, bindings = self._read_document()
+        if not any(binding.name == name for binding in bindings):
+            raise KeyError(name)
+        replacement = binding_from_mapping(item)
+        candidate = [
+            replacement if binding.name == name else binding for binding in bindings
+        ]
+        validate_bindings(candidate)
+        raw["bindings"] = [binding_to_mapping(binding) for binding in candidate]
+        self._atomic_write(raw)
+        return replacement
+
+    def move_endpoint(
+        self,
+        name: str,
+        *,
+        chat_id: int | str,
+        thread_id: int | str | None,
+    ) -> Binding:
+        existing = self.inspect(name)
+        item = binding_to_mapping(existing)
+        item["chat_id"] = chat_id
+        item["thread_id"] = thread_id
+        return self.replace(name, item)
+
     def unbind(self, name: str) -> Binding:
         raw, bindings = self._read_document()
         removed = next((binding for binding in bindings if binding.name == name), None)

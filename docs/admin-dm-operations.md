@@ -45,7 +45,81 @@ systemctl --user daemon-reload
 systemctl --user restart tmuxbot.service
 ```
 
-## 2. 在 DM 中需要提供什么
+## 2. Admin Operations Contract（所有 LLM 的统一入口）
+
+Admin LLM 不应自行拼装 YAML、tmux 和 systemd 操作。安装后使用同一套确定性事务命令：
+
+```bash
+# 打印机器可读/人可读的操作契约
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service contract
+
+# 把受管契约幂等安装到 Admin cwd 的 AGENTS.md + CLAUDE.md
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  install-contract --cwd /home/you
+
+# 发现当前 routes 与真实 tmux panes
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  inventory --json
+
+# 发现飞书群内最近的精确 topic/thread ID（只读，不发消息）
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  feishu-topics --env-file /path/to/.env \
+  --credential FEISHU_CODEX --chat-id oc_xxx --json
+```
+
+标准事务流程固定为：
+
+```text
+inventory / feishu-topics
+→ bind-topic 或 move-topic（默认只输出 plan）
+→ 人或 Admin LLM 核对完整 endpoint/target/cwd/adapter
+→ 重复命令并增加 --apply
+→ 命令内部原子写 YAML、重启指定 systemd user service、执行 verify
+→ 由 Boss 在真实 DM/topic 发消息完成最终双向验收
+```
+
+新建或绑定 topic：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+  bind-topic \
+  --name demo-pi \
+  --channel feishu \
+  --credential FEISHU_CODEX \
+  --chat-id oc_xxx \
+  --thread-id omt_xxx \
+  --tmux-target demo-pi:0.0 \
+  --cwd /absolute/project/demo \
+  --backend pi \
+  --mention-required false
+
+# 核对 plan 后再加 --apply；目标不存在时还必须显式加 --create-target。
+```
+
+迁移已有 route 到统一项目群的新话题（保留 pane、cwd、adapter 与 provider identity）：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+  move-topic existing-route \
+  --channel feishu \
+  --chat-id oc_new_group \
+  --thread-id omt_new_topic
+
+# 核对 before/after 与 preserves 列表后再加 --apply。
+```
+
+独立验证：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+  verify existing-route --json
+```
+
+`--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
+
+当前 `--create-target` 只创建全新 session 的 `0.0` pane；在已有 session 中增加 window/pane 仍需先由确定性 tmux 操作创建，再用不带 `--create-target` 的 `bind-topic` 绑定。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
+
+## 3. 在 DM 中需要提供什么
 
 自然语言请求最好包含以下信息：
 
@@ -57,9 +131,9 @@ systemctl --user restart tmuxbot.service
 6. 群内是否需要 `@bot`。项目话题通常明确写“无需 @机器人”，对应 `mention_required: false`；
 7. 是否允许创建新 Telegram 话题。若要求绑定已有话题，应明确写“不要新建话题”。
 
-## 3. 常用自然语言模板
+## 4. 常用自然语言模板
 
-### 3.1 绑定已有话题到已有 pane
+### 4.1 绑定已有话题到已有 pane
 
 ```text
 请把 Telegram 群「项目群」的已有话题 8024
@@ -77,7 +151,7 @@ systemctl --user restart tmuxbot.service
 并汇报 endpoint、tmux target、pane command、cwd 和 tailer 状态。
 ```
 
-### 3.2 没有 tmux，创建后绑定已有话题
+### 4.2 没有 tmux，创建后绑定已有话题
 
 ```text
 请为 /home/you/projects/demo 创建 Pi tmux，
@@ -94,7 +168,7 @@ systemctl --user restart tmuxbot.service
 完成后校验 route，重启 bridge，检查 Pi、JSONL tailer 和 polling。
 ```
 
-### 3.3 在已有 session 中增加 window/pane
+### 4.3 在已有 session 中增加 window/pane
 
 ```text
 请在 tmux session project-team 中创建一个新的 window，
@@ -105,7 +179,7 @@ cwd=/home/you/projects/new-project，启动 Pi，
 设置 mention_required=false，不要新建 Telegram 话题。
 ```
 
-### 3.4 确实需要同时创建 Telegram 话题
+### 4.4 确实需要同时创建 Telegram 话题
 
 ```text
 请在 Telegram 群「项目群」新建话题「Demo 项目」，
@@ -118,7 +192,7 @@ cwd=/home/you/projects/new-project，启动 Pi，
 
 只有在请求明确允许时才应调用 Telegram `createForumTopic`。绑定已有话题时不得因为缺少 thread ID 而擅自新建。
 
-### 3.5 只提供 Telegram 消息链接
+### 4.5 只提供 Telegram 消息链接
 
 私有 supergroup/forum 的消息链接通常形如：
 
@@ -142,22 +216,22 @@ https://t.me/c/xxxxxxxxxx/12345/67890
 
 如果链接或名称不足以可靠识别 endpoint，管理 AI 应要求提供 `chat_id/thread_id`，而不是猜测或创建新话题。
 
-## 4. 确定性底层流程
+## 5. 确定性底层流程
 
-管理 AI 应尽量按以下顺序执行：
+管理 AI 必须优先使用 Admin Contract 的顺序：
 
 ```text
-1. tmuxbot route list / inspect
-2. 核对完整 endpoint：channel + credential + chat_id + thread_id
-3. 核对 cwd、adapter 和完整 tmux target
-4. 必要时创建 tmux session/window/pane，并启动真实 TUI
-5. tmuxbot route bind ...，或安全编辑 YAML
-6. 项目群通常设置 mention_required: false
-7. tmuxbot route validate
-8. systemctl --user restart tmuxbot.service
-9. 检查 polling、pane command、pane cwd、JSONL tailer、heartbeat
-10. 由 Boss 在真实 DM/topic 各发一条消息完成双向验收
+1. tmuxbot admin inventory
+2. 飞书 topic 使用 tmuxbot admin feishu-topics；Telegram 使用可靠 thread_id/消息链接
+3. bind-topic / move-topic 生成 plan（不带 --apply）
+4. 核对完整 endpoint、cwd、adapter 和完整 tmux target
+5. 重复同一命令并增加 --apply
+6. tmuxbot admin verify ROUTE --json
+7. 检查 polling、pane command、pane cwd、JSONL tailer、heartbeat
+8. 由 Boss 在真实 DM/topic 各发一条消息完成双向验收
 ```
+
+只有高层命令尚未覆盖的操作（例如已有 tmux session 新增 window/pane）才允许使用底层 `tmux`，且必须回到 `bind-topic plan → --apply → verify` 收口。直接编辑 YAML 仍是离线恢复能力，不是普通 Admin LLM 的首选路径。
 
 当前 `tmuxbot route` 第一阶段支持：
 
@@ -171,7 +245,7 @@ tmuxbot route unbind NAME
 
 尚未实现进程内 hot reload，因此 YAML 变化后需要重启受监督的 bridge。不要执行 `tmux kill-server`；它会影响所有用户 tmux 会话。
 
-## 5. 重要安全和路由约束
+## 6. 重要安全和路由约束
 
 - Admin 权限只对 Boss 身份和 Telegram private chat 同时成立；群中 `@bot`、`/panel` 或伪造 route 名不能取得 Admin 权限。
 - 未配置的群根、topic 和 thread 完全静默，不打反应、不 typing、不回复，也不触碰 tmux。
@@ -189,7 +263,7 @@ tmuxbot route unbind NAME
 
   `tmuxbot doctor` 只诊断，不自动重启 tmux server。
 
-## 6. 验收清单
+## 7. 验收清单
 
 每次开通或改绑后至少确认：
 
@@ -208,7 +282,7 @@ tmuxbot route unbind NAME
 [ ] 群根和未绑定 topic 保持静默
 ```
 
-## 7. 示例：推荐的管理/项目布局
+## 8. 示例：推荐的管理/项目布局
 
 ```text
 Boss DM
