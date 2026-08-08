@@ -1663,6 +1663,7 @@ class FeishuFrontend(Frontend):
             "register_p2_im_message_reaction_created_v1",
             "register_p2_im_message_reaction_deleted_v1",
             "register_p2_im_message_message_read_v1",
+            "register_p2_im_message_recalled_v1",
             "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
             "register_p2_im_chat_member_bot_added_v1",
             "register_p2_im_chat_member_user_added_v1",

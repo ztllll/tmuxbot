@@ -61,7 +61,7 @@
 
 ### Fixed
 
-- 飞书 WebSocket dispatcher 现在消费群资料更新、bot 入群和普通成员变更等无路由副作用事件，避免已订阅的 `im.chat.updated_v1` / `im.chat.member.*` 被 SDK 反复记录为 `processor not found`；群解散与 bot 被移出仍沿用原有 route 拆除逻辑。
+- 飞书 WebSocket dispatcher 现在消费群资料更新、bot 入群、普通成员变更和消息撤回等无路由副作用事件，避免已订阅的 `im.chat.updated_v1` / `im.chat.member.*` / `im.message.recalled_v1` 被 SDK 反复记录为 `processor not found`；群解散与 bot 被移出仍沿用原有 route 拆除逻辑。
 - Codex 启动路径改为在每次新建/恢复 provider 时读取 `CODEX_BIN`，不再在 Python import 阶段提前冻结，确保 bridge 加载 `.env` 后的绝对路径真正生效。
 - 修复飞书流式回复完成时未把 provider 状态传入最终 CardKit 卡片、工具状态卡完成时又主动清空 footer 的问题；飞书新回复和完成卡片现在都会保留模型、档位与权限信息，并移除过期的 `working` 时长。
 - 补齐 Claude Code 档位回填：当 TUI 状态栏不显示档位时，从当前绑定的活动 transcript 顶层 `effort` 读取并写入统一 `TerminalStatus`，飞书“同传系统开发”等 Claude binding 的回复末尾现在可显示 `high` 等档位。

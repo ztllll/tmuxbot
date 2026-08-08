@@ -99,6 +99,7 @@ def test_feishu_registers_non_routing_chat_events_as_ignored():
 
     instance._register_ignored_events(Builder())
 
+    assert registrations["register_p2_im_message_recalled_v1"].__self__ is instance
     assert registrations["register_p2_im_chat_updated_v1"].__self__ is instance
     assert registrations["register_p2_im_chat_member_bot_added_v1"].__self__ is instance
     assert registrations["register_p2_im_chat_member_user_added_v1"].__self__ is instance
