@@ -133,7 +133,8 @@ Pi runs in its interactive TUI in tmux. tmuxbot does not use Pi RPC, SDK, or pri
 - validates the session header cwd before claiming a transcript;
 - normalizes assistant text, thinking, and tool calls;
 - reads model/thinking/usage metadata;
-- recognizes Pi TUI process and activity state.
+- recognizes Pi TUI process and activity state;
+- mirrors Pi's native footer fields: provider/model/thinking, cumulative input/output, cacheRead (`R`)/cacheWrite (`W`), latest prompt cache-hit rate, cost/subscription, context usage/window and auto-compaction, cwd/Git branch/session name, plus extension status lines. TUI values remain the real-time source; the active Pi JSONL only fills fields omitted by terminal width. Claude/Codex retain their existing provider-specific status parsers.
 
 For reliable modified-key handling Pi recommends tmux `extended-keys on` and `extended-keys-format csi-u`. Doctor may diagnose this but must not kill or restart the user's tmux server.
 

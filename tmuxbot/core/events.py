@@ -31,22 +31,43 @@ class TerminalState(str, Enum):
 class ProviderRuntimeMetadata:
     """Provider-authoritative fields used to enrich a captured terminal status."""
 
+    provider: str | None = None
     model: str | None = None
     effort: str | None = None
     permission_mode: str | None = None
+    session_name: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cache_hit_rate: float | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalStatus:
     state: TerminalState
     label: str = ""
+    provider: str | None = None
     model: str | None = None
     effort: str | None = None
     permission_mode: str | None = None
     cwd: str | None = None
+    git_branch: str | None = None
+    session_name: str | None = None
     duration_seconds: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    cache_hit_rate: float | None = None
+    cost_usd: float | None = None
+    subscription: bool | None = None
+    extension_statuses: tuple[str, ...] = ()
     context_used: int | None = None
     context_limit: int | None = None
+    context_percent: float | None = None
+    auto_compact: bool | None = None
     blocked_reason: str | None = None
 
 

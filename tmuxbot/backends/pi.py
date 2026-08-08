@@ -46,14 +46,20 @@ _PI_WORKING_RE = re.compile(
     re.I | re.M,
 )
 _PI_MODEL_RE = re.compile(
-    r"\b([A-Za-z0-9][A-Za-z0-9_.-]*)\s*[•·]\s*"
-    r"(off|minimal|low|medium|high|xhigh|max|thinking off)\s*$",
-    re.I | re.M,
+    r"^(?:(?:\((?P<provider>[^()\n]+)\)\s+))?"
+    r"(?P<model>[A-Za-z0-9][A-Za-z0-9_.:/-]*)"
+    r"(?:\s*[•·]\s*(?P<effort>off|minimal|low|medium|high|xhigh|max|thinking off))?$",
+    re.I,
 )
 _PI_CONTEXT_RE = re.compile(
-    r"(?:(\d+(?:\.\d+)?)%|\?)\s*/\s*(\d+(?:\.\d+)?[kKmM]?)\s*(?:\(auto\))?"
+    r"(?:(?P<percent>\d+(?:\.\d+)?)%|\?)\s*/\s*"
+    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)\s*(?P<auto>\(auto\))?"
 )
-_PI_CWD_RE = re.compile(r"^\s*(~(?:/\S*)?|/\S+?)(?:\s+\([^\n]+\))?\s*$", re.M)
+_PI_USAGE_RE = re.compile(r"(?:^|\s)(?P<label>[↑↓RW])(?P<value>\d+(?:\.\d+)?[kKmM]?)")
+_PI_CACHE_HIT_RE = re.compile(r"(?:^|\s)CH(?P<value>\d+(?:\.\d+)?)%")
+_PI_COST_RE = re.compile(
+    r"(?:^|\s)\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
+)
 
 
 def _pi_bin() -> str:
@@ -86,6 +92,43 @@ def _scaled_number(value: str) -> int:
         return int(float(value) * scale)
     except ValueError:
         return 0
+
+
+def _format_pi_tokens(count: int) -> str:
+    if count < 1_000:
+        return str(count)
+    if count < 10_000:
+        return f"{count / 1_000:.1f}k"
+    if count < 1_000_000:
+        return f"{round(count / 1_000)}k"
+    if count < 10_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    return f"{round(count / 1_000_000)}M"
+
+
+def _parse_pi_location_line(line: str) -> tuple[str | None, str | None, str | None]:
+    value = line.strip()
+    if not value or not value.startswith(("/", "~")):
+        return None, None, None
+    location, separator, session_name = value.partition(" • ")
+    branch = None
+    branch_match = re.fullmatch(r"(.+?)\s+\(([^()\n]+)\)", location)
+    if branch_match:
+        location = branch_match.group(1).strip()
+        branch = branch_match.group(2).strip()
+    return location, branch, session_name.strip() if separator else None
+
+
+def _usage_cost(usage: Any) -> float:
+    if not isinstance(usage, dict):
+        return 0.0
+    cost = usage.get("cost") or {}
+    if isinstance(cost, dict):
+        try:
+            return float(cost.get("total", 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
 
 
 def _session_header(path: Path) -> dict[str, Any] | None:
@@ -129,6 +172,11 @@ class PiBackend(Backend):
     name = "pi"
     pane_command_name = "pi"
 
+    def __init__(self) -> None:
+        self._runtime_metadata_cache: dict[
+            Path, tuple[int, int, ProviderRuntimeMetadata]
+        ] = {}
+
     @property
     def start_cmd(self) -> str:
         return _start_cmd()
@@ -164,27 +212,86 @@ class PiBackend(Backend):
         clean = strip_decorations(pane)
         if not clean.strip():
             return None
+        lines = [line.rstrip() for line in clean.splitlines()]
         working = _PI_WORKING_RE.search(clean)
-        model_match = _PI_MODEL_RE.search(clean)
-        context_match = _PI_CONTEXT_RE.search(clean)
-        cwd_match = _PI_CWD_RE.search(clean)
+        model_match = None
+        stats_line = ""
+        cwd = git_branch = session_name = None
+        footer_index = None
+        extension_statuses: list[str] = []
+        for index in range(len(lines) - 1, -1, -1):
+            stripped = lines[index].strip()
+            context_candidate = _PI_CONTEXT_RE.search(stripped)
+            if context_candidate is None:
+                continue
+            model_text = stripped[context_candidate.end() :].strip()
+            candidate = _PI_MODEL_RE.fullmatch(model_text)
+            if candidate is None:
+                continue
+            model_match = candidate
+            stats_line = stripped[: context_candidate.end()].rstrip()
+            footer_index = index
+            if index + 1 < len(lines):
+                extension_statuses = [
+                    line.strip() for line in lines[index + 1 :] if line.strip()
+                ]
+            break
+        if footer_index is not None:
+            for index in range(footer_index - 1, -1, -1):
+                cwd, git_branch, session_name = _parse_pi_location_line(lines[index])
+                if cwd is not None:
+                    break
+
+        context_match = _PI_CONTEXT_RE.search(stats_line)
         context_limit = context_used = None
+        context_percent = None
+        auto_compact = None
         if context_match:
-            context_limit = _scaled_number(context_match.group(2))
-            if context_match.group(1) is not None and context_limit:
-                context_used = round(float(context_match.group(1)) / 100 * context_limit)
-        effort = model = None
+            context_limit = _scaled_number(context_match.group("limit"))
+            if context_match.group("percent") is not None:
+                context_percent = float(context_match.group("percent"))
+                if context_limit:
+                    context_used = round(context_percent / 100 * context_limit)
+            auto_compact = bool(context_match.group("auto"))
+
+        usage_values: dict[str, int] = {}
+        for match in _PI_USAGE_RE.finditer(stats_line):
+            usage_values[match.group("label")] = _scaled_number(match.group("value"))
+        cache_hit_match = _PI_CACHE_HIT_RE.search(stats_line)
+        cost_match = _PI_COST_RE.search(stats_line)
+        effort = model = provider = None
         if model_match:
-            model = model_match.group(1)
-            effort = model_match.group(2).lower().replace("thinking ", "")
+            provider = model_match.group("provider")
+            model = model_match.group("model")
+            raw_effort = model_match.group("effort")
+            effort = raw_effort.lower().replace("thinking ", "") if raw_effort else None
         return TerminalStatus(
             state=TerminalState.WORKING if working else TerminalState.IDLE,
             label=working.group(0).strip() if working else "ready",
+            provider=provider,
             model=model,
             effort=effort,
-            cwd=cwd_match.group(1) if cwd_match else None,
+            cwd=cwd,
+            git_branch=git_branch,
+            session_name=session_name,
+            input_tokens=usage_values.get("↑"),
+            output_tokens=usage_values.get("↓"),
+            cache_read_tokens=usage_values.get("R"),
+            cache_write_tokens=usage_values.get("W"),
+            cache_hit_rate=(
+                float(cache_hit_match.group("value")) / 100
+                if cache_hit_match is not None
+                else None
+            ),
+            cost_usd=float(cost_match.group("value")) if cost_match is not None else None,
+            subscription=(
+                bool(cost_match.group("subscription")) if cost_match is not None else None
+            ),
+            extension_statuses=tuple(extension_statuses),
             context_used=context_used,
             context_limit=context_limit,
+            context_percent=context_percent,
+            auto_compact=auto_compact,
         )
 
     def find_active_jsonl(self, b: "Binding") -> Path | None:
@@ -303,36 +410,147 @@ class PiBackend(Backend):
         transcript = self.find_active_jsonl(b)
         if transcript is None:
             return ProviderRuntimeMetadata()
-        model = effort = None
+        try:
+            stat = transcript.stat()
+        except OSError:
+            return ProviderRuntimeMetadata()
+        cached = self._runtime_metadata_cache.get(transcript)
+        if cached is not None and cached[:2] == (stat.st_size, stat.st_mtime_ns):
+            return cached[2]
+        provider = model = effort = session_name = None
+        input_tokens = output_tokens = cache_read = cache_write = 0
+        latest_cache_hit_rate = None
+        cost_usd = 0.0
         try:
             rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             return ProviderRuntimeMetadata()
-        for line in reversed(rows):
+        for line in rows:
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if effort is None and row.get("type") == "thinking_level_change":
-                effort = row.get("thinkingLevel")
-            if model is None and row.get("type") == "model_change":
-                model = row.get("modelId")
-            if row.get("type") == "message":
+            row_type = row.get("type")
+            if row_type == "session_info":
+                session_name = str(row.get("name") or "").strip() or None
+                continue
+            if row_type == "thinking_level_change":
+                effort = row.get("thinkingLevel") or effort
+                continue
+            if row_type == "model_change":
+                provider = row.get("provider") or provider
+                model = row.get("modelId") or model
+                continue
+            usage = None
+            update_cache_hit_rate = False
+            if row_type == "message":
                 message = row.get("message") or {}
                 if message.get("role") == "assistant":
-                    model = model or message.get("model")
-            if model is not None and effort is not None:
-                break
-        return ProviderRuntimeMetadata(
+                    provider = message.get("provider") or provider
+                    model = message.get("responseModel") or message.get("model") or model
+                    usage = message.get("usage")
+                    update_cache_hit_rate = True
+                elif message.get("role") == "toolResult":
+                    usage = message.get("usage")
+            elif row_type in {"branch_summary", "compaction"}:
+                usage = row.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            current_input = int(usage.get("input", 0) or 0)
+            current_cache_read = int(usage.get("cacheRead", 0) or 0)
+            current_cache_write = int(usage.get("cacheWrite", 0) or 0)
+            input_tokens += current_input
+            output_tokens += int(usage.get("output", 0) or 0)
+            cache_read += current_cache_read
+            cache_write += current_cache_write
+            cost_usd += _usage_cost(usage)
+            prompt_tokens = current_input + current_cache_read + current_cache_write
+            if update_cache_hit_rate and prompt_tokens:
+                latest_cache_hit_rate = current_cache_read / prompt_tokens
+        metadata = ProviderRuntimeMetadata(
+            provider=str(provider) if provider else None,
             model=str(model) if model else None,
             effort=str(effort) if effort else None,
+            session_name=session_name,
+            input_tokens=input_tokens or None,
+            output_tokens=output_tokens or None,
+            cache_read_tokens=cache_read or None,
+            cache_write_tokens=cache_write or None,
+            cache_hit_rate=latest_cache_hit_rate,
+            cost_usd=cost_usd or None,
         )
+        self._runtime_metadata_cache[transcript] = (
+            stat.st_size,
+            stat.st_mtime_ns,
+            metadata,
+        )
+        return metadata
 
     def current_model(self, b: "Binding") -> str | None:
         return self.current_runtime_metadata(b).model
 
     def current_effort(self, b: "Binding") -> str | None:
         return self.current_runtime_metadata(b).effort
+
+    def format_status_footer(self, status: TerminalStatus | None) -> str | None:
+        if status is None:
+            return None
+        parts: list[str] = []
+        model = status.model
+        if model:
+            model_text = model
+            if status.provider:
+                model_text = f"({status.provider}) {model_text}"
+            if status.effort:
+                model_text += f" • {status.effort}"
+            parts.append(model_text)
+
+        usage: list[str] = []
+        if status.input_tokens is not None:
+            usage.append(f"↑{_format_pi_tokens(status.input_tokens)}")
+        if status.output_tokens is not None:
+            usage.append(f"↓{_format_pi_tokens(status.output_tokens)}")
+        if status.cache_read_tokens is not None:
+            usage.append(f"R{_format_pi_tokens(status.cache_read_tokens)}")
+        if status.cache_write_tokens is not None:
+            usage.append(f"W{_format_pi_tokens(status.cache_write_tokens)}")
+        if status.cache_hit_rate is not None:
+            usage.append(f"CH{status.cache_hit_rate * 100:.1f}%")
+        if status.cost_usd is not None or status.subscription:
+            cost = status.cost_usd or 0.0
+            usage.append(f"${cost:.3f}{' (sub)' if status.subscription else ''}")
+        if usage:
+            parts.append(" ".join(usage))
+
+        if status.context_limit is not None:
+            context = "?"
+            if status.context_used is not None:
+                context = _format_pi_tokens(status.context_used)
+            context += f"/{_format_pi_tokens(status.context_limit)}"
+            details: list[str] = []
+            if status.context_percent is not None:
+                details.append(f"{status.context_percent:.1f}%")
+            if status.auto_compact:
+                details.append("auto")
+            if details:
+                context += f" ({', '.join(details)})"
+            parts.append(context)
+
+        location = status.cwd
+        if location:
+            if status.git_branch:
+                location += f" ({status.git_branch})"
+            if status.session_name:
+                location += f" • {status.session_name}"
+            parts.append(location)
+        if status.extension_statuses:
+            parts.append(" ".join(status.extension_statuses))
+        if status.state != TerminalState.IDLE:
+            state = status.label or status.state.value
+            if status.duration_seconds is not None:
+                state += f" {self._format_duration(status.duration_seconds)}"
+            parts.append(state)
+        return " · ".join(parts) or None
 
     def find_tui_activity_fp(self, pane: str) -> str | None:
         status = self.parse_terminal_status(pane)

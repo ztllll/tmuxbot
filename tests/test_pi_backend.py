@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from tmuxbot.backends import pi
 from tmuxbot.backends.pi import PiBackend, encode_pi_cwd
 from tmuxbot.core.events import ProviderEventKind, TerminalState
@@ -163,13 +165,53 @@ def test_pi_runtime_metadata_and_usage_come_from_transcript(tmp_path, monkeypatc
             )
             + "\n"
         )
+        stream.write(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "toolResult",
+                        "usage": {
+                            "input": 10,
+                            "output": 2,
+                            "cacheRead": 0,
+                            "cacheWrite": 3,
+                            "cost": {"total": 0.01},
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+        stream.write(
+            json.dumps(
+                {
+                    "type": "compaction",
+                    "usage": {
+                        "input": 5,
+                        "output": 1,
+                        "cacheRead": 2,
+                        "cacheWrite": 0,
+                        "cost": {"total": 0.02},
+                    },
+                }
+            )
+            + "\n"
+        )
 
     backend = PiBackend()
     route = binding(cwd)
 
     metadata = backend.current_runtime_metadata(route)
+    assert metadata.provider == "openai"
     assert metadata.model == "gpt-5.6-sol"
     assert metadata.effort == "high"
+    assert metadata.input_tokens == 115
+    assert metadata.output_tokens == 23
+    assert metadata.cache_read_tokens == 52
+    assert metadata.cache_write_tokens == 8
+    assert metadata.cache_hit_rate == 50 / 155
+    assert metadata.cost_usd == pytest.approx(0.03)
     assert backend.aggregate_usage(transcript) == {
         "count": 1,
         "input": 100,
@@ -182,17 +224,91 @@ def test_pi_runtime_metadata_and_usage_come_from_transcript(tmp_path, monkeypatc
     }
 
 
-def test_pi_terminal_status_recognizes_working_and_footer_metadata():
+def test_pi_runtime_metadata_cache_invalidates_when_transcript_grows(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    backend = PiBackend()
+    route = binding(cwd)
+
+    first = backend.current_runtime_metadata(route)
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "model_change",
+                    "provider": "aisupertoken",
+                    "modelId": "gpt-5.6-luna",
+                }
+            )
+            + "\n"
+        )
+    second = backend.current_runtime_metadata(route)
+
+    assert first.model == "gpt-5.6-sol"
+    assert second.model == "gpt-5.6-luna"
+    assert second.provider == "aisupertoken"
+
+
+def test_pi_terminal_status_recognizes_full_native_footer():
     status = PiBackend().parse_terminal_status(
         "⠧ Working...\n"
-        "~/repo (main)\n"
-        "↑1.3M ↓98k R19M CH84.2% 8.0%/1.1M (auto)        gpt-5.6-sol • high"
+        "~/repo (main) • release audit\n"
+        "↑1.3M ↓98k R19M W2.5k CH84.2% $1.234 (sub) 8.0%/1.1M (auto)        "
+        "(aisupertoken) gpt-5.6-sol • high\n"
+        "mail: ready scheduler: paused"
     )
 
     assert status is not None
     assert status.state == TerminalState.WORKING
+    assert status.provider == "aisupertoken"
     assert status.model == "gpt-5.6-sol"
     assert status.effort == "high"
     assert status.cwd == "~/repo"
+    assert status.git_branch == "main"
+    assert status.session_name == "release audit"
+    assert status.input_tokens == 1_300_000
+    assert status.output_tokens == 98_000
+    assert status.cache_read_tokens == 19_000_000
+    assert status.cache_write_tokens == 2_500
+    assert status.cache_hit_rate == pytest.approx(0.842)
+    assert status.cost_usd == 1.234
+    assert status.subscription is True
+    assert status.extension_statuses == ("mail: ready scheduler: paused",)
+    assert status.context_percent == 8.0
     assert status.context_used == 88_000
     assert status.context_limit == 1_100_000
+    assert status.auto_compact is True
+
+
+def test_pi_terminal_status_accepts_non_reasoning_model_footer():
+    status = PiBackend().parse_terminal_status(
+        "~/repo\n↑12 ↓3 2.0%/128k model-without-reasoning"
+    )
+
+    assert status is not None
+    assert status.model == "model-without-reasoning"
+    assert status.effort is None
+
+
+def test_pi_status_footer_preserves_all_pi_specific_metrics():
+    status = PiBackend().parse_terminal_status(
+        "/data/project/demo (feature/pi)\n"
+        "↑48k ↓2.3k R98k CH92.0% 7.3%/360k (auto) "
+        "gpt-5.6-luna • medium"
+    )
+
+    footer = PiBackend().format_status_footer(status)
+
+    assert footer is not None
+    assert "gpt-5.6-luna • medium" in footer
+    assert "↑48k" in footer
+    assert "↓2.3k" in footer
+    assert "R98k" in footer
+    assert "CH92.0%" in footer
+    assert "26k/360k" in footer
+    assert "7.3%, auto" in footer
+    assert "feature/pi" in footer
+    assert "/data/project/demo" in footer

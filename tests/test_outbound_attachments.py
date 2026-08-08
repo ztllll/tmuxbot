@@ -172,6 +172,42 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
     assert status.permission_mode == "YOLO"
 
 
+def test_status_capture_preserves_tui_usage_and_fills_missing_metadata(tmp_path, monkeypatch):
+    class BackendWithUsage:
+        def parse_terminal_status(self, pane):
+            return TerminalStatus(
+                state=TerminalState.IDLE,
+                model="gpt-5.6-luna",
+                input_tokens=48_000,
+                output_tokens=2_300,
+                context_used=26_000,
+                context_limit=360_000,
+            )
+
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata(
+                provider="aisupertoken",
+                model="gpt-5.6-luna",
+                effort="medium",
+                input_tokens=49_123,
+                output_tokens=2_456,
+                cache_read_tokens=98_000,
+            )
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "footer")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), BackendWithUsage()))
+
+    assert status is not None
+    assert status.provider == "aisupertoken"
+    assert status.effort == "medium"
+    assert status.input_tokens == 48_000
+    assert status.output_tokens == 2_300
+    assert status.cache_read_tokens == 98_000
+    assert status.context_used == 26_000
+    assert status.context_limit == 360_000
+
+
 def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_path):
     async def run():
         report = tmp_path / "reports" / "result.pdf"

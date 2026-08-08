@@ -387,26 +387,89 @@ async def _capture_terminal_status(
         log.exception("[%s] provider status capture failed", b.name)
         return None
     if status is None:
-        if metadata.model or metadata.effort or metadata.permission_mode:
+        if any(
+            value is not None
+            for value in (
+                metadata.provider,
+                metadata.model,
+                metadata.effort,
+                metadata.permission_mode,
+                metadata.session_name,
+                metadata.input_tokens,
+                metadata.output_tokens,
+                metadata.cache_read_tokens,
+                metadata.cache_write_tokens,
+                metadata.cache_hit_rate,
+                metadata.cost_usd,
+            )
+        ):
             return TerminalStatus(
                 state=TerminalState.IDLE,
+                provider=metadata.provider,
                 model=metadata.model,
                 effort=metadata.effort,
                 permission_mode=metadata.permission_mode,
+                session_name=metadata.session_name,
+                input_tokens=metadata.input_tokens,
+                output_tokens=metadata.output_tokens,
+                cache_read_tokens=metadata.cache_read_tokens,
+                cache_write_tokens=metadata.cache_write_tokens,
+                cache_hit_rate=metadata.cache_hit_rate,
+                cost_usd=metadata.cost_usd,
             )
         return None
     # Transcript metadata is authoritative. TUI scrollback can contain a tool/subagent
     # label (for example ``claude-code-guide``) that looks like a model name.
-    if (
-        (metadata.model and status.model != metadata.model)
-        or (metadata.effort and status.effort != metadata.effort)
-        or (status.permission_mode is None and metadata.permission_mode)
+    if any(
+        (
+            metadata.provider and status.provider != metadata.provider,
+            metadata.model and status.model != metadata.model,
+            metadata.effort and status.effort != metadata.effort,
+            status.permission_mode is None and metadata.permission_mode,
+            status.session_name is None and metadata.session_name,
+            status.input_tokens is None and metadata.input_tokens is not None,
+            status.output_tokens is None and metadata.output_tokens is not None,
+            status.cache_read_tokens is None and metadata.cache_read_tokens is not None,
+            status.cache_write_tokens is None and metadata.cache_write_tokens is not None,
+            status.cache_hit_rate is None and metadata.cache_hit_rate is not None,
+            status.cost_usd is None and metadata.cost_usd is not None,
+        )
     ):
         return replace(
             status,
+            provider=metadata.provider or status.provider,
             model=metadata.model or status.model,
             effort=metadata.effort or status.effort,
             permission_mode=status.permission_mode or metadata.permission_mode,
+            session_name=status.session_name or metadata.session_name,
+            input_tokens=(
+                status.input_tokens
+                if status.input_tokens is not None
+                else metadata.input_tokens
+            ),
+            output_tokens=(
+                status.output_tokens
+                if status.output_tokens is not None
+                else metadata.output_tokens
+            ),
+            cache_read_tokens=(
+                status.cache_read_tokens
+                if status.cache_read_tokens is not None
+                else metadata.cache_read_tokens
+            ),
+            cache_write_tokens=(
+                status.cache_write_tokens
+                if status.cache_write_tokens is not None
+                else metadata.cache_write_tokens
+            ),
+            cache_hit_rate=(
+                status.cache_hit_rate
+                if status.cache_hit_rate is not None
+                else metadata.cache_hit_rate
+            ),
+            cost_usd=(
+                status.cost_usd if status.cost_usd is not None else metadata.cost_usd
+            ),
         )
     return status
 

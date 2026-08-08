@@ -52,7 +52,7 @@ tmuxbot/                       ← 仓库根
 │   │   ├── claude_code.py     ← ClaudeCodeBackend: parse_event / parse_* / find_active_jsonl
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
 │   │   ├── codex.py           ← CodexBackend
-│   │   └── pi.py              ← PiBackend
+│   │   └── pi.py              ← PiBackend: 原生 footer 全量解析 + 活动 JSONL metadata/usage 补全
 │   └── frontends/
 │       ├── base.py            ← Frontend ABC 与回复发送契约
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + handlers

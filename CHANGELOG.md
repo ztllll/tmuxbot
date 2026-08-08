@@ -18,6 +18,7 @@
 
 - 取消一个 credential 固定一个 backend 的限制；heartbeat、tailer、命令、附件、状态与 lifecycle 均按 binding 解析 adapter。
 - Telegram 与飞书统一使用共享 ReplyDocument 展示标题、项目、route 会话、文字状态、正文和 provider footer；Telegram 混合 adapter credential 的状态 footer 也改为按当前 route 解析。
+- 增强 Pi 专属状态采集，不替换 Claude/Codex 现有 parser：解析 Pi 原生 footer 的 provider、model、thinking level、累计 input/output、cacheRead/cacheWrite、最近 prompt cache hit、cost/subscription、context 百分比/窗口、auto-compact、cwd、Git branch、session name 与 extension statuses，并用当前 Pi JSONL 补全 TUI 因宽度省略的字段。Pi footer 中 `R` 按官方定义表示 cacheRead。
 - `thread_id` 统一为 `int | str | None`，飞书入站提取字符串 thread，出站通过 `reply_in_thread=True` 回到原 thread；缺少可信回复锚点时失败关闭，不降级到群根。
 - tmux session 可被多个 route 共享，只要求完整 pane target 唯一。
 - 未绑定群根/topic/thread 统一静默且不触碰 tmux；新增 route 改由 YAML、route CLI、Admin DM 或 Web control plane 显式创建。
