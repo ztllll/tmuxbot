@@ -33,6 +33,7 @@
 ### Changed
 
 - GitHub Actions 基础 action 升级到当前主版本，将 CI job 权限收紧为只读仓库内容，并加入独立 WebUI test/build job；WebUI lockfile 同步消除已知 npm audit 漏洞。
+- 测试环境统一清除宿主机 `CLAUDE_BIN` / `CODEX_BIN` 覆盖，避免生产部署路径污染 provider discovery 与启动命令断言。
 - tmux 会话改为默认按消息懒启动：人工关闭或 IM `/tmuxstop` 后不再被后台周期复活；Telegram、飞书和 Web 控制台都可关闭 tmux 并保留 binding/provider 历史，下一条 IM 消息自动重建并 resume。常驻自愈改为 `TMUXBOT_LIFECYCLE_ENABLED=1` 显式 opt-in。
 - 受管 Codex 会话的新建与 `--resume` 恢复均读取 `~/.codex/config.toml` 的 `model` 并显式传入 `-m`；配置变更会自动用于下一次启动或恢复。
 - Telegram 与飞书统一使用 `IncomingMessage` / `ReplyEnvelope`;回复尾部由 Claude/Codex provider 解析 `TerminalStatus`,不再由渠道猜测屏幕最后一行。
@@ -46,6 +47,7 @@
 
 ### Fixed
 
+- Codex 启动路径改为在每次新建/恢复 provider 时读取 `CODEX_BIN`，不再在 Python import 阶段提前冻结，确保 bridge 加载 `.env` 后的绝对路径真正生效。
 - 修复飞书流式回复完成时未把 provider 状态传入最终 CardKit 卡片、工具状态卡完成时又主动清空 footer 的问题；飞书新回复和完成卡片现在都会保留模型、档位与权限信息，并移除过期的 `working` 时长。
 - 补齐 Claude Code 档位回填：当 TUI 状态栏不显示档位时，从当前绑定的活动 transcript 顶层 `effort` 读取并写入统一 `TerminalStatus`，飞书“同传系统开发”等 Claude binding 的回复末尾现在可显示 `high` 等档位。
 - 修复 Codex 新版状态栏带 Git 分支后缀、工作目录为 `~`，或工作态暂时隐藏模型行时无法解析推理档位的问题；缺失的模型与档位会从当前 binding 的活动 rollout 运行时设置（`thread_settings` / `turn_context`）同次回填，Telegram/飞书回复末尾现在会显示 `low`、`medium`、`high`、`xhigh` 等当前档位。
