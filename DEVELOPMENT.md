@@ -362,29 +362,32 @@ systemctl --user daemon-reload
 systemctl --user enable --now tmuxbot.service
 loginctl enable-linger $USER   # 让 service 在 logout 后继续跑
 
+# 或安装单一 service 并打开 tmux/provider watchdog
+# tmuxbot install-service --now --self-heal
+
 # 日志 / 重启 / 停
 journalctl --user -u tmuxbot -f
 systemctl --user restart tmuxbot
 systemctl --user stop tmuxbot
 ```
 
-bot crash 后 5s 内自动拉起 (`Restart=always RestartSec=5s`)。内存上限 `MemoryHigh=2G MemoryMax=4G`,多 binding 后可适当调高。
+bot crash 后 5s 内自动拉起 (`Restart=always RestartSec=5s`)；unit 设置
+`StartLimitIntervalSec=0`，连续瞬时故障不会触发永久 start-limit。内存上限
+`MemoryHigh=2G MemoryMax=4G`,多 binding 后可适当调高。
 
-### 多实例部署 (多飞书 app)
+### 单实例承载多 credential
 
-为每个飞书 app 创建独立 systemd unit,通过 `Environment=` 覆盖路径:
+每台主机只运行一个 `tmuxbot.service` / bridge supervisor。所有 Telegram Bot 和飞书 App
+route 放在同一份 bindings 中，按 `(channel, bot_token_env)` 分组创建 frontend；adapter
+仍按 route 解析。不要为第二个飞书 App 再复制 systemd unit、data dir 或 offsets。
 
-```ini
-# ~/.config/systemd/user/tmuxbot-feishu2.service
-[Service]
-WorkingDirectory=%h/claude-project/tmuxbot
-ExecStart=/usr/bin/python3 tmuxbot.py
-Environment=TMUXBOT_DATA_DIR=%h/.tmuxbot/feishu2
-Environment=TMUXBOT_BINDINGS=%h/.tmuxbot/feishu2/bindings.yaml
-Environment=TMUXBOT_ENV=%h/.tmuxbot/feishu2/.env
-Restart=always
-RestartSec=5s
-```
+`lark-oapi` 1.x 把 WebSocket event loop 保存在模块全局变量。tmuxbot 为每个飞书 App
+独立加载 SDK WebSocket 模块和 worker loop，因此单进程可同时维持多条飞书连接；stop
+时显式断开 websocket 并关闭该 loop。旧的 `tmuxbot-bridge-refresh@*.timer` 和 app-specific
+rotation timer 应停用删除，frontend 自身负责断线退避重连。
+
+多实例只用于显式的故障隔离/灰度，且必须使用完全不重叠的 route、bindings、offsets、
+state、lock 和数据库；它不是多 credential 的默认部署方式。
 
 ### ensure_running — 按需重建 tmux + --resume
 
@@ -401,7 +404,9 @@ RestartSec=5s
 默认 `TMUXBOT_LIFECYCLE_ENABLED=0`：bridge 启动和后台巡检不会创建缺失的 tmux。
 人工 `tmux kill-session -t <name>` 或 IM `/tmuxstop` 后，会话保持关闭；下一条消息进入共享
 dispatch 时才调用 `ensure_running` 恢复。若部署明确需要常驻自愈，设置
-`TMUXBOT_LIFECYCLE_ENABLED=1` 启用周期巡检。
+`TMUXBOT_LIFECYCLE_ENABLED=1`，或使用 `tmuxbot install-service --now --self-heal`。
+watchdog 默认每 30 秒按 binding 调用 provider `ensure_running`，恢复完整 tmux target、cwd
+和持久 provider session identity；同 binding 与消息入口共享锁，不会并发重复拉起。
 Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 

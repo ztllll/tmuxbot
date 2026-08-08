@@ -17,11 +17,12 @@
 Description=tmuxbot WebUI and tmux bridge supervisor
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Existing tmux/CLI sessions outlive bridge restarts. Missing sessions stay dormant
-# by default and are recreated by the next IM message.
+# Existing tmux/CLI sessions outlive bridge restarts. Set
+# TMUXBOT_LIFECYCLE_ENABLED=1 in the EnvironmentFile for periodic self-healing.
 KillMode=process
 EnvironmentFile=-%h/.config/tmuxbot/.env
 Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
@@ -29,6 +30,7 @@ ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(ca
 ExecStart=%h/.local/bin/tmuxbot serve
 Restart=always
 RestartSec=5s
+TimeoutStopSec=15s
 StandardOutput=journal
 StandardError=journal
 # 资源上限 — 多 backend / 多 binding 后可适当调高

@@ -106,22 +106,32 @@ systemctl --user daemon-reload
 systemctl --user enable --now tmuxbot.service
 loginctl enable-linger $USER
 
+# 或由安装器生成同一个 unit，并启用 tmux/provider 常驻自愈
+# tmuxbot install-service --now --self-heal
+
 # 看日志 / 重启 / 停
 journalctl --user -u tmuxbot -f
 systemctl --user restart tmuxbot
 systemctl --user stop tmuxbot
 ```
 
-bot crash 后 5 秒内自动拉起,无需手动守护。`tmuxbot install-service --now` 还会启用
-同一套通道刷新定时器：每 6 小时重启 bridge 服务一次，Telegram 和飞书都走这条
-统一恢复路径；tmux/CLI 会话不受影响。运行中可在 WebUI 的
+生产主机只应启用一个 `tmuxbot.service`。同一进程可承载多个 Telegram Bot 和飞书
+App credential；每个飞书 App 使用隔离的 SDK event loop，避免 `lark-oapi` 的模块级
+loop 在多 App 间互相覆盖。旧版 `tmuxbot-bridge-refresh@*.timer` 不再需要：安装器会
+停用并删除该周期强制重启 helper，连接恢复由 frontend 自身重连循环负责。
+
+`Restart=always` 会在主进程或 bridge child 异常退出后 5 秒内自动拉起；unit 关闭
+systemd start-limit，瞬时连续故障不会让服务永久停在 failed。运行中可在 WebUI 的
 `/api/channel-health` 查看只读连接审计（连接时间、最近收包、最近有效入站、恢复次数）。
 
 tmux 会话默认按消息懒启动：手动执行 `tmux kill-session -t <name>`，或在
 Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一条消息到达时会自动重建
-tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要旧版常驻自愈行为时，可显式设置
-`TMUXBOT_LIFECYCLE_ENABLED=1`。Telegram、飞书和 Web 控制面板都提供带确认的
-“关闭 tmux”操作，管理记录和历史不会被删除。
+tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要常驻自愈时，可显式设置
+`TMUXBOT_LIFECYCLE_ENABLED=1`，或用 `tmuxbot install-service --now --self-heal`
+写入 unit。watchdog 默认每 30 秒核对 route target，缺失时按持久 provider identity
+重建 tmux/CLI；它不会执行 `tmux kill-server`。Telegram、飞书和 Web 控制面板都提供带确认的
+“关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
+回滚和验收步骤见 [`docs/single-service-operations.md`](docs/single-service-operations.md)。
 
 ### Web control plane
 
@@ -136,7 +146,7 @@ tmuxbot serve --open
 需要常驻时：
 
 ```bash
-tmuxbot install-service --now
+tmuxbot install-service --now --self-heal
 journalctl --user -u tmuxbot -f
 ```
 

@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import html as html_mod
+import importlib.util
 import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from dataclasses import replace
@@ -97,6 +99,66 @@ def _get_lark():
         raise ImportError(
             "飞书前端需要 lark-oapi>=1.4, 请先安装: pip install lark-oapi"
         )
+
+
+def _isolated_lark_ws_client_module(credential_scope: str) -> Any:
+    """Load one private lark WebSocket module and event loop per credential.
+
+    lark-oapi 1.x keeps its event loop in ``lark_oapi.ws.client.loop``. Reusing
+    that module for two Feishu apps makes the later frontend overwrite the
+    earlier frontend's loop. Loading the same SDK source under a private module
+    name gives each app independent module globals while preserving the public
+    event and REST model classes shared by lark-oapi.
+    """
+    import lark_oapi.ws.client as canonical
+
+    source = getattr(canonical, "__file__", None)
+    if not source:
+        raise RuntimeError("lark-oapi WebSocket client source path is unavailable")
+    safe_scope = re.sub(r"[^A-Za-z0-9_]", "_", credential_scope) or "feishu"
+    module_name = f"lark_oapi.ws._tmuxbot_{safe_scope}_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("unable to create isolated lark-oapi WebSocket module")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    module.loop = asyncio.new_event_loop()
+    module._tmuxbot_shutdown_event = asyncio.Event()
+    return module
+
+
+def _run_isolated_lark_ws_client(module: Any, client: Any) -> None:
+    """Run and cleanly stop one lark client inside its private SDK loop."""
+    loop = module.loop
+    asyncio.set_event_loop(loop)
+
+    async def serve() -> None:
+        # Initial connection failures return to the frontend's bounded backoff.
+        # Once connected, the SDK receive loop retains its native reconnect logic.
+        await client._connect()
+        ping_task = loop.create_task(client._ping_loop())
+        try:
+            await module._tmuxbot_shutdown_event.wait()
+        finally:
+            client._auto_reconnect = False
+            ping_task.cancel()
+            await client._disconnect()
+
+    try:
+        loop.run_until_complete(serve())
+    finally:
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
+        sys.modules.pop(module.__name__, None)
 
 
 # ────────── HTML → 飞书 Markdown 转换 ──────────
@@ -310,7 +372,8 @@ class FeishuFrontend(Frontend):
         )
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
-        self._ws_client = None   # lark.ws.Client 实例
+        self._ws_client = None
+        self._ws_module = None
         self.register_health()
 
     # ────────── binding 查找 ──────────
@@ -2025,8 +2088,6 @@ class FeishuFrontend(Frontend):
     async def start_polling(self) -> None:
         """建 WebSocket 长连接, 断开后退避重连, 直到 stop() 被调用"""
         lark = self._lark
-        import lark_oapi.ws.client as _wsc
-
         self._main_loop = asyncio.get_running_loop()
 
         builder = (
@@ -2056,7 +2117,8 @@ class FeishuFrontend(Frontend):
         retry_delay = 1.0
 
         while not stop_event.is_set():
-            self._ws_client = lark.ws.Client(
+            self._ws_module = _isolated_lark_ws_client_module(self.bot_token_env)
+            self._ws_client = self._ws_module.Client(
                 self.app_id,
                 self.app_secret,
                 event_handler=handler,
@@ -2068,16 +2130,12 @@ class FeishuFrontend(Frontend):
             )
             self.state.channel_health.connected(self.health_id)
 
-            def _run():
-                # ★ SDK 必须在同一 worker thread 里建新 event loop, 并覆盖 SDK 模块级 loop
-                # 否则 "loop already running" 报错
-                import asyncio as _asyncio
-                nl = _asyncio.new_event_loop()
-                _asyncio.set_event_loop(nl)
-                _wsc.loop = nl
-                self._ws_client.start()
-
-            ws_task = asyncio.get_running_loop().run_in_executor(None, _run)
+            ws_task = asyncio.get_running_loop().run_in_executor(
+                None,
+                _run_isolated_lark_ws_client,
+                self._ws_module,
+                self._ws_client,
+            )
             stop_task = asyncio.create_task(stop_event.wait())
             pending: set[asyncio.Future] = set()
             try:
@@ -2085,6 +2143,8 @@ class FeishuFrontend(Frontend):
                     {ws_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if stop_task in done:
+                    self._signal_ws_shutdown()
+                    await ws_task
                     break
 
                 exc = ws_task.exception()
@@ -2093,12 +2153,10 @@ class FeishuFrontend(Frontend):
                     self.state.channel_health.error(self.health_id, exc)
                 else:
                     log.warning("feishu ws exited unexpectedly; reconnecting")
-                    self.state.channel_health.error(self.health_id, "websocket exited unexpectedly")
+                    self.state.channel_health.error(
+                        self.health_id, "websocket exited unexpectedly"
+                    )
 
-                try:
-                    self._ws_client.stop()
-                except Exception as e:
-                    log.debug(f"feishu ws stop after exit err: {e}")
                 await asyncio.sleep(retry_delay)
                 self.state.channel_health.recovering(
                     self.health_id, "websocket reconnect backoff"
@@ -2109,20 +2167,21 @@ class FeishuFrontend(Frontend):
                 for task in pending:
                     task.cancel()
 
-        try:
-            if self._ws_client is not None:
-                self._ws_client.stop()
-        except Exception as e:
-            log.debug(f"feishu ws final stop err: {e}")
         self.state.channel_health.stopped(self.health_id)
+
+    def _signal_ws_shutdown(self) -> None:
+        module = self._ws_module
+        if module is None:
+            return
+        loop = getattr(module, "loop", None)
+        shutdown = getattr(module, "_tmuxbot_shutdown_event", None)
+        if loop is None or shutdown is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(shutdown.set)
 
     async def stop(self) -> None:
         """停止 WebSocket 长连接"""
         log.info("feishu ws stopping")
         if hasattr(self, "_stop_event"):
             self._stop_event.set()
-        if self._ws_client is not None:
-            try:
-                self._ws_client.stop()
-            except Exception as e:
-                log.debug(f"feishu ws stop err: {e}")
+        self._signal_ws_shutdown()

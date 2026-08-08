@@ -27,8 +27,9 @@ The 0.3.0 line is feature-frozen with these shipped capabilities:
   modes, plus optional local Claude hook spooling.
 - Message-driven lazy tmux lifecycle by default, provider session recovery, and
   explicit Web/IM stop controls that preserve binding history.
-- XDG runtime paths, configuration validation, `tmuxbot doctor`, systemd user
-  service installation, and supervised WebUI + bridge startup.
+- XDG runtime paths, configuration validation, `tmuxbot doctor`, single systemd
+  user service installation, supervised WebUI + bridge startup, and opt-in
+  tmux/provider session self-healing.
 - Authenticated Chinese WebUI with first-run setup, provider discovery, project
   and managed-session records, channel setup, read-only tmux inventory, and
   audited xterm.js takeover.
@@ -52,6 +53,8 @@ The 0.3.0 line is feature-frozen with these shipped capabilities:
 - Semantic interaction buttons are conveniences over the active tmux pane; they
   are not a second state machine or source of truth.
 - Credentials and runtime data remain local and ignored by Git.
+- A production host runs one tmuxbot systemd service; multiple channel
+  credentials are isolated inside that bridge rather than by duplicate units.
 
 ## Known Maintenance Debt
 

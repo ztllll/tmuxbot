@@ -16,6 +16,7 @@ def install_service(
     home: Path | None = None,
     executable: Path | None = None,
     start_now: bool = False,
+    self_heal: bool = False,
     runner: Callable[[list[str]], None] = _run,
 ) -> Path:
     resolved_home = (home or Path.home()).expanduser()
@@ -29,21 +30,28 @@ def install_service(
     os.chmod(unit_dir, 0o700)
     unit_path = unit_dir / "tmuxbot.service"
     env_file = resolved_home / ".config/tmuxbot/.env"
+    lifecycle_environment = (
+        "Environment=TMUXBOT_LIFECYCLE_ENABLED=1\n" if self_heal else ""
+    )
     content = f"""[Unit]
 Description=tmuxbot WebUI and tmux bridge supervisor
 After=network-online.target
 Wants=network-online.target
+# A transient crash must never leave the user bridge permanently rate-limited.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Existing tmux panes outlive deploys; missing panes stay dormant until an IM message.
+# Existing tmux panes outlive deploys. With lifecycle enabled, missing panes and
+# provider TUIs are recreated from their persisted route/session identities.
 KillMode=process
 EnvironmentFile=-{env_file}
 Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
-ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
+{lifecycle_environment}ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
 ExecStart={executable} serve
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 
@@ -54,30 +62,31 @@ WantedBy=default.target
     temp.write_text(content, encoding="utf-8")
     os.chmod(temp, 0o600)
     os.replace(temp, unit_path)
+
+    # Releases before the single-service model installed a periodic forced-restart
+    # timer. The bridge and each channel now own their reconnect loops, so keeping
+    # that helper would create avoidable outages and violate the one-service contract.
     refresh_service = unit_dir / "tmuxbot-bridge-refresh@.service"
-    refresh_service.write_text(
-        "[Unit]\nDescription=Refresh tmuxbot channel bridge %i\n\n"
-        "[Service]\nType=oneshot\n"
-        "ExecStart=/usr/bin/systemctl --user restart %i.service\n",
-        encoding="utf-8",
-    )
     refresh_timer = unit_dir / "tmuxbot-bridge-refresh@.timer"
-    refresh_timer.write_text(
-        "[Unit]\nDescription=Refresh tmuxbot channel bridge %i every six hours\n\n"
-        "[Timer]\nOnBootSec=30min\nOnUnitInactiveSec=6h\nPersistent=true\n"
-        "Unit=tmuxbot-bridge-refresh@%i.service\n\n"
-        "[Install]\nWantedBy=timers.target\n",
-        encoding="utf-8",
+    refresh_link = (
+        unit_dir / "timers.target.wants/tmuxbot-bridge-refresh@tmuxbot.timer"
     )
-    os.chmod(refresh_service, 0o600)
-    os.chmod(refresh_timer, 0o600)
-    runner(["systemctl", "--user", "daemon-reload"])
-    if start_now:
-        runner(["systemctl", "--user", "enable", "--now", "tmuxbot.service"])
+    if any(path.exists() or path.is_symlink() for path in (
+        refresh_service, refresh_timer, refresh_link
+    )):
         runner(
             [
-                "systemctl", "--user", "enable", "--now",
+                "systemctl",
+                "--user",
+                "disable",
+                "--now",
                 "tmuxbot-bridge-refresh@tmuxbot.timer",
             ]
         )
+    for path in (refresh_link, refresh_service, refresh_timer):
+        path.unlink(missing_ok=True)
+
+    runner(["systemctl", "--user", "daemon-reload"])
+    if start_now:
+        runner(["systemctl", "--user", "enable", "--now", "tmuxbot.service"])
     return unit_path

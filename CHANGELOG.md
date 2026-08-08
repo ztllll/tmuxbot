@@ -8,6 +8,7 @@
 
 ### Added
 
+- systemd 安装增加 `tmuxbot install-service --now --self-heal`：单一 user service 提供开机自启动、`Restart=always` 进程恢复和周期 tmux/provider TUI 会话自愈。
 - 新增精确 topic/thread route：同一 Telegram Bot 或飞书 App 可按 `(chat_id, thread_id)` 将不同话题绑定到不同 tmux pane，并按 route 选择 Claude Code、Codex 或 Pi adapter。
 - 新增 Pi TUI backend：启动/恢复真实 Pi tmux TUI，解析 `~/.pi/agent/sessions` JSONL 的文本、思考、工具、模型、thinking level 和 usage；不使用 Pi RPC/SDK/print mode。
 - 新增 `tmuxbot route list|inspect|validate|bind|unbind`，写入前校验完整候选配置并原子替换 YAML。
@@ -16,6 +17,7 @@
 
 ### Changed
 
+- 生产部署收敛为每台主机一个 `tmuxbot.service`：同一 bridge 可承载多个 Telegram/飞书 credential；安装器会停用并删除旧的六小时 `tmuxbot-bridge-refresh@*.timer`，连接恢复改由 frontend 重连循环和 systemd supervisor 负责。
 - 取消一个 credential 固定一个 backend 的限制；heartbeat、tailer、命令、附件、状态与 lifecycle 均按 binding 解析 adapter。
 - Telegram 与飞书统一使用共享 ReplyDocument 展示标题、项目、route 会话、文字状态、正文和 provider footer；Telegram 混合 adapter credential 的状态 footer 也改为按当前 route 解析。
 - 增强 Pi 专属状态采集，不替换 Claude/Codex 现有 parser：解析 Pi 原生 footer 的 provider、model、thinking level、累计 input/output、cacheRead/cacheWrite、最近 prompt cache hit、cost/subscription、context 百分比/窗口、auto-compact、cwd、Git branch、session name 与 extension statuses，并用当前 Pi JSONL 补全 TUI 因宽度省略的字段。Pi footer 中 `R` 按官方定义表示 cacheRead。
@@ -64,6 +66,7 @@
 
 ### Fixed
 
+- 多飞书 App 单进程运行时不再共享并覆盖 `lark-oapi` 的模块级 event loop；每个 credential 使用独立 SDK module/worker loop，并在服务停止时显式断开 WebSocket 和关闭 loop。
 - 飞书 WebSocket dispatcher 现在消费群资料更新、bot 入群、普通成员变更和消息撤回等无路由副作用事件，避免已订阅的 `im.chat.updated_v1` / `im.chat.member.*` / `im.message.recalled_v1` 被 SDK 反复记录为 `processor not found`；群解散与 bot 被移出仍沿用原有 route 拆除逻辑。
 - Codex 启动路径改为在每次新建/恢复 provider 时读取 `CODEX_BIN`，不再在 Python import 阶段提前冻结，确保 bridge 加载 `.env` 后的绝对路径真正生效。
 - 修复飞书流式回复完成时未把 provider 状态传入最终 CardKit 卡片、工具状态卡完成时又主动清空 footer 的问题；飞书新回复和完成卡片现在都会保留模型、档位与权限信息，并移除过期的 `working` 时长。

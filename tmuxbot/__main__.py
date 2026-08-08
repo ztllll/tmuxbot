@@ -305,9 +305,14 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser = subparsers.add_parser("doctor", help="check local runtime readiness")
     doctor_parser.add_argument("--json", action="store_true", dest="as_json")
     service_parser = subparsers.add_parser(
-        "install-service", help="install a systemd user service"
+        "install-service", help="install the single systemd user service"
     )
     service_parser.add_argument("--now", action="store_true", dest="start_now")
+    service_parser.add_argument(
+        "--self-heal",
+        action="store_true",
+        help="periodically recreate missing tmux/provider TUI sessions",
+    )
     route_parser = subparsers.add_parser(
         "route", help="inspect and atomically edit IM-to-tmux routes"
     )
@@ -350,7 +355,10 @@ def run(argv: list[str] | None = None) -> None:
     if args.command == "install-service":
         from tmuxbot.service_install import install_service
 
-        unit = install_service(start_now=args.start_now)
+        unit = install_service(
+            start_now=args.start_now,
+            self_heal=args.self_heal,
+        )
         print(f"已安装: {unit}")
         return
     if args.command == "route":
