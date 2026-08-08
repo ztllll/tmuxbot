@@ -6,7 +6,12 @@ from dataclasses import replace
 from html.parser import HTMLParser
 from typing import Any
 
-from tmuxbot.core.rich_messages import ReplyBlock, ReplyDocument, reply_summary
+from tmuxbot.core.rich_messages import (
+    ReplyBlock,
+    ReplyDocument,
+    plain_state_badge,
+    reply_summary,
+)
 
 
 class FeishuCardTooLarge(ValueError):
@@ -32,6 +37,20 @@ def build_feishu_card_v2(
     streaming: bool = False,
 ) -> dict[str, Any]:
     elements = [_block_element(block, index) for index, block in enumerate(document.blocks)]
+    state_badge = plain_state_badge(document.state)
+    if state_badge:
+        elements.insert(
+            0,
+            {
+                "tag": "div",
+                "element_id": "reply_state",
+                "text": {
+                    "tag": "plain_text",
+                    "content": state_badge,
+                    "text_size": "notation",
+                },
+            },
+        )
     if document.footer_text:
         elements.append(
             {
@@ -57,7 +76,7 @@ def build_feishu_card_v2(
     header: dict[str, Any] = {
         "title": {
             "tag": "plain_text",
-            "content": f"{document.title} · {document.project_name}",
+            "content": f"💬 {document.title} · {document.project_name}",
         },
         "subtitle": {"tag": "plain_text", "content": f"会话 · {document.binding_name}"},
         "template": _STATE_TEMPLATES.get(

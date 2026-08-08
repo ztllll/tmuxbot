@@ -67,7 +67,7 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert card["config"]["update_multi"] is True
     assert card["config"]["width_mode"] == "fill"
     assert card["config"]["summary"]["content"].startswith("结论 完成 部署")
-    assert card["header"]["title"]["content"] == f"回复 · {tmp_path.name}"
+    assert card["header"]["title"]["content"] == f"💬 回复 · {tmp_path.name}"
     assert card["header"]["subtitle"]["content"] == "会话 · alpha"
     assert card["header"]["template"] == "yellow"
     assert "text_tag_list" not in card["header"]
@@ -81,6 +81,8 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert "完成 **部署**。" in markdown
     assert "```bash\necho ok\n```" in markdown
     assert not any(element["tag"] == "note" for element in elements)
+    state = next(element for element in elements if element["element_id"] == "reply_state")
+    assert state["text"]["content"] == "🟡 工作中"
     status = next(element for element in elements if element["element_id"] == "reply_status")
     assert status["tag"] == "div"
     assert status["text"]["text_size"] == "notation"
@@ -105,9 +107,15 @@ def test_channel_headers_share_project_and_session_identity(tmp_path):
     card = build_feishu_card_v2(document, binding_token(b.name))
     telegram = render_telegram_document(document, full_output_threshold=None)
 
-    assert card["header"]["title"]["content"] == "工作中 · project-alpha"
+    assert card["header"]["title"]["content"] == "💬 工作中 · project-alpha"
     assert card["header"]["subtitle"]["content"] == "会话 · alpha"
-    assert "工作中 · project-alpha" in telegram.chat_html
+    state = next(
+        element for element in card["body"]["elements"]
+        if element.get("element_id") == "reply_state"
+    )
+    assert state["text"]["content"] == "🟡 工作中"
+    assert "💬 <b>工作中 · project-alpha</b>" in telegram.chat_html
+    assert "🟡 <b>工作中</b>" in telegram.chat_html
     assert "alpha" in telegram.chat_html
 
 

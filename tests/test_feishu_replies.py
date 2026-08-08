@@ -42,7 +42,17 @@ def test_feishu_assistant_reply_returns_editable_message_and_provider_footer(tmp
     assert result.message_id == "om_123"
     card = json.loads(sent[0][1])
     assert card["schema"] == "2.0"
-    assert "已完成" in card["body"]["elements"][0]["content"]
+    markdown = next(
+        element["content"]
+        for element in card["body"]["elements"]
+        if element.get("tag") == "markdown"
+    )
+    assert "已完成" in markdown
+    state = next(
+        element for element in card["body"]["elements"]
+        if element.get("element_id") == "reply_state"
+    )
+    assert state["text"]["content"] == "✅ 已完成"
     assert "claude-opus-4-7" in sent[0][1]
     assert "12k/200k" in sent[0][1]
 

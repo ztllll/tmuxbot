@@ -60,6 +60,17 @@ _TELEGRAM_STATE_BADGES = {
     "info": "🔵 <b>信息</b>",
 }
 
+_PLAIN_STATE_BADGES = {
+    "working": "🟡 工作中",
+    "waiting": "🟠 等待输入",
+    "completed": "✅ 已完成",
+    "idle": "✅ 已完成",
+    "error": "🔴 错误/阻塞",
+    "blocked": "🔴 错误/阻塞",
+    "dead": "🔴 错误/阻塞",
+    "info": "🔵 信息",
+}
+
 _STATE_TITLES = {
     "working": "工作中",
     "waiting": "等待输入",
@@ -76,6 +87,12 @@ def telegram_state_badge(state: str | None) -> str | None:
     if state is None:
         return None
     return _TELEGRAM_STATE_BADGES.get(state, "⚪ <b>状态未知</b>")
+
+
+def plain_state_badge(state: str | None) -> str | None:
+    if state is None:
+        return None
+    return _PLAIN_STATE_BADGES.get(state, "⚪ 状态未知")
 
 
 def build_reply_document(

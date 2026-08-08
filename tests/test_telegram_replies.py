@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.backends.pi import PiBackend
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.telegram import TG_SPLIT, TelegramFrontend, split_for_tg
@@ -197,6 +198,22 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
     assert "gpt-5.6-terra" in calls[0][1]
     assert expected in calls[1][1]
     assert "gpt-5.6-terra" in calls[1][1]
+
+
+def test_telegram_status_footer_uses_the_binding_backend_in_mixed_credentials(tmp_path):
+    b = binding(tmp_path)
+    b.backend = "pi"
+    frontend = TelegramFrontend.__new__(TelegramFrontend)
+    frontend.backend = CodexBackend()
+    frontend.backends = {"codex": frontend.backend, "pi": PiBackend()}
+    status = TerminalStatus(
+        state=TerminalState.WORKING,
+        model="gpt-5.6-luna",
+        effort="medium",
+        cwd=str(tmp_path),
+    )
+
+    assert frontend._status_footer_text(status, b) == PiBackend().format_status_footer(status)
 
 
 def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):

@@ -70,7 +70,7 @@ from tmuxbot.control_panel import (
     render_panel_text,
     save_binding_mention_policy,
 )
-from tmuxbot.frontends.base import Frontend
+from tmuxbot.frontends.base import BackendResolutionError, Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
 from tmuxbot.tmux import tmux_capture, tmux_send_key
@@ -631,7 +631,7 @@ class TelegramFrontend(Frontend):
                 metadata={"display_state": display_state},
             ),
             full_output_threshold=None,
-            footer_text=self._status_footer_text(footer),
+            footer_text=self._status_footer_text(footer, binding),
         )
         first_msg = None
         for chunk in split_for_tg(rendered.chat_html):
@@ -663,7 +663,7 @@ class TelegramFrontend(Frontend):
                     metadata={"display_state": display_state},
                 ),
                 full_output_threshold=None,
-                footer_text=self._status_footer_text(footer),
+                footer_text=self._status_footer_text(footer, binding),
             ).chat_html
         html_text = sanitize_telegram_html(html_text)
         if utf16_len(html_text) > TG_SPLIT:
@@ -754,9 +754,18 @@ class TelegramFrontend(Frontend):
             await self._send_attachment_failure(chat_id, thread_id, path)
         return None
 
-    def _status_footer_text(self, footer: TerminalStatus | None) -> str | None:
+    def _status_footer_text(
+        self,
+        footer: TerminalStatus | None,
+        binding: "Binding | None" = None,
+    ) -> str | None:
         if footer is None:
             return None
+        if binding is not None:
+            try:
+                return self.backend_for(binding).format_status_footer(footer)
+            except BackendResolutionError:
+                pass
         backend = getattr(self, "backend", None)
         if backend is not None:
             return backend.format_status_footer(footer)
