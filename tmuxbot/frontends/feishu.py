@@ -146,7 +146,15 @@ def _run_isolated_lark_ws_client(module: Any, client: Any) -> None:
             await module._tmuxbot_shutdown_event.wait()
         finally:
             client._auto_reconnect = False
-            ping_task.cancel()
+            current = asyncio.current_task()
+            sdk_tasks = [
+                task
+                for task in asyncio.all_tasks(loop)
+                if task is not current and task is not ping_task
+            ]
+            for task in (ping_task, *sdk_tasks):
+                task.cancel()
+            await asyncio.gather(ping_task, *sdk_tasks, return_exceptions=True)
             await client._disconnect()
 
     try:

@@ -25,15 +25,25 @@ def test_isolated_ws_runner_disconnects_and_closes_its_loop():
     loop = asyncio.new_event_loop()
     module_name = "tmuxbot_test_isolated_lark"
     connected = threading.Event()
+    receive_cancelled = threading.Event()
     disconnected = threading.Event()
 
     class Client:
         _auto_reconnect = True
 
         async def _connect(self):
+            async def receive_loop():
+                try:
+                    while True:
+                        await asyncio.sleep(3600)
+                finally:
+                    receive_cancelled.set()
+
+            loop.create_task(receive_loop())
             connected.set()
 
         async def _disconnect(self):
+            assert receive_cancelled.is_set()
             disconnected.set()
 
         async def _reconnect(self):
@@ -61,6 +71,7 @@ def test_isolated_ws_runner_disconnects_and_closes_its_loop():
     worker.join(timeout=2)
 
     assert not worker.is_alive()
+    assert receive_cancelled.is_set()
     assert disconnected.is_set()
     assert client._auto_reconnect is False
     assert loop.is_closed()
