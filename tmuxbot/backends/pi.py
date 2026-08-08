@@ -51,6 +51,11 @@ _PI_MODEL_RE = re.compile(
     r"(?:\s*[•·]\s*(?P<effort>off|minimal|low|medium|high|xhigh|max|thinking off))?$",
     re.I,
 )
+_PI_TRUNCATED_MODEL_RE = re.compile(
+    r"^(?:(?:\((?P<provider>[^()\n]+)\)\s+))?"
+    r"(?P<model>[A-Za-z0-9][A-Za-z0-9_.:/-]*)\s*[•·]?\s*$",
+    re.I,
+)
 _PI_CONTEXT_RE = re.compile(
     r"(?:(?P<percent>\d+(?:\.\d+)?)%|\?)\s*/\s*"
     r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)\s*(?P<auto>\(auto\))?"
@@ -227,6 +232,8 @@ class PiBackend(Backend):
             model_text = stripped[context_candidate.end() :].strip()
             candidate = _PI_MODEL_RE.fullmatch(model_text)
             if candidate is None:
+                candidate = _PI_TRUNCATED_MODEL_RE.fullmatch(model_text)
+            if candidate is None:
                 continue
             model_match = candidate
             stats_line = stripped[: context_candidate.end()].rstrip()
@@ -263,7 +270,7 @@ class PiBackend(Backend):
         if model_match:
             provider = model_match.group("provider")
             model = model_match.group("model")
-            raw_effort = model_match.group("effort")
+            raw_effort = model_match.groupdict().get("effort")
             effort = raw_effort.lower().replace("thinking ", "") if raw_effort else None
         return TerminalStatus(
             state=TerminalState.WORKING if working else TerminalState.IDLE,

@@ -283,6 +283,25 @@ def test_pi_terminal_status_recognizes_full_native_footer():
     assert status.auto_compact is True
 
 
+def test_pi_terminal_status_keeps_left_metrics_when_model_suffix_is_truncated():
+    status = PiBackend().parse_terminal_status(
+        "~\n↑611k ↓44k R4.9M CH0.1% 29.7%/500k (auto)  grok-4.5 •"
+    )
+
+    assert status is not None
+    assert status.cwd == "~"
+    assert status.input_tokens == 611_000
+    assert status.output_tokens == 44_000
+    assert status.cache_read_tokens == 4_900_000
+    assert status.cache_hit_rate == pytest.approx(0.001)
+    assert status.context_percent == 29.7
+    assert status.context_used == 148_500
+    assert status.context_limit == 500_000
+    assert status.auto_compact is True
+    assert status.model == "grok-4.5"
+    assert status.effort is None
+
+
 def test_pi_terminal_status_accepts_non_reasoning_model_footer():
     status = PiBackend().parse_terminal_status(
         "~/repo\n↑12 ↓3 2.0%/128k model-without-reasoning"
