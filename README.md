@@ -60,7 +60,7 @@ tmuxbot serve --open
 
 首次运行会自动打开中文 WebUI，并生成 10 分钟有效、设置成功后立即失效的一次性本机授权。没有 `.env`、通道或 binding 时 WebUI 也会保持可用；bridge 显示“尚未配置”。运行 `tmuxbot doctor` 可检查 tmux、Claude Code、Codex、Pi 和运行目录。
 
-源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。通过 Boss DM 用自然语言创建或绑定 tmux 与 Telegram 话题，见 [Admin DM 运维指南](./docs/admin-dm-operations.md)；完整 route 模型见 [Topic Routes and Admin DM](./docs/topic-routing.md)。
 
 ### 生产部署(systemd,推荐)
 

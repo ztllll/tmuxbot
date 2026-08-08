@@ -85,6 +85,8 @@ Admin capability is protected by both identity and endpoint shape:
 
 A group mention can never acquire admin capability. Once authenticated, the management TUI has the full permissions of the Unix account running tmuxbot; it may edit YAML, code, tmux, systemd user services, and other user-owned files.
 
+The operator-facing natural-language workflow, prompt templates, deterministic execution order, and acceptance checklist are documented in [`admin-dm-operations.md`](admin-dm-operations.md). The recommended layout uses a root-directory Admin Pi for management and separate project panes for group topics.
+
 ## Route CLI
 
 The deterministic management surface is:

@@ -125,7 +125,7 @@ tmuxbot/                       ← 仓库根
 
 **架构原则**:frontend 先按 `(channel, credential, chat_id, thread_id)` 命中 route，再以 `frontend.backend_for(binding)` 选择 Claude/Codex/Pi adapter。credential 只划分 Bot/App 身份，不决定 CLI 类型。群根与未绑定 topic/thread 完全静默；新增 topic route 通过 YAML、`tmuxbot route bind` 或 Admin DM 显式创建，不由群内 `/init` 隐式开通。
 
-完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。确定性配置操作使用 `tmuxbot route list|inspect|validate|bind|unbind`；直接编辑 YAML 仍被允许。
+完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。Boss 在 Admin DM 中用自然语言创建/绑定 tmux 与 Telegram 话题的模板和验收流程见 [`docs/admin-dm-operations.md`](docs/admin-dm-operations.md)。确定性配置操作使用 `tmuxbot route list|inspect|validate|bind|unbind`；直接编辑 YAML 仍被允许。
 
 ---
 
