@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 
-### 0.3.0 Preview
+## [0.3.0] - 2026-08-08
 
 - WebUI 调度台增加中文分区导航、可持久化终端布局、Provider Adapter 能力声明、动态原生模型菜单，以及 Telegram/飞书群聊 @ 响应开关。
 - TeamRun 协作台支持多任务依赖、统筹方案任务与实施写入任务的串行接力，并在同一界面登记证据和独立审查。
@@ -32,6 +32,7 @@
 
 ### Changed
 
+- GitHub Actions 基础 action 升级到当前主版本，将 CI job 权限收紧为只读仓库内容，并加入独立 WebUI test/build job；WebUI lockfile 同步消除已知 npm audit 漏洞。
 - tmux 会话改为默认按消息懒启动：人工关闭或 IM `/tmuxstop` 后不再被后台周期复活；Telegram、飞书和 Web 控制台都可关闭 tmux 并保留 binding/provider 历史，下一条 IM 消息自动重建并 resume。常驻自愈改为 `TMUXBOT_LIFECYCLE_ENABLED=1` 显式 opt-in。
 - 受管 Codex 会话的新建与 `--resume` 恢复均读取 `~/.codex/config.toml` 的 `model` 并显式传入 `-m`；配置变更会自动用于下一次启动或恢复。
 - Telegram 与飞书统一使用 `IncomingMessage` / `ReplyEnvelope`;回复尾部由 Claude/Codex provider 解析 `TerminalStatus`,不再由渠道猜测屏幕最后一行。

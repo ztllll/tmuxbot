@@ -210,7 +210,14 @@ ClaudeCodeBackend  CodexBackend
 ```bash
 make install-dev
 make check
+make check-web   # 会先按 package-lock 执行 npm ci
+# 发布机额外运行（会检查本机 tmux/CLI/运行目录）
+make release-check
 ```
+
+`main` 是 0.3.0 起的稳定基线和后续开发起点；发布点使用 `vMAJOR.MINOR.PATCH`
+标签保存。产品边界、冻结能力和下一阶段维护债务见
+[PRODUCTIZATION.md](./PRODUCTIZATION.md)。
 
 持续迭代入口:
 
@@ -230,6 +237,7 @@ make check
 - **M2** ✅ 代码审查 + 可插拔重构(`backends/` + `frontends/` + `dispatch.py`)
 - **M3** ✅ 接入 Codex CLI + 双 bot 共存(1 bot ↔ 1 backend ↔ N tmux 子线程)+ systemd 部署
 - **M4** ✅ 接入飞书前端(lark-oapi WebSocket + interactive card)+ 多实例支持
+- **0.3.0** ✅ Runtime V2、中文 WebUI、XDG/doctor/systemd 安装面、终端接管与 TeamRun 基线
 
 ---
 

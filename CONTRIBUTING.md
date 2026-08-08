@@ -9,9 +9,11 @@ execution surface, and local CLI session logs remain the source of truth.
 ```bash
 make install-dev
 make check
+make check-web
 ```
 
-`make check` runs compile checks, tests, and ruff.
+`make check` runs Python compile checks, tests, and ruff. `make check-web`
+installs the locked npm dependencies, runs Vitest, and builds the production WebUI.
 
 ## Change Expectations
 

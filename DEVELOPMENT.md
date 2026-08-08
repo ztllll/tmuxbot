@@ -27,8 +27,15 @@ tmuxbot/                       ← 仓库根
 │       └── tmuxbot-web.service ← Web control plane 独立 unit
 ├── tmuxbot/                   ← Python package
 │   ├── __init__.py
-│   ├── __main__.py            ← 装配入口: backends + frontends + tailer/heartbeat
-│   ├── web/                   ← 独立 Web 进程、认证与只读 control-plane API
+│   ├── __main__.py            ← CLI 与 bridge 装配入口
+│   ├── core/                  ← provider/channel 事件、消息、回复与 Runtime V2 契约
+│   ├── control_plane/         ← SQLite migration/repository + tmux inventory
+│   ├── providers/             ← CLI discovery、能力与统一启动参数
+│   ├── runtime/               ← 串行 tmux runtime/input queue
+│   ├── teamrun/               ← DAG、worker、worktree、mailbox、artifact、scheduler
+│   ├── web/                   ← FastAPI、认证、setup、terminal 与静态 WebUI
+│   ├── channels/              ← 通道传输契约与 Telegram/飞书适配器
+│   ├── hooks/                 ← Claude hook 安装与本地 spool
 │   ├── state.py               ← Binding + State + fire()
 │   ├── config.py              ← .env + bindings.yaml + offsets.json → State
 │   ├── utils.py               ← encode_cwd / cwidth / render_table / offsets debounced
@@ -46,9 +53,11 @@ tmuxbot/                       ← 仓库根
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
 │   │   └── codex.py           ← CodexBackend
 │   └── frontends/
-│       ├── base.py            ← Frontend ABC (send_html/edit_html/send_pre/send_image/send_file/send_chat_action)
-│       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + ack middleware + handlers
-│       └── feishu.py          ← FeishuFrontend: lark-oapi WebSocket + interactive card
+│       ├── base.py            ← Frontend ABC 与回复发送契约
+│       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + handlers
+│       ├── feishu.py          ← FeishuFrontend: lark-oapi WebSocket + Card JSON 2.0
+│       └── feishu_cards.py    ← 飞书卡片构建与分页
+├── webui/                     ← React/Vite/xterm.js 中文控制台源码
 ├── bindings.yaml              ← 绑定配置 (gitignored; 多实例 bindings*.yaml 也忽略)
 ├── .env                       ← TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN / BOSS_USER_ID 等 (gitignored)
 ├── .env.example
@@ -286,15 +295,19 @@ uv run tmuxbot web
 ```
 
 启动流程为 `load_config()` → `WebSettings.from_env()` → SQLite migration →
-FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。Phase 1 仅包含
-认证后的只读 inventory/event API。默认只监听 `127.0.0.1:8765`。
+FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。当前进程提供
+中文 WebUI、认证后的项目/provider/managed-session/channel/TeamRun API、只读 tmux
+inventory，以及显式授权后的终端接管。默认只监听 `127.0.0.1:8765`。
 
-首次启动必须按以下顺序进行:
+推荐统一运行 `tmuxbot serve --open`：WebUI 常驻并监督独立 bridge child；缺少 IM
+配置时 WebUI 仍可完成首次设置。纯 `tmuxbot web` 适合开发或拆分部署。
+
+首次启动的底层 API 顺序如下（浏览器 WebUI 会自动完成同一流程）:
 
 1. 保持 listener 为 loopback,不要启动反向代理。
-2. 运行 `openssl rand -hex 32`,把输出写入本机 `.env` 的
-   `TMUXBOT_WEB_SETUP_TOKEN`。配置值少于 24 字符时进程会 fail-fast。
-3. 启动 Web 进程。Phase 1 没有 UI,先 GET status 取得 bootstrap CSRF cookie/token,
+2. `tmuxbot serve --open` 会生成短时一次性本机 setup grant；固定部署也可运行
+   `openssl rand -hex 32`，把输出写入 `.env` 的 `TMUXBOT_WEB_SETUP_TOKEN`。
+3. 启动 Web 进程。若不用浏览器，可先 GET status 取得 bootstrap CSRF cookie/token,
    再携带 `X-CSRF-Token` 与 `X-Setup-Token` POST setup:
 
 ```bash
@@ -500,5 +513,7 @@ grep "starting\|heartbeat\|polling\|EXCEPTION\|WARNING" data/tmuxbot.log
 
 ```bash
 make check
+make check-web
 make version
+make release-check   # 发布机运行：额外检查本机 tmux/CLI/运行目录
 ```

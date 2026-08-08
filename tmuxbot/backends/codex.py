@@ -49,20 +49,23 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
-CODEX_BIN = os.getenv("CODEX_BIN", "codex")
 # --dangerously-bypass-approvals-and-sandbox: codex 最高权限(跳过所有审批 + 无沙箱),
 # 等价 claude 的 --dangerously-skip-permissions。bot 是 tmux 桥接, 命令需无人值守自动执行。
 # CODEX_BIN 仍可配绝对路径(防 tmux shell PATH 不含 ~/.npm-global/bin)。
+def _codex_bin() -> str:
+    return os.getenv("CODEX_BIN", "codex")
+
+
 def _start_cmd() -> str:
-    """Build a fresh Codex launch from the current user config at launch time."""
-    arguments = [CODEX_BIN, *(provider_launch_arguments("codex") or ())]
+    """Build a fresh Codex launch from runtime environment and user config."""
+    arguments = [_codex_bin(), *(provider_launch_arguments("codex") or ())]
     return " ".join(shlex.quote(argument) for argument in arguments)
 
 
 def _resume_cmd(session_id: str) -> str:
     """Resume a transcript while explicitly applying Codex's current default model."""
     arguments = [
-        CODEX_BIN,
+        _codex_bin(),
         "resume",
         *(provider_launch_arguments("codex") or ()),
     ]

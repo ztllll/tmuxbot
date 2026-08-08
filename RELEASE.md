@@ -6,7 +6,11 @@ for deployment, configuration, IM behavior, and CLI lifecycle behavior.
 ## Before Release
 
 - `git status --short` is clean except ignored local runtime files.
-- `make check` passes.
+- `make check` passes in the normal operator environment, including configured
+  `CLAUDE_BIN` / `CODEX_BIN` overrides.
+- `make check-web` passes.
+- `make release-check` passes on the release host, including `tmuxbot doctor` for
+  the intended local providers and runtime paths.
 - `README.md`, `DEVELOPMENT.md`, `PRODUCTIZATION.md`, and `CHANGELOG.md` match
   the shipped behavior.
 - `.env.example` and `bindings.example.yaml` include any new required config.
@@ -35,6 +39,8 @@ Operational notes should mention:
 ## Post Release
 
 - Verify GitHub tag and release page.
+- Verify `main` is the release commit and remove merged milestone branches and
+  worktrees after checking that they contain no unmerged final implementation.
 - Pull the target deployment branch on each host.
 - Restart the relevant systemd user service.
 - Check `journalctl --user -u tmuxbot -n 80 --no-pager`.

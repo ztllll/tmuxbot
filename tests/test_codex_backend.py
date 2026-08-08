@@ -4,7 +4,7 @@ import os
 import time
 from pathlib import Path
 
-from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.backends.codex import CodexBackend, _start_cmd
 from tmuxbot.core.events import ProviderEventKind
 from tmuxbot.state import Binding
 
@@ -69,6 +69,18 @@ def _run_ensure_running(monkeypatch, tmp_path: Path, pane_commands: list[str]) -
 
     asyncio.run(CodexBackend().ensure_running(_binding(tmp_path)))
     return sent
+
+
+def test_codex_start_cmd_uses_codex_bin_at_runtime(monkeypatch):
+    monkeypatch.setenv("CODEX_BIN", "/opt/codex/bin/codex")
+    monkeypatch.setattr(
+        "tmuxbot.providers.adapters.codex_launch_arguments",
+        lambda: ("--dangerously-bypass-approvals-and-sandbox",),
+    )
+
+    assert _start_cmd() == (
+        "/opt/codex/bin/codex --dangerously-bypass-approvals-and-sandbox"
+    )
 
 
 def test_codex_ensure_running_accepts_npm_node_wrapper(tmp_path, monkeypatch):

@@ -17,14 +17,15 @@ The current package version is recorded in two places and must stay in sync:
 
 ## Release Branches
 
-- `main`: stable line.
-- `productization-prep`: active maintenance and productization line.
+- `main`: the stable line and starting point for new development.
 - Feature branches should be short lived and merged through pull requests when
   the repository is operated in GitHub-first mode.
+- Historical milestone branches are removed after their final state is merged and
+  verified; Git tags preserve release points.
 
 ## Tagging
 
-Release tags use `vMAJOR.MINOR.PATCH`, for example `v0.2.0`.
+Release tags use `vMAJOR.MINOR.PATCH`, for example `v0.3.0`.
 
 ## Release Checklist
 
@@ -33,13 +34,13 @@ Release tags use `vMAJOR.MINOR.PATCH`, for example `v0.2.0`.
 3. Move relevant `CHANGELOG.md` entries from `Unreleased` into a dated release
    section.
 4. Run `make check`.
-5. Commit with a message such as `Release v0.2.0`.
+5. Commit with a message such as `Release v0.3.0`.
 6. Tag and push:
 
    ```bash
-   git tag -a v0.2.0 -m "v0.2.0"
+   git tag -a v0.3.0 -m "v0.3.0"
    git push
-   git push origin v0.2.0
+   git push origin v0.3.0
    ```
 
 7. Create a GitHub Release from the changelog section.
