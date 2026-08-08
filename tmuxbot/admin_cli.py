@@ -66,7 +66,7 @@ class AdminRuntime:
                 "#{pane_current_path}\t#{pane_current_command}\t#{pane_dead}",
             ]
         )
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout.strip():
             return {"state": "stopped", "target": target.value}
         fields = result.stdout.rstrip("\n").split("\t")
         if len(fields) != 3:

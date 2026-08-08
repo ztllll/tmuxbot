@@ -42,6 +42,25 @@ def write_routes(path: Path, entries: list[dict[str, object]]) -> None:
     )
 
 
+def test_admin_runtime_treats_empty_tmux_output_as_stopped(monkeypatch):
+    runtime = AdminRuntime()
+    monkeypatch.setattr(
+        runtime,
+        "run",
+        lambda _argv: type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "", "stderr": ""},
+        )(),
+    )
+
+    status = runtime.target_status(
+        type("Target", (), {"value": "missing:0.0"})()
+    )
+
+    assert status == {"state": "stopped", "target": "missing:0.0"}
+
+
 class FakeRuntime(AdminRuntime):
     def __init__(
         self,
