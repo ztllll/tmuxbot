@@ -84,6 +84,10 @@ def validate_bindings(
                 )
 
         if b.channel == "telegram":
+            if b.thread_root_message_id is not None:
+                errors.append(
+                    f"binding {label!r}: thread_root_message_id is only valid for Feishu topics"
+                )
             if not isinstance(b.chat_id, int):
                 errors.append(
                     f"binding {label!r}: telegram chat_id must be an integer, "
@@ -102,6 +106,17 @@ def validate_bindings(
             if b.thread_id is not None and not isinstance(b.thread_id, str):
                 errors.append(
                     f"binding {label!r}: feishu thread_id must be a string or null"
+                )
+            if b.thread_root_message_id is not None and b.thread_id is None:
+                errors.append(
+                    f"binding {label!r}: Feishu thread_root_message_id requires thread_id"
+                )
+            if (
+                b.thread_root_message_id is not None
+                and not b.thread_root_message_id.startswith("om_")
+            ):
+                errors.append(
+                    f"binding {label!r}: Feishu thread_root_message_id must start with 'om_'"
                 )
 
         source_key = (b.channel, b.bot_token_env, str(b.chat_id), b.thread_id)

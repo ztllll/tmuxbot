@@ -10,7 +10,7 @@ The same pane remains attachable over SSH. IM and SSH therefore control one shar
 
 ## Domain language
 
-- **Endpoint**: `(channel, credential, chat_id, thread_id)` where `thread_id` is `int | str | None`.
+- **Endpoint**: `(channel, credential, chat_id, thread_id)` where `thread_id` is `int | str | None`. A Feishu topic route additionally persists `thread_root_message_id`, the durable `reply_in_thread=True` anchor used after bridge restarts and when output originates from direct tmux TUI interaction; a missing anchor fails closed and never falls back to the group root.
 - **Route**: one persistent endpoint-to-target mapping.
 - **Target**: `(tmux_session, tmux_window, tmux_pane, cwd)`.
 - **Adapter**: provider-specific TUI and transcript behavior (`claude_code`, `codex`, `pi`).
@@ -97,6 +97,7 @@ tmuxbot admin install-contract --cwd PATH
 tmuxbot admin inventory [--json]
 tmuxbot admin telegram-topic --message-link URL [--json]
 tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
+# Feishu bind-topic/move-topic persist both thread_id and returned root_message_id.
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]

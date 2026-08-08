@@ -37,6 +37,11 @@ def binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         channel=str(item.get("channel", "telegram")),
         mention_required=item.get("mention_required"),
         admin=bool(item.get("admin", False)),
+        thread_root_message_id=(
+            str(item.get("thread_root_message_id"))
+            if item.get("thread_root_message_id")
+            else None
+        ),
         provider_session_id=str(provider_session_id) if provider_session_id else None,
         transcript_path=Path(str(transcript)) if transcript else None,
         last_session_id=str(provider_session_id) if provider_session_id else None,
@@ -60,6 +65,8 @@ def binding_to_mapping(binding: Binding) -> dict[str, Any]:
         item["mention_required"] = binding.mention_required
     if binding.admin:
         item["admin"] = True
+    if binding.thread_root_message_id:
+        item["thread_root_message_id"] = binding.thread_root_message_id
     if binding.provider_session_id:
         item["provider_session_id"] = binding.provider_session_id
     if binding.transcript_path:
@@ -212,6 +219,7 @@ def build_route_parser() -> argparse.ArgumentParser:
     bind_parser.add_argument("--credential", required=True, dest="bot_token_env")
     bind_parser.add_argument("--chat-id", required=True)
     bind_parser.add_argument("--thread-id")
+    bind_parser.add_argument("--thread-root-message-id")
     bind_parser.add_argument("--tmux-session", required=True)
     bind_parser.add_argument("--window", type=int, default=0, dest="tmux_window")
     bind_parser.add_argument("--pane", type=int, default=0, dest="tmux_pane")
@@ -273,6 +281,7 @@ def run_route_command(argv: Sequence[str]) -> int:
                 "bot_token_env": args.bot_token_env,
                 "chat_id": _parse_identifier(args.chat_id, channel=channel),
                 "thread_id": _parse_identifier(args.thread_id, channel=channel),
+                "thread_root_message_id": args.thread_root_message_id,
                 "tmux_session": args.tmux_session,
                 "tmux_window": args.tmux_window,
                 "tmux_pane": args.tmux_pane,

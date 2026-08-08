@@ -40,6 +40,7 @@ from tmuxbot.channels.feishu import (
     feishu_replies_to_bot,
 )
 from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
+from tmuxbot.config import save_binding_identity
 from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
@@ -74,6 +75,16 @@ log = logging.getLogger("tmuxbot")
 
 class FeishuThreadAnchorMissing(RuntimeError):
     """Raised instead of leaking a threaded reply into the group root."""
+
+
+def _persisted_thread_anchors(
+    bindings: list["Binding"],
+) -> dict[tuple[str, str], str]:
+    return {
+        (str(binding.chat_id), str(binding.thread_id)): binding.thread_root_message_id
+        for binding in bindings
+        if binding.thread_id is not None and binding.thread_root_message_id
+    }
 
 
 # ────────── lark-oapi lazy import ──────────
@@ -285,10 +296,10 @@ class FeishuFrontend(Frontend):
             _env_enabled("TMUXBOT_FEISHU_STREAMING", False),
         )
         self._outbound_message_ids: set[str] = set()
-        # Feishu replies to a thread through an existing message ID plus
-        # reply_in_thread=True.  Cache only anchors observed on authenticated,
-        # exactly routed inbound messages; never fall back to the group root.
-        self._thread_reply_anchors: dict[tuple[str, str], str] = {}
+        # Feishu replies to a thread through an existing root message ID plus
+        # reply_in_thread=True. Preload only anchors persisted on exact routes;
+        # authenticated inbound messages may refresh them. Never fall back to group root.
+        self._thread_reply_anchors = _persisted_thread_anchors(bindings)
         self._outbound_routes: dict[str, tuple[str, int | str | None]] = {}
         self._v2_message_ids: set[str] = set()
         self._v2_message_states: dict[str, str] = {}
@@ -363,7 +374,14 @@ class FeishuFrontend(Frontend):
             return
         if not hasattr(self, "_thread_reply_anchors"):
             self._thread_reply_anchors = {}
-        self._thread_reply_anchors[(str(chat_id), str(thread_id))] = str(message_id)
+        key = (str(chat_id), str(thread_id))
+        anchor = str(message_id)
+        self._thread_reply_anchors[key] = anchor
+        binding = self.find_binding(key[0], thread_id)
+        if binding is None or binding.thread_root_message_id == anchor:
+            return
+        binding.thread_root_message_id = anchor
+        save_binding_identity(getattr(self, "bindings_file", None), binding)
 
     def _remember_v2_message(self, message_id: str | None) -> None:
         if message_id:

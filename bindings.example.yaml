@@ -57,6 +57,9 @@ bindings:
     bot_token_env: FEISHU
     chat_id: oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     thread_id: omt_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    # Durable root anchor returned by `tmuxbot admin feishu-topics`.
+    # Required so direct tmux TUI replies still return to this thread after bridge restart.
+    thread_root_message_id: om_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     tmux_session: feishu-topic
     tmux_window: 0
     tmux_pane: 0

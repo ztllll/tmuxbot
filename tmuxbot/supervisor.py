@@ -43,6 +43,11 @@ def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         bot_token_env=str(item.get("bot_token_env", "TG_BOT_TOKEN")),
         channel=str(item.get("channel", "telegram")),
         admin=bool(item.get("admin", False)),
+        thread_root_message_id=(
+            str(item.get("thread_root_message_id"))
+            if item.get("thread_root_message_id")
+            else None
+        ),
     )
 
 

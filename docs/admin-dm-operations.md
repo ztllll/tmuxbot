@@ -93,6 +93,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   --credential FEISHU_CODEX \
   --chat-id oc_xxx \
   --thread-id omt_xxx \
+  --thread-root-message-id om_xxx \
   --tmux-target demo-pi:0.0 \
   --cwd /absolute/project/demo \
   --backend pi \
@@ -108,7 +109,8 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   move-topic existing-route \
   --channel feishu \
   --chat-id oc_new_group \
-  --thread-id omt_new_topic
+  --thread-id omt_new_topic \
+  --thread-root-message-id om_new_root
 
 # 核对 before/after 与 preserves 列表后再加 --apply。
 ```
@@ -119,6 +121,8 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   verify existing-route --json
 ```
+
+飞书 topic 的 `--thread-root-message-id` 取自 `feishu-topics` 输出的 `root_message_id`。它是稳定出站锚点：bridge 重启后，即使用户直接在 tmux TUI 对话，回复仍可通过 `reply_in_thread=True` 返回精确 thread；缺失时 Admin 事务会在任何 tmux/YAML/systemd 副作用前拒绝。
 
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 

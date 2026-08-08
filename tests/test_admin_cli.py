@@ -304,6 +304,8 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
             "oc_group",
             "--thread-id",
             "omt_topic",
+            "--thread-root-message-id",
+            "om_root",
             "--tmux-target",
             "project:0.0",
             "--cwd",
@@ -322,6 +324,50 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
     output = capsys.readouterr().out
     assert '"operation": "bind-topic"' in output
     assert "plan only" in output
+
+
+def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effects(
+    tmp_path, capsys
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime()
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "bind-topic",
+            "--name",
+            "project",
+            "--channel",
+            "feishu",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_group",
+            "--thread-id",
+            "omt_topic",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--create-target",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 2
+    assert "--thread-root-message-id" in capsys.readouterr().out
+    assert bindings.read_bytes() == original
+    assert runtime.created == []
+    assert runtime.restarts == []
 
 
 def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
@@ -356,6 +402,8 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
             "oc_group",
             "--thread-id",
             "omt_topic",
+            "--thread-root-message-id",
+            "om_root",
             "--tmux-target",
             "project:0.0",
             "--cwd",
@@ -394,6 +442,8 @@ def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
             "oc_group",
             "--thread-id",
             "omt_topic",
+            "--thread-root-message-id",
+            "om_root",
             "--tmux-target",
             "project:0.0",
             "--cwd",
@@ -460,6 +510,8 @@ def test_move_topic_preserves_provider_identity_and_target(tmp_path):
             "oc_new",
             "--thread-id",
             "omt_new",
+            "--thread-root-message-id",
+            "om_new_root",
             "--apply",
         ],
         runtime=runtime,
@@ -472,6 +524,7 @@ def test_move_topic_preserves_provider_identity_and_target(tmp_path):
     assert moved.cwd == cwd
     assert moved.provider_session_id == "session-old"
     assert moved.transcript_path == transcript
+    assert moved.thread_root_message_id == "om_new_root"
     assert runtime.restarts == ["bridge.service"]
 
 
@@ -500,6 +553,8 @@ def test_bind_apply_rejects_duplicate_endpoint_before_creating_target(tmp_path, 
             "oc_old",
             "--thread-id",
             "omt_old",
+            "--thread-root-message-id",
+            "om_old_root",
             "--tmux-target",
             "must-not-exist:0.0",
             "--cwd",
@@ -557,6 +612,8 @@ def test_move_topic_plan_rejects_duplicate_destination_without_writing(tmp_path,
             "oc_taken",
             "--thread-id",
             "omt_taken",
+            "--thread-root-message-id",
+            "om_taken_root",
         ],
         runtime=runtime,
     )
@@ -603,6 +660,8 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
             "oc_group",
             "--thread-id",
             "omt_topic",
+            "--thread-root-message-id",
+            "om_root",
             "--tmux-target",
             "project:0.0",
             "--cwd",

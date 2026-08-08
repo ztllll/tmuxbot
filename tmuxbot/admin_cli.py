@@ -333,13 +333,30 @@ def _resolved_directory(value: str) -> Path:
     return path
 
 
+def _require_feishu_thread_root(
+    *, channel: str, thread_id: int | str | None, root_message_id: str | None
+) -> None:
+    if channel == "feishu" and thread_id is not None and not root_message_id:
+        raise AdminOperationError(
+            "Feishu topic routes require --thread-root-message-id from feishu-topics; "
+            "it is the durable reply anchor for tmux-to-IM messages"
+        )
+
+
 def _route_item(args: argparse.Namespace, target: TmuxTarget, cwd: Path) -> dict[str, Any]:
+    thread_id = _parse_identifier(args.thread_id, channel=args.channel)
+    _require_feishu_thread_root(
+        channel=args.channel,
+        thread_id=thread_id,
+        root_message_id=args.thread_root_message_id,
+    )
     return {
         "name": args.name,
         "channel": args.channel,
         "bot_token_env": args.credential,
         "chat_id": _parse_identifier(args.chat_id, channel=args.channel),
-        "thread_id": _parse_identifier(args.thread_id, channel=args.channel),
+        "thread_id": thread_id,
+        "thread_root_message_id": args.thread_root_message_id,
         "tmux_session": target.session,
         "tmux_window": target.window,
         "tmux_pane": target.pane,
@@ -504,12 +521,14 @@ tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
 
 tmuxbot admin --file {bindings_file} --service {service} bind-topic \\
   --name ROUTE --channel feishu --credential FEISHU_CODEX \\
-  --chat-id oc_xxx --thread-id omt_xxx --tmux-target project:0.0 \\
+  --chat-id oc_xxx --thread-id omt_xxx --thread-root-message-id om_xxx \\
+  --tmux-target project:0.0 \\
   --cwd /absolute/project --backend pi --mention-required false
 # Inspect the plan, then repeat with --apply.
 
 tmuxbot admin --file {bindings_file} --service {service} move-topic ROUTE \\
-  --channel feishu --chat-id oc_xxx --thread-id omt_xxx
+  --channel feishu --chat-id oc_xxx --thread-id omt_xxx \\
+  --thread-root-message-id om_xxx
 # Inspect the plan, then repeat with --apply.
 
 tmuxbot admin --file {bindings_file} --service {service} verify ROUTE --json
@@ -594,6 +613,7 @@ def build_admin_parser() -> argparse.ArgumentParser:
     bind.add_argument("--credential", required=True)
     bind.add_argument("--chat-id", required=True)
     bind.add_argument("--thread-id", required=True)
+    bind.add_argument("--thread-root-message-id")
     bind.add_argument("--tmux-target", required=True)
     bind.add_argument("--cwd", required=True)
     bind.add_argument("--backend", choices=("claude_code", "codex", "pi"), required=True)
@@ -608,6 +628,7 @@ def build_admin_parser() -> argparse.ArgumentParser:
     move.add_argument("--channel", choices=("telegram", "feishu"), required=True)
     move.add_argument("--chat-id", required=True)
     move.add_argument("--thread-id", required=True)
+    move.add_argument("--thread-root-message-id")
     move.add_argument("--apply", action="store_true")
 
     verify = subparsers.add_parser("verify", help="verify route, tmux target, and bridge")
@@ -728,9 +749,15 @@ def run_admin_command(
                 )
             chat_id = _parse_identifier(args.chat_id, channel=args.channel)
             thread_id = _parse_identifier(args.thread_id, channel=args.channel)
+            _require_feishu_thread_root(
+                channel=args.channel,
+                thread_id=thread_id,
+                root_message_id=args.thread_root_message_id,
+            )
             replacement_item = binding_to_mapping(existing)
             replacement_item["chat_id"] = chat_id
             replacement_item["thread_id"] = thread_id
+            replacement_item["thread_root_message_id"] = args.thread_root_message_id
             replacement = binding_from_mapping(replacement_item)
             candidate = [
                 replacement if binding.name == args.name else binding
@@ -746,6 +773,7 @@ def run_admin_command(
                     "credential": existing.bot_token_env,
                     "chat_id": chat_id,
                     "thread_id": thread_id,
+                    "thread_root_message_id": args.thread_root_message_id,
                 },
                 "preserves": [
                     "tmux_target",
@@ -765,9 +793,7 @@ def run_admin_command(
                 args.service,
                 runtime,
                 store,
-                lambda: store.move_endpoint(
-                    args.name, chat_id=chat_id, thread_id=thread_id
-                ),
+                lambda: store.replace(args.name, replacement_item),
             )
             print(json.dumps(verification, ensure_ascii=False))
             return 0

@@ -81,6 +81,40 @@ def test_invalid_yaml_never_becomes_unconfigured(tmp_path: Path, contents: str):
         )
 
 
+def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
+    entry = _binding("feishu-topic")
+    entry.update(
+        {
+            "chat_id": "oc_group",
+            "thread_id": "omt_topic",
+            "thread_root_message_id": "om_root_old",
+            "tmux_session": "feishu-topic",
+            "cwd": "/tmp/feishu-topic",
+            "backend": "pi",
+            "bot_token_env": "FEISHU",
+            "channel": "feishu",
+        }
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [entry]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+    topic = S.bindings[0]
+    assert topic.thread_root_message_id == "om_root_old"
+
+    topic.thread_root_message_id = "om_root_new"
+    save_binding_identity(bindings_file, topic)
+
+    saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"][0]
+    assert saved["thread_root_message_id"] == "om_root_new"
+    assert saved["thread_id"] == "omt_topic"
+    assert saved["tmux_session"] == "feishu-topic"
+    assert bindings_file.stat().st_mode & 0o777 == 0o600
+
+
 def test_admin_dm_route_defaults_to_runtime_home_and_configurable_pi(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")

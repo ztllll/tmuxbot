@@ -33,6 +33,30 @@ def write_routes(path: Path, entries: list[dict[str, object]]) -> None:
     )
 
 
+def test_route_store_round_trips_feishu_thread_root_anchor(tmp_path, capsys):
+    path = tmp_path / "bindings.yaml"
+    write_routes(
+        path,
+        [
+            route(
+                channel="feishu",
+                bot_token_env="FEISHU",
+                chat_id="oc_group",
+                thread_id="omt_topic",
+                thread_root_message_id="om_root",
+            )
+        ],
+    )
+
+    item = RouteStore(path).inspect("alpha")
+
+    assert item.thread_root_message_id == "om_root"
+    assert run_route_command(
+        ["--file", str(path), "inspect", "alpha", "--json"]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["thread_root_message_id"] == "om_root"
+
+
 def test_route_store_lists_and_inspects_exact_routes(tmp_path):
     path = tmp_path / "bindings.yaml"
     write_routes(path, [route(), route("beta", thread_id=43, backend="codex")])

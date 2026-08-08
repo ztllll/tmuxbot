@@ -76,7 +76,7 @@ def _admin_binding(boss_user_id: int) -> Binding | None:
 
 
 def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
-    """把运行时确认的 provider 会话身份写回 bindings.yaml。"""
+    """把运行时确认的 provider 身份与稳定通道路由元数据写回 bindings.yaml。"""
     if bindings_file is None:
         return
     try:
@@ -101,6 +101,7 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
                     "backend": binding.backend,
                     "mention_required": binding.mention_required,
                     "admin": True,
+                    "thread_root_message_id": binding.thread_root_message_id,
                 }
                 entries.append(entry)
             if entry is None:
@@ -110,6 +111,10 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
                     bindings_file,
                 )
                 return
+            if binding.thread_root_message_id:
+                entry["thread_root_message_id"] = binding.thread_root_message_id
+            else:
+                entry.pop("thread_root_message_id", None)
             if binding.provider_session_id:
                 entry["provider_session_id"] = binding.provider_session_id
             else:
@@ -204,6 +209,11 @@ def load_config(
                     channel=b.get("channel", "telegram"),
                     mention_required=b.get("mention_required"),
                     admin=bool(b.get("admin", False)),
+                    thread_root_message_id=(
+                        str(b.get("thread_root_message_id"))
+                        if b.get("thread_root_message_id")
+                        else None
+                    ),
                     provider_session_id=provider_session_id,
                     transcript_path=Path(transcript_raw) if transcript_raw else None,
                     last_session_id=provider_session_id,

@@ -161,6 +161,23 @@ def test_rejects_multiple_admin_routes():
     )
 
 
+def test_rejects_invalid_feishu_thread_root_message_id():
+    assert_invalid(
+        [
+            binding(
+                channel="feishu",
+                chat_id="oc_a",
+                thread_id="omt_a",
+                thread_root_message_id="not-a-message",
+                tmux_session="fs-a",
+                cwd=Path("/tmp/fs-a"),
+                bot_token_env="FEISHU",
+            )
+        ],
+        "thread_root_message_id must start with 'om_'",
+    )
+
+
 def test_rejects_invalid_thread_types_for_each_channel():
     assert_invalid(
         [binding(thread_id="telegram-string")],

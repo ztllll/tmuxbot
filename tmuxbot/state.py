@@ -34,6 +34,8 @@ class Binding:
     channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
     mention_required: bool | None = None      # None = inherit frontend deployment default
     admin: bool = False                       # privileged route; channel must enforce DM shape
+    # 飞书 topic 的稳定根消息锚点。仅用于 reply_in_thread=True；Telegram/DM/root route 不使用。
+    thread_root_message_id: str | None = None
     # provider 会话必须精确绑定到 tmux pane。last_session_id 保留作旧命令层兼容别名；
     # 新代码以 provider_session_id + transcript_path 为准。
     provider_session_id: str | None = None
