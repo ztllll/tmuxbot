@@ -32,7 +32,13 @@ from tmuxbot.core.events import (
 from tmuxbot.hooks.claude import default_hook_spool_path, read_hook_spool
 from tmuxbot.quota import fetch_quota
 from tmuxbot.providers.adapters import provider_launch_arguments
-from tmuxbot.tmux import tmux_has_session, tmux_new_session, tmux_pane_command, tmux_safe_launch
+from tmuxbot.tmux import (
+    tmux_capture,
+    tmux_has_session,
+    tmux_new_session,
+    tmux_pane_command,
+    tmux_safe_launch,
+)
 from tmuxbot.utils import encode_cwd, render_table, strip_decorations
 
 if TYPE_CHECKING:
@@ -994,6 +1000,27 @@ class ClaudeCodeBackend(Backend):
             log.warning("[%s] claude launch aborted after foreground revalidation", b.name)
             return
         await asyncio.sleep(2.0)
+        if not session_id or self.is_running_command(tmux_pane_command(b.tmux_target)):
+            return
+        screen = tmux_capture(b.tmux_target, lines=20)
+        stale_marker = f"No conversation found with session ID: {session_id}"
+        if stale_marker not in screen:
+            return
+        log.warning(
+            "[%s] persisted Claude session %s is unavailable; starting a fresh TUI",
+            b.name,
+            session_id,
+        )
+        b.provider_session_id = None
+        b.last_session_id = None
+        b.transcript_path = None
+        relaunched = await tmux_safe_launch(
+            b.tmux_target,
+            _start_cmd(),
+            allowed_shells=self.shell_command_names,
+        )
+        if relaunched:
+            await asyncio.sleep(2.0)
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {

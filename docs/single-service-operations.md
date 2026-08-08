@@ -12,7 +12,7 @@ configured Telegram Bot and Feishu App credential.
 | Main process | `Restart=always`, `RestartSec=5`, `StartLimitIntervalSec=0` | restarts after crashes without a permanent systemd start-limit |
 | Bridge child | `BridgeSupervisor` | respawns the bridge with bounded backoff |
 | Telegram/Feishu transport | frontend reconnect loop | reconnects a failed polling/WebSocket connection |
-| tmux/provider TUI | `TMUXBOT_LIFECYCLE_ENABLED=1` | recreates missing targets and resumes persisted Claude/Codex/Pi identities |
+| tmux/provider TUI | `TMUXBOT_LIFECYCLE_ENABLED=1` | recreates missing targets and resumes persisted Claude/Codex/Pi identities; an explicitly missing Claude resume ID falls back once to a fresh TUI |
 
 The lifecycle watchdog never runs `tmux kill-server`. Existing panes survive
 service deploys because the unit uses `KillMode=process`.
@@ -57,6 +57,7 @@ Use a maintenance window and keep a rollback copy.
    touching services.
 3. Merge offsets by transcript path using the greatest byte offset. Never reset
    an offset backwards: doing so can replay historical assistant output to IM.
+   Keep the state directory `0700` and offsets file `0600`.
 4. Compare control-plane databases. Migrate non-empty records explicitly; do not
    silently discard one instance's database.
 5. Record tmux pane PID/cwd/current command so the cutover can prove provider

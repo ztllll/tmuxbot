@@ -48,3 +48,54 @@ def test_claude_ensure_running_recreates_missing_tmux_and_resumes(monkeypatch, t
     assert launched == [
         "claude --dangerously-skip-permissions --resume claude-session-id"
     ]
+
+
+def test_claude_ensure_running_replaces_stale_resume_with_fresh_tui(
+    monkeypatch, tmp_path
+):
+    launched = []
+    commands = iter(["bash", "bash"])
+    binding = Binding(
+        name="claude-stale",
+        chat_id=1,
+        thread_id=None,
+        tmux_session="claude-stale",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=tmp_path,
+        provider_session_id="missing-session",
+        last_session_id="missing-session",
+        transcript_path=tmp_path / "missing-session.jsonl",
+    )
+
+    monkeypatch.setattr("tmuxbot.backends.claude_code.tmux_has_session", lambda _name: True)
+    monkeypatch.setattr(
+        "tmuxbot.backends.claude_code.tmux_pane_command",
+        lambda _target: next(commands),
+    )
+    monkeypatch.setattr(
+        "tmuxbot.backends.claude_code.tmux_capture",
+        lambda _target, lines=50: (
+            "No conversation found with session ID: missing-session\n"
+        ),
+    )
+
+    async def safe_launch(_target, command, *, allowed_shells):
+        launched.append(command)
+        return True
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("tmuxbot.backends.claude_code.tmux_safe_launch", safe_launch)
+    monkeypatch.setattr("tmuxbot.backends.claude_code.asyncio.sleep", no_sleep)
+
+    asyncio.run(ClaudeCodeBackend().ensure_running(binding))
+
+    assert launched == [
+        "claude --dangerously-skip-permissions --resume missing-session",
+        "claude --dangerously-skip-permissions",
+    ]
+    assert binding.provider_session_id is None
+    assert binding.last_session_id is None
+    assert binding.transcript_path is None

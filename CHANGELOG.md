@@ -66,6 +66,8 @@
 
 ### Fixed
 
+- lifecycle watchdog 恢复 Claude route 时，若持久 `--resume` identity 已被 Claude 删除并明确返回 `No conversation found with session ID`，会清除失效 identity、启动新真实 TUI，再由 JSONL tailer 持久化新 session；不再每轮回到 shell 后无限重试同一无效 ID。
+- offsets 持久化现在强制 state 目录 `0700`、临时文件和最终 JSON `0600`，合并或运行时保存后不再受 umask 影响暴露 transcript 路径元数据。
 - 多飞书 App 单进程运行时不再共享并覆盖 `lark-oapi` 的模块级 event loop；每个 credential 使用独立 SDK module/worker loop，并在服务停止时显式断开 WebSocket 和关闭 loop。
 - 飞书 WebSocket dispatcher 现在消费群资料更新、bot 入群、普通成员变更和消息撤回等无路由副作用事件，避免已订阅的 `im.chat.updated_v1` / `im.chat.member.*` / `im.message.recalled_v1` 被 SDK 反复记录为 `processor not found`；群解散与 bot 被移出仍沿用原有 route 拆除逻辑。
 - Codex 启动路径改为在每次新建/恢复 provider 时读取 `CODEX_BIN`，不再在 Python import 阶段提前冻结，确保 bridge 加载 `.env` 后的绝对路径真正生效。

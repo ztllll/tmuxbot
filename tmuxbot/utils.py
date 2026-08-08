@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -158,7 +159,10 @@ def save_offsets(offsets_file: Path, offsets: dict[str, int], *, force: bool = F
     if not force and (now - _last_offsets_save) < OFFSETS_SAVE_INTERVAL:
         return
     _last_offsets_save = now
-    offsets_file.parent.mkdir(exist_ok=True)
+    offsets_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(offsets_file.parent, 0o700)
     tmp = offsets_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(offsets, indent=2))
+    os.chmod(tmp, 0o600)
     tmp.replace(offsets_file)
+    os.chmod(offsets_file, 0o600)

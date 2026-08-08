@@ -1,6 +1,13 @@
+import stat
 from pathlib import Path
 
-from tmuxbot.utils import encode_cwd, render_task_footer, strip_handwritten_footer, utf16_len
+from tmuxbot.utils import (
+    encode_cwd,
+    render_task_footer,
+    save_offsets,
+    strip_handwritten_footer,
+    utf16_len,
+)
 
 
 def test_encode_cwd_matches_non_alnum_replacement():
@@ -24,3 +31,13 @@ def test_render_task_footer_hides_completed_history_when_no_task_is_active():
         {"subject": "历史任务", "status": "completed"},
         {"subject": "另一条历史", "status": "completed"},
     ]) == ""
+
+
+def test_save_offsets_keeps_runtime_state_private(tmp_path):
+    path = tmp_path / "state/offsets.json"
+
+    save_offsets(path, {"session.jsonl": 123}, force=True)
+
+    assert path.read_text(encoding="utf-8").strip().endswith("123\n}")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
