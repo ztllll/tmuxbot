@@ -145,15 +145,18 @@ class BridgeSupervisor:
                         continue
                     break
 
-                child_env = dict(self.environ)
-                if self.paths.env_file.is_file():
-                    child_env.update(
-                        {
-                            key: value
-                            for key, value in dotenv_values(self.paths.env_file).items()
-                            if value is not None
-                        }
-                    )
+                dotenv_env = (
+                    {
+                        key: value
+                        for key, value in dotenv_values(self.paths.env_file).items()
+                        if value is not None
+                    }
+                    if self.paths.env_file.is_file()
+                    else {}
+                )
+                # Match python-dotenv override=False: explicit process/systemd
+                # settings take precedence over deployment-file defaults.
+                child_env = {**dotenv_env, **self.environ}
                 for key in tuple(child_env):
                     if "SETUP_GRANT" in key:
                         child_env.pop(key, None)

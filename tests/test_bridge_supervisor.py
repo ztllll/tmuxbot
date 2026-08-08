@@ -95,6 +95,60 @@ def test_bridge_argv_and_setup_grant_not_in_child_environment(tmp_path: Path) ->
     assert "TMUXBOT_SETUP_GRANT" not in observed[0][1]
 
 
+def test_supervisor_process_environment_overrides_dotenv(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure_private_directories()
+    paths.env_file.write_text(
+        "TG_CODEX_BOT_TOKEN=123:abc\nTMUXBOT_LIFECYCLE_ENABLED=0\n",
+        encoding="utf-8",
+    )
+    paths.bindings_file.write_text(
+        "bindings:\n"
+        "  - name: demo\n"
+        "    chat_id: 1\n"
+        "    thread_id: 0\n"
+        "    bot_token_env: TG_CODEX_BOT_TOKEN\n"
+        "    backend: codex\n"
+        "    tmux_session: demo\n"
+        "    cwd: /tmp\n",
+        encoding="utf-8",
+    )
+    observed: list[dict[str, str]] = []
+
+    class Child:
+        returncode = None
+
+        async def wait(self) -> int:
+            self.returncode = 0
+            return 0
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+    async def spawn(_argv: list[str], env: dict[str, str]):
+        observed.append(env)
+        return Child()
+
+    supervisor = BridgeSupervisor(
+        paths,
+        {"TMUXBOT_LIFECYCLE_ENABLED": "1"},
+        spawn=spawn,
+    )
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(supervisor.run(stop, poll_interval=0.01))
+        await asyncio.sleep(0.03)
+        stop.set()
+        await task
+
+    asyncio.run(scenario())
+
+    assert observed
+    assert observed[0]["TG_CODEX_BOT_TOKEN"] == "123:abc"
+    assert observed[0]["TMUXBOT_LIFECYCLE_ENABLED"] == "1"
+
+
 def test_supervisor_writes_and_clears_bridge_pid_file(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure_private_directories()
