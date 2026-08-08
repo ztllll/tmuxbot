@@ -95,6 +95,7 @@ The transaction interface is:
 tmuxbot admin contract
 tmuxbot admin install-contract --cwd PATH
 tmuxbot admin inventory [--json]
+tmuxbot admin telegram-topic --message-link URL [--json]
 tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]

@@ -6,7 +6,12 @@ from pathlib import Path
 import yaml
 
 from tmuxbot.__main__ import build_parser
-from tmuxbot.admin_cli import AdminRuntime, discover_feishu_topics, run_admin_command
+from tmuxbot.admin_cli import (
+    AdminRuntime,
+    discover_feishu_topics,
+    parse_telegram_topic_link,
+    run_admin_command,
+)
 from tmuxbot.route_cli import RouteStore
 
 
@@ -149,6 +154,57 @@ def test_admin_contract_install_is_idempotent_and_preserves_existing_text(tmp_pa
         "tmuxbot-admin-contract:start"
     ) == 1
     assert "installed:" in capsys.readouterr().out
+
+
+def test_telegram_topic_link_parses_private_forum_endpoint():
+    topic = parse_telegram_topic_link("https://t.me/c/3799747978/8024/9001")
+
+    assert topic == {
+        "channel": "telegram",
+        "chat_id": -1003799747978,
+        "thread_id": 8024,
+        "message_id": 9001,
+        "message_link": "https://t.me/c/3799747978/8024/9001",
+    }
+
+
+def test_telegram_topic_link_rejects_public_or_ambiguous_links(capsys, tmp_path):
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route()])
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "telegram-topic",
+            "--message-link",
+            "https://t.me/public_group/123",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "exact form" in capsys.readouterr().out
+
+
+def test_telegram_topic_cli_outputs_machine_readable_endpoint(tmp_path, capsys):
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route()])
+
+    assert (
+        run_admin_command(
+            [
+                "--file",
+                str(bindings),
+                "telegram-topic",
+                "--message-link",
+                "https://t.me/c/3799747978/8024/9001",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["thread_id"] == 8024
 
 
 def test_feishu_topic_discovery_returns_exact_root_threads(monkeypatch, tmp_path):

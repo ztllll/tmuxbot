@@ -61,6 +61,11 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   inventory --json
 
+# 从 Telegram 私有 forum 的消息链接解析精确 chat/topic/message ID（只读）
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  telegram-topic \
+  --message-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID/MESSAGE_ID --json
+
 # 发现飞书群内最近的精确 topic/thread ID（只读，不发消息）
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   feishu-topics --env-file /path/to/.env \
@@ -70,7 +75,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 标准事务流程固定为：
 
 ```text
-inventory / feishu-topics
+inventory / telegram-topic / feishu-topics
 → bind-topic 或 move-topic（默认只输出 plan）
 → 人或 Admin LLM 核对完整 endpoint/target/cwd/adapter
 → 重复命令并增加 --apply
@@ -214,7 +219,15 @@ https://t.me/c/xxxxxxxxxx/12345/67890
 - 不要新建话题
 ```
 
-如果链接或名称不足以可靠识别 endpoint，管理 AI 应要求提供 `chat_id/thread_id`，而不是猜测或创建新话题。
+使用以下确定性命令解析私有 forum 链接：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  telegram-topic \
+  --message-link https://t.me/c/xxxxxxxxxx/12345/67890 --json
+```
+
+它会把 `internal-chat-id` 转换为 Bot API `chat_id=-100...`，并原样返回整数 `thread_id/message_id`。只接受四段式私有 forum 链接；public username 链接、群根链接或缺少 thread 的链接会失败关闭。如果链接或名称不足以可靠识别 endpoint，管理 AI 应要求提供 `chat_id/thread_id`，而不是猜测或创建新话题。
 
 ## 5. 确定性底层流程
 
@@ -222,7 +235,7 @@ https://t.me/c/xxxxxxxxxx/12345/67890
 
 ```text
 1. tmuxbot admin inventory
-2. 飞书 topic 使用 tmuxbot admin feishu-topics；Telegram 使用可靠 thread_id/消息链接
+2. Telegram 私有 forum 消息链接使用 tmuxbot admin telegram-topic；飞书 topic 使用 tmuxbot admin feishu-topics
 3. bind-topic / move-topic 生成 plan（不带 --apply）
 4. 核对完整 endpoint、cwd、adapter 和完整 tmux target
 5. 重复同一命令并增加 --apply

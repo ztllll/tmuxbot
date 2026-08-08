@@ -205,6 +205,33 @@ def _extract_text_values(value: Any) -> list[str]:
     return values
 
 
+def parse_telegram_topic_link(value: str) -> dict[str, Any]:
+    parsed = urllib.parse.urlparse(value.strip())
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() not in {
+        "t.me",
+        "www.t.me",
+        "telegram.me",
+        "www.telegram.me",
+    }:
+        raise AdminOperationError("Telegram topic link must use https://t.me/c/...")
+    parts = [urllib.parse.unquote(part) for part in parsed.path.split("/") if part]
+    if len(parts) != 4 or parts[0] != "c":
+        raise AdminOperationError(
+            "expected a private forum message link in the exact form "
+            "https://t.me/c/<internal-chat-id>/<thread-id>/<message-id>"
+        )
+    internal_chat_id, thread_id, message_id = parts[1:]
+    if not all(part.isdigit() and int(part) > 0 for part in parts[1:]):
+        raise AdminOperationError("Telegram link chat/thread/message identifiers must be positive integers")
+    return {
+        "channel": "telegram",
+        "chat_id": int(f"-100{internal_chat_id}"),
+        "thread_id": int(thread_id),
+        "message_id": int(message_id),
+        "message_link": value.strip(),
+    }
+
+
 def discover_feishu_topics(
     env_file: Path,
     credential: str,
@@ -464,6 +491,9 @@ Deployment:
 Required workflow:
 ```bash
 tmuxbot admin --file {bindings_file} --service {service} inventory --json
+# For Telegram private forums, parse an exact message link instead of guessing:
+tmuxbot admin --file {bindings_file} --service {service} telegram-topic \\
+  --message-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID/MESSAGE_ID --json
 # For Feishu, discover exact existing topics instead of guessing:
 tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
   --env-file {env_file} --credential FEISHU_CODEX --chat-id oc_xxx --json
@@ -536,6 +566,11 @@ def build_admin_parser() -> argparse.ArgumentParser:
         "inventory", help="list current routes and real tmux panes"
     )
     inventory.add_argument("--json", action="store_true", dest="as_json")
+    telegram_topic = subparsers.add_parser(
+        "telegram-topic", help="parse an exact private Telegram forum message link"
+    )
+    telegram_topic.add_argument("--message-link", required=True)
+    telegram_topic.add_argument("--json", action="store_true", dest="as_json")
     topics = subparsers.add_parser(
         "feishu-topics", help="discover recent Feishu topic IDs without changing routes"
     )
@@ -593,6 +628,16 @@ def run_admin_command(
             print(
                 json.dumps(
                     payload,
+                    ensure_ascii=False,
+                    indent=None if args.as_json else 2,
+                )
+            )
+            return 0
+        if args.admin_command == "telegram-topic":
+            topic = parse_telegram_topic_link(args.message_link)
+            print(
+                json.dumps(
+                    topic,
                     ensure_ascii=False,
                     indent=None if args.as_json else 2,
                 )

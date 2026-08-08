@@ -45,7 +45,7 @@ The 0.3.0 line is feature-frozen with these shipped capabilities:
 - `(channel, bot_token_env, chat_id, thread_id)` and full tmux targets are unique.
 - A frontend routes only to bindings assigned to that frontend.
 - Unknown sources are silent; route provisioning occurs through explicit configuration, route CLI, Admin DM, or the authenticated Web control plane rather than an unbound IM message.
-- Admin LLM correctness does not depend on provider-specific memory: a managed Operations Contract plus `tmuxbot admin` discover/plan/apply/verify transactions owns topic discovery, full-candidate validation, atomic YAML replacement, supervised restart, post-apply verification, and rollback.
+- Admin LLM correctness does not depend on provider-specific memory: a managed Operations Contract plus `tmuxbot admin` discover/plan/apply/verify transactions owns Telegram link parsing, topic discovery, full-candidate validation, atomic YAML replacement, supervised restart, post-apply verification, and rollback.
 - Normal text injection never sends Escape first.
 - Provider parsing and launch policy belong behind backend/provider seams, not in
   transport-specific handlers.

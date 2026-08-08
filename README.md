@@ -69,6 +69,8 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   install-contract --cwd /home/you
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service inventory --json
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  telegram-topic --message-link https://t.me/c/CHAT/THREAD/MESSAGE --json
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   bind-topic ...             # 默认仅输出 plan；核对后增加 --apply
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   verify ROUTE --json
