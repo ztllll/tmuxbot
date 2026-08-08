@@ -1657,6 +1657,25 @@ class FeishuFrontend(Frontend):
         event_type = getattr(getattr(data, "header", None), "event_type", None)
         log.debug("feishu ignore event: %s", event_type or type(data).__name__)
 
+    def _register_ignored_events(self, builder) -> None:
+        """Consume subscribed metadata/read events that do not change route state."""
+        for event_method in (
+            "register_p2_im_message_reaction_created_v1",
+            "register_p2_im_message_reaction_deleted_v1",
+            "register_p2_im_message_message_read_v1",
+            "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+            "register_p2_im_chat_member_bot_added_v1",
+            "register_p2_im_chat_member_user_added_v1",
+            "register_p2_im_chat_member_user_deleted_v1",
+            "register_p2_im_chat_member_user_withdrawn_v1",
+            "register_p2_im_chat_updated_v1",
+        ):
+            register = getattr(builder, event_method, None)
+            if register is not None:
+                register(self._ignore_event)
+            else:
+                log.debug("feishu: lark-oapi 缺 %s, 跳过无业务事件注册", event_method)
+
     async def _handle_chat_removed(self, chat_id: str) -> None:
         """主 loop 里拆除 chat_id 对应的 binding (若有)"""
         from tmuxbot.provision import deprovision_chat
@@ -2011,17 +2030,7 @@ class FeishuFrontend(Frontend):
                 _reg(self._on_chat_removed)
             else:
                 log.warning(f"feishu: lark-oapi 缺 {_evt_method}, 跳过该解散事件注册")
-        for _evt_method in (
-            "register_p2_im_message_reaction_created_v1",
-            "register_p2_im_message_reaction_deleted_v1",
-            "register_p2_im_message_message_read_v1",
-            "register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
-        ):
-            _reg = getattr(builder, _evt_method, None)
-            if _reg is not None:
-                _reg(self._ignore_event)
-            else:
-                log.debug(f"feishu: lark-oapi 缺 {_evt_method}, 跳过无业务事件注册")
+        self._register_ignored_events(builder)
         handler = builder.build()
         stop_event = asyncio.Event()
         self._stop_event = stop_event

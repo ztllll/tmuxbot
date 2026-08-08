@@ -87,6 +87,25 @@ def test_feishu_thread_reply_never_falls_back_to_group_root(monkeypatch):
     assert create_calls == []
 
 
+def test_feishu_registers_non_routing_chat_events_as_ignored():
+    instance = frontend()
+    registrations = {}
+
+    class Builder:
+        def __getattr__(self, name):
+            if name.startswith("register_p2_"):
+                return lambda callback: registrations.__setitem__(name, callback)
+            raise AttributeError(name)
+
+    instance._register_ignored_events(Builder())
+
+    assert registrations["register_p2_im_chat_updated_v1"].__self__ is instance
+    assert registrations["register_p2_im_chat_member_bot_added_v1"].__self__ is instance
+    assert registrations["register_p2_im_chat_member_user_added_v1"].__self__ is instance
+    assert registrations["register_p2_im_chat_member_user_deleted_v1"].__self__ is instance
+    assert registrations["register_p2_im_chat_member_user_withdrawn_v1"].__self__ is instance
+
+
 def test_feishu_chat_removal_deprovisions_every_topic_route(monkeypatch):
     instance = frontend()
     second = Binding(
