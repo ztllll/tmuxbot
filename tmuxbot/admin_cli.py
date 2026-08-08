@@ -432,6 +432,7 @@ def verify_route(
 
 
 def render_contract(*, bindings_file: Path, service: str) -> str:
+    env_file = bindings_file.expanduser().resolve().parent / ".env"
     return f"""# tmuxbot Admin Operations Contract
 
 You manage exact IM endpoint -> tmux pane routes. Use tmuxbot's deterministic
@@ -465,7 +466,7 @@ Required workflow:
 tmuxbot admin --file {bindings_file} --service {service} inventory --json
 # For Feishu, discover exact existing topics instead of guessing:
 tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
-  --env-file /absolute/path/to/.env --credential FEISHU_CODEX --chat-id oc_xxx --json
+  --env-file {env_file} --credential FEISHU_CODEX --chat-id oc_xxx --json
 
 tmuxbot admin --file {bindings_file} --service {service} bind-topic \\
   --name ROUTE --channel feishu --credential FEISHU_CODEX \\
