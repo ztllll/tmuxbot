@@ -12,7 +12,7 @@
 - 新增 Pi TUI backend：启动/恢复真实 Pi tmux TUI，解析 `~/.pi/agent/sessions` JSONL 的文本、思考、工具、模型、thinking level 和 usage；不使用 Pi RPC/SDK/print mode。
 - 新增 `tmuxbot route list|inspect|validate|bind|unbind`，写入前校验完整候选配置并原子替换 YAML。
 - 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex；新增 `docs/admin-dm-operations.md`，记录自然语言开通/绑定模板、确定性操作顺序、安全约束和真实 IM 验收清单。
-- 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在 `--apply` 中完成候选校验、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。
+- 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。
 
 ### Changed
 

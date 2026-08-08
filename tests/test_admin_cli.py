@@ -475,6 +475,52 @@ def test_move_topic_preserves_provider_identity_and_target(tmp_path):
     assert runtime.restarts == ["bridge.service"]
 
 
+def test_bind_apply_rejects_duplicate_endpoint_before_creating_target(tmp_path, capsys):
+    existing_cwd = tmp_path / "existing"
+    requested_cwd = tmp_path / "requested"
+    existing_cwd.mkdir()
+    requested_cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(existing_cwd))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime()
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "bind-topic",
+            "--name",
+            "duplicate",
+            "--channel",
+            "feishu",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_old",
+            "--thread-id",
+            "omt_old",
+            "--tmux-target",
+            "must-not-exist:0.0",
+            "--cwd",
+            str(requested_cwd),
+            "--backend",
+            "pi",
+            "--mention-required",
+            "false",
+            "--create-target",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 2
+    assert "duplicate source" in capsys.readouterr().out
+    assert bindings.read_bytes() == original
+    assert runtime.created == []
+    assert runtime.restarts == []
+
+
 def test_move_topic_plan_rejects_duplicate_destination_without_writing(tmp_path, capsys):
     alpha_cwd = tmp_path / "alpha"
     beta_cwd = tmp_path / "beta"

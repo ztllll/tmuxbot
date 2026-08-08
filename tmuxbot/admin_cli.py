@@ -481,7 +481,11 @@ Hard rules:
 4. Do not reuse a pane with a different cwd. Do not bind two routes to one pane.
 5. Do not run `tmux kill-server`. Moving a route preserves its provider identity.
 6. Project topics normally use `--mention-required false`.
-7. Config changes are complete only after validated atomic write, supervised
+7. Never create a tmux target before exact endpoint discovery, inventory review,
+   and a valid bind plan. Do not run `tmux new-session` directly for a route;
+   new sessions must be created transactionally by repeating the reviewed plan
+   with `bind-topic --create-target --apply`.
+8. Config changes are complete only after validated atomic write, supervised
    bridge restart, and verification. The Admin command owns those steps.
 
 Deployment:

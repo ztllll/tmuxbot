@@ -122,7 +122,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 
-当前 `--create-target` 只创建全新 session 的 `0.0` pane；在已有 session 中增加 window/pane 仍需先由确定性 tmux 操作创建，再用不带 `--create-target` 的 `bind-topic` 绑定。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
+只有在 endpoint 已精确发现、`inventory` 已核对且 bind plan 已生成后，才允许重复同一计划并增加 `--create-target --apply`。禁止为 route 直接运行 `tmux new-session`：如果后续 endpoint 校验失败，这会留下无 route 的孤儿 pane。当前 `--create-target` 只创建全新 session 的 `0.0` pane；在已有 session 中增加 window/pane 仍需先由确定性 tmux 操作创建，再用不带 `--create-target` 的 `bind-topic` 绑定。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
 
 ## 3. 在 DM 中需要提供什么
 
