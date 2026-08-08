@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
-PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex"})
+PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "pi"})
 
 
 class RunState(str, Enum):

@@ -25,13 +25,14 @@ def test_scan_only_discovers_allowlisted_regular_executables(tmp_path, monkeypat
     real_codex = _executable(bin_dir / "codex-real", "printf 'codex 1.0\\n'\n")
     (bin_dir / "codex").symlink_to(real_codex)
     _executable(bin_dir / "claude", "printf 'claude 2.0\\n'\n")
+    _executable(bin_dir / "pi", "printf 'pi 0.84.1\\n'\n")
     _executable(bin_dir / "evil", "printf 'evil\\n'\n")
     (bin_dir / "tmux").mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
 
     found = ProviderDiscovery().scan()
 
-    assert [item.binary_name for item in found] == ["claude", "codex"]
+    assert [item.binary_name for item in found] == ["claude", "codex", "pi"]
     codex = next(item for item in found if item.binary_name == "codex")
     assert codex.executable_path == str(real_codex.resolve())
     info = real_codex.stat()

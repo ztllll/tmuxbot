@@ -104,4 +104,5 @@ def test_channel_capabilities_describe_real_adapter_features():
     assert TelegramFrontend.capabilities.supports_threads
     assert FeishuFrontend.capabilities.supports_cards
     assert FeishuFrontend.capabilities.supports_edit
+    assert FeishuFrontend.capabilities.supports_threads
     assert not FeishuFrontend.capabilities.supports_actions

@@ -24,15 +24,16 @@ class Binding:
     """
     name: str
     chat_id: int | str        # Telegram: int; 飞书: str (oc_xxx)
-    thread_id: int | None     # forum topic id; None = DM/普通群/forum General/飞书
+    thread_id: int | str | None  # Telegram topic int; Feishu thread str; None = root/DM
     tmux_session: str
     tmux_window: int
     tmux_pane: int
     cwd: Path
-    backend: str = "claude_code"            # ★ 多 backend: claude_code / codex
+    backend: str = "claude_code"            # route adapter: claude_code / codex / pi
     bot_token_env: str = "TG_BOT_TOKEN"     # ★ 用哪个 token (env 变量名)
     channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
     mention_required: bool | None = None      # None = inherit frontend deployment default
+    admin: bool = False                       # privileged route; channel must enforce DM shape
     # provider 会话必须精确绑定到 tmux pane。last_session_id 保留作旧命令层兼容别名；
     # 新代码以 provider_session_id + transcript_path 为准。
     provider_session_id: str | None = None
@@ -103,7 +104,9 @@ class State:
         t.add_done_callback(_done)
         return t
 
-    def find_by_source(self, chat_id: int, thread_id: int | None) -> Binding | None:
+    def find_by_source(
+        self, chat_id: int | str, thread_id: int | str | None
+    ) -> Binding | None:
         for b in self.bindings:
             if b.chat_id == chat_id and b.thread_id == thread_id:
                 return b

@@ -4,7 +4,7 @@ import pytest
 
 from tmuxbot.attachments import attachment_prompt
 from tmuxbot.runtime.tmux_runtime import TmuxRuntime, TmuxSubmissionTimeout
-from tmuxbot.tmux import _active_input_text
+from tmuxbot.tmux import _active_input_text, _is_tui_busy
 
 
 class FakeTmux:
@@ -295,13 +295,38 @@ def test_submission_retry_is_bounded():
 """,
             "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
         ),
+        (
+            """历史回复
+────────────────────────────────────────
+请分析图片
+@/tmp/tmuxbot-feishu/image.png
+────────────────────────────────────────
+~/project (main)
+↑12k ↓3k R8k CH66.7% 9.0%/128k (auto)       gpt-5.6-sol • high
+""",
+            "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
+        ),
+        (
+            """────────────────────────────────────────
+
+────────────────────────────────────────
+~/project
+? /128k (auto)                               gpt-5.6-sol • high
+""",
+            "",
+        ),
     ],
 )
 def test_active_input_text_reads_claude_and_codex_composers(pane, expected):
     assert _active_input_text(pane) == expected
 
 
-@pytest.mark.parametrize("backend_name", ["claude_code", "codex"])
+def test_pi_working_indicator_blocks_input_until_tui_is_idle():
+    assert _is_tui_busy("⠧ Working...\n~/repo\n↑10k ↓2k 8.0%/128k gpt-5.6 • high")
+    assert not _is_tui_busy("~/repo\n↑10k ↓2k 8.0%/128k gpt-5.6 • high")
+
+
+@pytest.mark.parametrize("backend_name", ["claude_code", "codex", "pi"])
 def test_multiline_attachment_prompt_is_submitted_after_settle(tmp_path, backend_name):
     image = tmp_path / "input.png"
     image.write_bytes(b"png")

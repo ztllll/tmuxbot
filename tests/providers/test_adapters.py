@@ -13,7 +13,7 @@ def test_adapter_registry_keeps_launch_and_model_picker_details_server_side():
     assert claude.launch_arguments == ("--dangerously-skip-permissions",)
     assert claude.model_command == "/model"
     assert "Bash" in claude.teamrun_instruction
-    assert managed_provider_names() == frozenset({"claude", "codex"})
+    assert managed_provider_names() == frozenset({"claude", "codex", "pi"})
 
 
 def test_provider_capabilities_do_not_expose_launch_arguments():
@@ -38,4 +38,5 @@ def test_provider_launch_arguments_uses_the_registered_dynamic_resolver(monkeypa
         "configured-model",
     )
     assert provider_launch_arguments("claude") == ("--dangerously-skip-permissions",)
+    assert provider_launch_arguments("pi") == ("--approve",)
     assert provider_launch_arguments("unknown") is None

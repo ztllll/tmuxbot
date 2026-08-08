@@ -34,7 +34,8 @@ def test_telegram_and_feishu_normalize_equivalent_incoming_messages(tmp_path):
         content='{"text":"@_user_1 请检查"}',
         mentions=[SimpleNamespace(id=SimpleNamespace(open_id="ou_bot"))],
         parent_id="om_bot_reply",
-        root_id=None,
+        root_id="om_thread_root",
+        thread_id="omt_topic_7",
         reply_to_message_id=None,
     )
 
@@ -55,7 +56,7 @@ def test_telegram_and_feishu_normalize_equivalent_incoming_messages(tmp_path):
     assert telegram.thread_id == 7
     assert telegram.platform_message_id == 101
     assert feishu.source_id == "oc_100"
-    assert feishu.thread_id is None
+    assert feishu.thread_id == "omt_topic_7"
     assert feishu.platform_message_id == "om_101"
 
 

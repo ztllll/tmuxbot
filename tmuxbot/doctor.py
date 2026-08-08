@@ -57,6 +57,54 @@ def _binary_check(name: str, environ: Mapping[str, str]) -> CheckResult:
     )
 
 
+def _tmux_extended_keys_check(environ: Mapping[str, str]) -> CheckResult:
+    tmux = shutil.which("tmux", path=environ.get("PATH"))
+    if tmux is None:
+        return CheckResult("tmux:extended_keys", "warning", "tmux 未发现", {})
+    try:
+        completed = subprocess.run(
+            [tmux, "show-options", "-gv", "extended-keys"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            env={"PATH": environ.get("PATH", "")},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return CheckResult(
+            "tmux:extended_keys",
+            "warning",
+            "无法读取 tmux extended-keys",
+            {"error": type(exc).__name__},
+        )
+    value = completed.stdout.strip().lower()
+    try:
+        format_result = subprocess.run(
+            [tmux, "show-options", "-gv", "extended-keys-format"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            env={"PATH": environ.get("PATH", "")},
+        )
+        format_value = format_result.stdout.strip().lower()
+    except (OSError, subprocess.SubprocessError):
+        format_value = "unknown"
+    if completed.returncode == 0 and value == "on" and format_value == "csi-u":
+        return CheckResult(
+            "tmux:extended_keys",
+            "ok",
+            "已开启",
+            {"value": value, "format": format_value},
+        )
+    return CheckResult(
+        "tmux:extended_keys",
+        "warning",
+        "Pi 建议开启 extended-keys 与 csi-u；doctor 不会自动重启 tmux server",
+        {"value": value or "unknown", "format": format_value or "unknown"},
+    )
+
+
 def run_doctor(paths: RuntimePaths, environ: Mapping[str, str]) -> DoctorReport:
     checks: list[CheckResult] = []
     py_ok = sys.version_info >= (3, 10)
@@ -75,8 +123,9 @@ def run_doctor(paths: RuntimePaths, environ: Mapping[str, str]) -> DoctorReport:
         checks.append(
             CheckResult("runtime_paths", "error", "目录不可用", {"error": type(exc).__name__})
         )
-    for name in ("tmux", "claude", "codex"):
+    for name in ("tmux", "claude", "codex", "pi"):
         checks.append(_binary_check(name, environ))
+    checks.append(_tmux_extended_keys_check(environ))
     readiness = inspect_bridge_readiness(paths, environ)
     checks.append(
         CheckResult(

@@ -77,7 +77,11 @@ def render_panel_text(
 ) -> str:
     required = effective_mention_required(binding, frontend_default)
     policy = "必须 @机器人" if required else "无需 @机器人"
-    provider = "Codex" if binding.backend == "codex" else "Claude"
+    provider = {
+        "claude_code": "Claude Code",
+        "codex": "Codex",
+        "pi": "Pi",
+    }.get(binding.backend, binding.backend)
     runtime = runtime_mode or os.getenv("TMUXBOT_RUNTIME_V2", "off")
     model = html.escape(current_model) if current_model else "暂未读取到（发送一次任务后自动可见）"
     return "\n".join(
@@ -120,6 +124,26 @@ def save_binding_mention_policy(
             else:
                 entry["mention_required"] = value
             break
+        if not found and binding.admin:
+            entry = {
+                "name": binding.name,
+                "channel": binding.channel,
+                "bot_token_env": binding.bot_token_env,
+                "chat_id": binding.chat_id,
+                "thread_id": binding.thread_id,
+                "tmux_session": binding.tmux_session,
+                "tmux_window": binding.tmux_window,
+                "tmux_pane": binding.tmux_pane,
+                "cwd": str(binding.cwd),
+                "backend": binding.backend,
+                "admin": True,
+            }
+            if binding.provider_session_id:
+                entry["provider_session_id"] = binding.provider_session_id
+            if binding.transcript_path:
+                entry["transcript_path"] = str(binding.transcript_path)
+            raw.setdefault("bindings", []).append(entry)
+            found = True
         if not found:
             raise ValueError(f"binding not found: {binding.name}")
         rendered = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)

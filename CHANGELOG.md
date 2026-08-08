@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增精确 topic/thread route：同一 Telegram Bot 或飞书 App 可按 `(chat_id, thread_id)` 将不同话题绑定到不同 tmux pane，并按 route 选择 Claude Code、Codex 或 Pi adapter。
+- 新增 Pi TUI backend：启动/恢复真实 Pi tmux TUI，解析 `~/.pi/agent/sessions` JSONL 的文本、思考、工具、模型、thinking level 和 usage；不使用 Pi RPC/SDK/print mode。
+- 新增 `tmuxbot route list|inspect|validate|bind|unbind`，写入前校验完整候选配置并原子替换 YAML。
+- 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex。
+
+### Changed
+
+- 取消一个 credential 固定一个 backend 的限制；heartbeat、tailer、命令、附件、状态与 lifecycle 均按 binding 解析 adapter。
+- `thread_id` 统一为 `int | str | None`，飞书入站提取字符串 thread，出站通过 `reply_in_thread=True` 回到原 thread；缺少可信回复锚点时失败关闭，不降级到群根。
+- tmux session 可被多个 route 共享，只要求完整 pane target 唯一。
+- 未绑定群根/topic/thread 统一静默且不触碰 tmux；新增 route 改由 YAML、route CLI、Admin DM 或 Web control plane 显式创建。
+
 ## [0.3.0] - 2026-08-08
 
 - WebUI 调度台增加中文分区导航、可持久化终端布局、Provider Adapter 能力声明、动态原生模型菜单，以及 Telegram/飞书群聊 @ 响应开关。

@@ -77,7 +77,7 @@ def _fmt_token_delta(before: int | None, after: int | None) -> str | None:
 
 async def capture_and_push(
     frontend: "Frontend", b: "Binding", backend: "Backend",
-    chat_id: int, thread_id: int | None,
+    chat_id: int | str, thread_id: int | str | None,
     *,
     command: str | None = None,
 ) -> None:

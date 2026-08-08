@@ -79,6 +79,20 @@ def test_telegram_acl_allows_private_chat_without_mention_when_required():
     assert frontend._acl_ok(_msg("hello", chat_type="private"))
 
 
+def test_telegram_admin_route_rejects_same_endpoint_outside_private_chat():
+    frontend = object.__new__(TelegramFrontend)
+    frontend.state = SimpleNamespace(setup_mode=False, boss_user_id=42)
+    frontend.bindings = [
+        SimpleNamespace(chat_id=-100, thread_id=None, admin=True, mention_required=None)
+    ]
+    frontend.group_only_when_mentioned = False
+    frontend._bot_username = "tmuxbot"
+    frontend._bot_id = 100
+
+    assert not frontend._acl_ok(_msg("hello", chat_type="supergroup"))
+    assert frontend._acl_ok(_msg("hello", chat_type="private"))
+
+
 def test_telegram_acl_allows_panel_control_without_mention_when_required():
     frontend = object.__new__(TelegramFrontend)
     frontend.state = SimpleNamespace(setup_mode=False, boss_user_id=42)
@@ -92,3 +106,17 @@ def test_telegram_acl_allows_panel_control_without_mention_when_required():
     assert frontend._acl_ok(_msg("/panel"))
     assert frontend._acl_ok(_msg("/mention on"))
     assert not frontend._acl_ok(_msg("/status"))
+
+
+def test_telegram_unbound_topic_is_silent_even_for_legacy_commands():
+    frontend = object.__new__(TelegramFrontend)
+    frontend.state = SimpleNamespace(setup_mode=False, boss_user_id=42)
+    frontend.bindings = [SimpleNamespace(chat_id=-100, thread_id=7)]
+    frontend.group_only_when_mentioned = False
+    frontend._bot_username = "tmuxbot"
+    frontend._bot_id = 100
+    message = _msg("/init")
+    message.is_topic_message = True
+    message.message_thread_id = 8
+
+    assert not frontend._acl_ok(message)

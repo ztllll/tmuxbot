@@ -469,6 +469,90 @@ def test_repository_upgrades_v1_database_with_provider_control_plane_tables(tmp_
     } <= tables
 
 
+def test_existing_provider_graph_survives_pi_allowlist_migration(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    original_migrations = repository_module.MIGRATIONS
+    try:
+        repository_module.MIGRATIONS = tuple(
+            item for item in original_migrations if item[0] <= 5
+        )
+        repo = ControlPlaneRepository(path)
+        repo.migrate()
+        provider = ProviderProfile(
+            id="provider-codex",
+            binary_name="codex",
+            executable_path="/opt/bin/codex",
+            version="codex 1",
+            device=1,
+            inode=2,
+            mtime_ns=3,
+            discovered_at=4,
+        )
+        project = ProjectRecord(
+            id="project-one",
+            name="One",
+            root_path="/srv/one",
+            device=1,
+            inode=5,
+            mtime_ns=6,
+            created_at=7,
+        )
+        session = ManagedSession(
+            id="session-one",
+            project_id=project.id,
+            provider_id=provider.id,
+            name="Codex",
+            tmux_session="codex-one",
+            tmux_window=0,
+            tmux_pane=0,
+            status="running",
+            created_at=8,
+        )
+        probe = ProviderProbeResult(
+            id="probe-one",
+            provider_id=provider.id,
+            success=True,
+            version="codex 1",
+            error_code=None,
+            exit_code=0,
+            duration_ms=1,
+            output_truncated=False,
+            observed_at=9,
+        )
+        repo.upsert_provider_profile(provider)
+        repo.create_project(project)
+        repo.create_managed_session(session)
+        repo.record_probe_result(probe)
+    finally:
+        repository_module.MIGRATIONS = original_migrations
+
+    repo.migrate()
+
+    assert repo.get_provider_profile(provider.id) == provider
+    assert repo.get_managed_session(session.id) == session
+    assert repo.list_probe_results(provider.id) == [probe]
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_repository_accepts_pi_provider_after_schema_migration(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    provider = ProviderProfile(
+        id="provider-pi",
+        binary_name="pi",
+        executable_path="/opt/bin/pi",
+        version="pi 0.84.1",
+        device=8,
+        inode=201,
+        mtime_ns=302,
+        discovered_at=1_700_000_000,
+    )
+
+    assert repo.upsert_provider_profile(provider) == provider
+    assert repo.get_provider_profile(provider.id) == provider
+
+
 def test_repository_provider_project_session_and_probe_crud(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()

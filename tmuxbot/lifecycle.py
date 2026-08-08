@@ -84,8 +84,7 @@ async def lifecycle_watch_loop(
 ) -> None:
     """按 frontend/binding 周期性恢复 tmux session 和 CLI。
 
-    frontend 持有 backend 与 bindings 子集, 所以这里以 frontend 为巡检单位,
-    避免从全局 binding 再反查 backend。
+    frontend 持有 credential 对应的 bindings，并按 route 解析 provider adapter。
     """
     if not lifecycle_enabled():
         log.info("lifecycle watchdog disabled by TMUXBOT_LIFECYCLE_ENABLED")
@@ -99,12 +98,10 @@ async def lifecycle_watch_loop(
     while True:
         checked = 0
         for fe in list(frontends):
-            backend = getattr(fe, "backend", None)
-            if backend is None:
-                continue
             for b in list(getattr(fe, "bindings", [])):
                 checked += 1
                 try:
+                    backend = fe.backend_for(b)
                     await ensure_binding_running(
                         backend, b, state, reason="watchdog", wait=False
                     )

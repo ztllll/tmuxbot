@@ -13,8 +13,13 @@ from tmuxbot.core.capabilities import ChannelCapabilities
 from tmuxbot.core.events import TerminalStatus
 
 if TYPE_CHECKING:
+    from tmuxbot.backends.base import Backend
     from tmuxbot.core.replies import ReplyEnvelope
     from tmuxbot.state import Binding
+
+
+class BackendResolutionError(LookupError):
+    """Raised when a route names an adapter unavailable to its frontend."""
 
 
 class Frontend(ABC):
@@ -27,6 +32,25 @@ class Frontend(ABC):
     def health_id(self) -> str:
         """Stable per-credential identifier used by the shared supervisor."""
         return f"{self.name}:{getattr(self, 'bot_token_env', 'default')}"
+
+    def backend_for(self, binding: "Binding") -> "Backend":
+        """Resolve the provider adapter named by one exact route.
+
+        New frontends expose ``backends`` as a registry.  The legacy single
+        ``backend`` attribute remains a compatibility path for tests and old
+        embedders, but it is accepted only when its name matches the route.
+        """
+        registry = getattr(self, "backends", None)
+        if registry:
+            backend = registry.get(binding.backend)
+            if backend is not None:
+                return backend
+        legacy = getattr(self, "backend", None)
+        if legacy is not None and getattr(legacy, "name", None) == binding.backend:
+            return legacy
+        raise BackendResolutionError(
+            f"route {binding.name!r} requires unavailable backend {binding.backend!r}"
+        )
 
     def register_health(self) -> None:
         self.state.channel_health.register(
@@ -46,32 +70,32 @@ class Frontend(ABC):
 
     @abstractmethod
     async def send_html(
-        self, chat_id: int, thread_id: int | None, html_text: str
+        self, chat_id: int | str, thread_id: int | str | None, html_text: str
     ) -> Any:
         """发 HTML 消息, 返回发送的消息对象 (用于后续 edit)"""
 
     @abstractmethod
     async def edit_html(
-        self, chat_id: int, message_id: int, html_text: str
+        self, chat_id: int | str, message_id: int | str, html_text: str
     ) -> None:
         """编辑已发送消息为新 HTML 内容 (工具调用聚合用)"""
 
     @abstractmethod
     async def send_pre(
-        self, chat_id: int, thread_id: int | None, raw_text: str
+        self, chat_id: int | str, thread_id: int | str | None, raw_text: str
     ) -> None:
         """发 <pre> 包裹的 raw 文本 (屏幕快照等)"""
 
     @abstractmethod
     async def send_image(
-        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        self, chat_id: int | str, thread_id: int | str | None, path: str | Path,
         caption: str | None = None,
     ) -> Any:
         """发送本地图片文件为 IM 原生图片消息。"""
 
     @abstractmethod
     async def send_file(
-        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        self, chat_id: int | str, thread_id: int | str | None, path: str | Path,
         caption: str | None = None,
     ) -> Any:
         """发送本地文件为 IM 原生文件消息。"""
@@ -84,20 +108,24 @@ class Frontend(ABC):
 
     @abstractmethod
     async def send_chat_action(
-        self, chat_id: int, thread_id: int | None, action: str
+        self, chat_id: int | str, thread_id: int | str | None, action: str
     ) -> None:
         """发"正在输入/上传"等状态 (typing 心跳用)"""
 
     async def send_interaction_card(
-        self, chat_id: int, thread_id: int | None, html_text: str, binding_name: str
+        self,
+        chat_id: int | str,
+        thread_id: int | str | None,
+        html_text: str,
+        binding_name: str,
     ) -> Any:
         """发 TUI 交互卡。默认降级为普通 HTML, 支持按钮的前端可覆盖。"""
         return await self.send_html(chat_id, thread_id, html_text)
 
     async def send_status_html(
         self,
-        chat_id: int,
-        thread_id: int | None,
+        chat_id: int | str,
+        thread_id: int | str | None,
         html_text: str,
         *,
         display_state: str,

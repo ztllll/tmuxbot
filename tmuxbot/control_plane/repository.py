@@ -142,12 +142,14 @@ class ControlPlaneRepository:
         maximum_supported = versions[-1] if versions else 0
 
         with self._connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations "
-                "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+            schema_exists = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+            ).fetchone()
+            applied = (
+                {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
+                if schema_exists
+                else set()
             )
-            applied = {row[0] for row in db.execute("SELECT version FROM schema_migrations")}
             newer_versions = [version for version in applied if version > maximum_supported]
             if newer_versions:
                 raise RuntimeError(
@@ -155,15 +157,31 @@ class ControlPlaneRepository:
                     f"found version {max(newer_versions)}, maximum supported is "
                     f"{maximum_supported}"
                 )
-            for version, sql in MIGRATIONS:
-                if version in applied:
-                    continue
+            pending = [(version, sql) for version, sql in MIGRATIONS if version not in applied]
+            # Migration 6 rebuilds provider_profiles to widen its CHECK constraint.
+            # SQLite cannot toggle foreign_keys after BEGIN, so disable it before
+            # the migration transaction and verify the rebuilt graph before commit.
+            rebuilds_provider_profiles = any(version == 6 for version, _sql in pending)
+            if rebuilds_provider_profiles:
+                db.execute("PRAGMA foreign_keys = OFF")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
+            )
+            for version, sql in pending:
                 for statement in _migration_statements(sql):
                     db.execute(statement)
                 db.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (version, int(time.time())),
                 )
+            if rebuilds_provider_profiles:
+                violations = db.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise sqlite3.IntegrityError(
+                        f"foreign key violations after provider migration: {violations!r}"
+                    )
 
     def append_event(self, event: RunEvent) -> bool:
         with self._connection() as db:

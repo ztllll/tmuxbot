@@ -1,7 +1,7 @@
 """Telegram 前端: aiogram 装配 + 命令注册 + 发送/编辑/反应/typing。
 
-每个 frontend = 一个 bot token + 一个 backend + 一组 bindings 子集。
-多 bot 共存: __main__ 装配多个 TelegramFrontend 实例并发 polling。
+每个 frontend = 一个 bot token + adapter registry + 一组 route bindings。
+同一 bot credential 可按 topic route 选择 Claude Code、Codex 或 Pi。
 """
 from __future__ import annotations
 
@@ -396,18 +396,21 @@ class TelegramFrontend(Frontend):
         self,
         token: str,
         state: "State",
-        backend: "Backend",                 # ★ 单 backend (1 bot ↔ 1 backend)
-        bindings: list["Binding"],          # ★ 只接这些 binding (其他 bot 各管自己的)
+        backend: "Backend",                 # legacy/default adapter for /init compatibility
+        bindings: list["Binding"],          # bindings owned by this bot credential
         env_file: Path,
         bindings_file: Path,
         offsets_file: Path | None = None,   # /init 起 tailer 用
         project_base: str = os.path.expanduser("~/projects"),  # /init 新项目目录的父目录
         bot_token_env: str = "TG_BOT_TOKEN",  # 本 frontend 的 token env key (/init 持久化用)
         group_only_when_mentioned: bool = False,
+        backends: dict[str, "Backend"] | None = None,
     ) -> None:
         self.token = token
         self.state = state
         self.backend = backend
+        self.backends = dict(backends or {})
+        self.backends.setdefault(backend.name, backend)
         self.bindings = bindings
         self.env_file = env_file
         self.bindings_file = bindings_file
@@ -472,7 +475,7 @@ class TelegramFrontend(Frontend):
         from tmuxbot.commands import inject_slash_and_capture
         from tmuxbot.tmux import tmux_has_session, tmux_pane_command
 
-        backend = self.backend
+        backend = self.backend_for(b)
         alive = tmux_has_session(b.tmux_session)
         pane_cmd = tmux_pane_command(b.tmux_target) if alive else "-"
         screen_footer = screen_footer_from_capture(tmux_capture(b.tmux_target, 12)) or "-"
@@ -795,7 +798,7 @@ class TelegramFrontend(Frontend):
             cwd=b.cwd,
         )
         effective_envelope = replace(envelope, body=clean_body, attachments=())
-        footer_text = self.backend.format_status_footer(effective_envelope.footer)
+        footer_text = self.backend_for(b).format_status_footer(effective_envelope.footer)
         rendered = render_assistant_reply(
             b,
             effective_envelope,
@@ -892,7 +895,20 @@ class TelegramFrontend(Frontend):
                 InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
             ],
         ])
-        if self.backend.name == "claude_code" and "/model" in html_text:
+        binding = next(
+            (b for b in getattr(self, "bindings", ()) if b.name == binding_name),
+            None,
+        )
+        interaction_backend = (
+            self.backend_for(binding)
+            if binding is not None
+            else getattr(self, "backend", None)
+        )
+        if (
+            interaction_backend is not None
+            and interaction_backend.name == "claude_code"
+            and "/model" in html_text
+        ):
             rows.insert(
                 1,
                 [
@@ -931,7 +947,7 @@ class TelegramFrontend(Frontend):
 
     def _panel_current_model(self, b: "Binding") -> str | None:
         try:
-            return self.backend.current_model(b)
+            return self.backend_for(b).current_model(b)
         except Exception:
             log.debug("[%s] unable to read current model for control menu", b.name, exc_info=True)
             return None
@@ -950,7 +966,7 @@ class TelegramFrontend(Frontend):
 
         await dispatch_incoming_text(
             self,
-            self.backend,
+            self.backend_for(b),
             b,
             self.state,
             chat_id,
@@ -969,7 +985,12 @@ class TelegramFrontend(Frontend):
             return False
         if not self._message_allowed_by_mention(m):
             return False
-        return self.find_binding(*source_key(m)) is not None
+        binding = self.find_binding(*source_key(m))
+        if binding is None:
+            return False
+        if getattr(binding, "admin", False) and m.chat.type != "private":
+            return False
+        return True
 
     def _message_allowed_by_mention(self, m: Message) -> bool:
         incoming = self.normalize_incoming(m)
@@ -1120,7 +1141,7 @@ class TelegramFrontend(Frontend):
         # ─── /whoami ─────────
         @dp.message(Command("whoami"))
         async def cmd_whoami(m: Message):
-            if not m.from_user:
+            if not F_._acl_ok(m):
                 return
             await m.reply(
                 f"user_id=<code>{m.from_user.id}</code>\n"
@@ -1190,7 +1211,7 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
-            backend = F_.backend
+            backend = F_.backend_for(b)
             jl = backend.find_active_jsonl(b)
             if not jl:
                 await m.reply("📊 没找到 jsonl 文件")
@@ -1230,7 +1251,7 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
-            backend = F_.backend
+            backend = F_.backend_for(b)
             tmux_send_key(b.tmux_target, "C-c")
             await asyncio.sleep(0.5)
             tmux_send_key(b.tmux_target, "C-d")
@@ -1278,9 +1299,9 @@ class TelegramFrontend(Frontend):
                 incoming.text,
                 [item.path for item in incoming.attachments],
                 default_caption=default_caption,
-                backend_name=F_.backend.name,
+                backend_name=F_.backend_for(b).name,
             )
-            backend = F_.backend
+            backend = F_.backend_for(b)
             await ensure_binding_running(
                 backend, b, self.state, reason="telegram-file", wait=True
             )
@@ -1312,79 +1333,19 @@ class TelegramFrontend(Frontend):
                     m.forum_topic_edited.name
                 )
 
-        # ─── /init 自动开通 (未绑定 source + Boss) ─────────
-        # 注册在 F.text 之前: Boss 在**未绑定** chat 发 /init → 建会话。
-        # ACL 特殊性: 此场景 source 尚无 binding, 不能走 _acl_ok (它要求 source 已绑定),
-        # 只校验 from_user 是 Boss; 已绑定的 source 发 /init 直接忽略 (provision_chat 防重复)。
+        # ─── /init compatibility handler ─────────
+        # Topic routes are explicit configuration; an unbound endpoint stays silent.
         @dp.message(Command("init"))
         async def cmd_init(m: Message):
-            from tmuxbot.provision import AsciiDirRequired, provision_chat
-
             if S.setup_mode:
                 return
             if not m.from_user or m.from_user.id != S.boss_user_id:
                 return  # 非 Boss → 静默
             if not F_._message_allowed_by_mention(m):
                 return
-            tid = thread_id_of(m)
-            if F_.find_binding(m.chat.id, tid) is not None:
-                return  # 已绑定 → 交给普通文本流, 这里静默 (避免重复开通)
-            # 取名优先级: 话题名 (forum topic) > 群名 > full_name > tg-<id>。
-            # 话题里 m.chat.title 是群名, 话题名只在缓存里 (forum_topic_created 服务消息)。
-            _topic_missing = False
-            if m.message_thread_id is not None:
-                _topic = F_._topic_names.get((m.chat.id, m.message_thread_id))
-                if _topic:
-                    display_name = _topic
-                else:
-                    _topic_missing = True  # 没缓存到 → 退回群名, 确认消息里提示
-                    display_name = m.chat.title or f"tg-{m.chat.id}"
-            else:
-                display_name = (
-                    m.chat.title
-                    or getattr(m.chat, "full_name", None)
-                    or f"tg-{m.chat.id}"
-                )
-            # /init <目录名> → 用指定目录; /init → 用群名新建
-            _parts = (m.text or "").strip().split(maxsplit=1)
-            _arg = _parts[1].strip() if len(_parts) > 1 else None
-            try:
-                b = await provision_chat(
-                    F_, S,
-                    chat_id=m.chat.id,
-                    thread_id=tid,
-                    display_name=display_name,
-                    offsets_file=F_.offsets_file,
-                    bindings_file=F_.bindings_file,
-                    bot_token_env=F_.bot_token_env,
-                    project_base=F_.project_base,
-                    channel="telegram",
-                    target_dir=_arg,
-                )
-            except AsciiDirRequired:
-                await m.reply(
-                    "⚠️ <b>群/话题名含中文,项目目录需英文</b>\n"
-                    "请用 <code>/init &lt;英文目录名&gt;</code> 指定 (tmux 仍用名字)\n"
-                    "或 /projects 看现有目录"
-                )
-                return
-            if b is None:
-                await m.reply(
-                    "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml"
-                )
-                return
-            F_._cancel_unknown_chat_leave(m.chat.id)
-            _tip = ""
-            if _topic_missing and not _arg:
-                _tip = (
-                    "\n⚠️ 未取到话题名 (用了群名), "
-                    "可 <code>/init &lt;名&gt;</code> 指定"
-                )
-            await m.reply(
-                f"✅ <b>已开通会话</b>\n名称: {html.escape(b.name)}\n"
-                f"目录: <code>{html.escape(str(b.cwd))}</code>\n现在可以直接对话了"
-                f"{_tip}"
-            )
+            # Topic routes are explicit configuration. Legacy /init must not
+            # create an unbound endpoint or touch tmux.
+            return
 
         # ─── /deinit 手动拆除当前 source 的 binding (Boss; 已绑定群/话题) ───
         # 复用 provision.deprovision_chat: 注销 binding + 杀 tmux + 删 yaml 条目,
@@ -1402,7 +1363,6 @@ class TelegramFrontend(Frontend):
                 return
             b = F_.find_binding(*source_key(m))
             if b is None:
-                await m.reply("本群/话题未绑定,无需拆除")
                 return
             _name = b.name
             await deprovision_chat(F_, S, b, bindings_file=F_.bindings_file)
@@ -1420,6 +1380,8 @@ class TelegramFrontend(Frontend):
             if not m.from_user or m.from_user.id != S.boss_user_id:
                 return  # 非 Boss → 静默
             if not F_._message_allowed_by_mention(m):
+                return
+            if F_.find_binding(*source_key(m)) is None:
                 return
             await m.reply(F_._list_projects())
 
@@ -1439,7 +1401,7 @@ class TelegramFrontend(Frontend):
             # (TG group 内命令自动带 /compact@ztl_claude_bot 形式)
             # _bot_username 在 start_polling 时通过 get_me() 填入, 避免每条消息都 API 请求
             await dispatch_incoming_text(
-                F_, F_.backend, b, S,
+                F_, F_.backend_for(b), b, S,
                 incoming.source_id, incoming.thread_id, incoming.text,
                 bot_username=F_._bot_username,
             )
@@ -1552,16 +1514,18 @@ class TelegramFrontend(Frontend):
             if cq.from_user and cq.from_user.id != S.boss_user_id:
                 await cq.answer("⚠️ 无权限"); return
             # ★ 全局 ACL 双重门禁: source 没在本 frontend 的 binding 子集 → 静默
+            source_binding = None
             if cq.message:
                 cq_tid = getattr(cq.message, "message_thread_id", None)
-                if F_.find_binding(cq.message.chat.id, cq_tid) is None:
+                source_binding = F_.find_binding(cq.message.chat.id, cq_tid)
+                if source_binding is None:
                     await cq.answer(); return
             parts = (cq.data or "").split(":", 2)
             if len(parts) != 3:
                 await cq.answer("⚠️ 格式错误"); return
             _, b_name, action = parts
-            b = next((bb for bb in S.bindings if bb.name == b_name), None)
-            if not b:
+            b = next((bb for bb in F_.bindings if bb.name == b_name), None)
+            if not b or b is not source_binding:
                 await cq.answer("⚠️ binding 未找到"); return
 
             pre_block = extract_picker_block(tmux_capture(b.tmux_target, 80))
@@ -1614,9 +1578,11 @@ class TelegramFrontend(Frontend):
             if cq.from_user and cq.from_user.id != S.boss_user_id:
                 await cq.answer("⚠️ 无权限")
                 return
+            source_binding = None
             if cq.message:
                 cq_tid = getattr(cq.message, "message_thread_id", None)
-                if F_.find_binding(cq.message.chat.id, cq_tid) is None:
+                source_binding = F_.find_binding(cq.message.chat.id, cq_tid)
+                if source_binding is None:
                     await cq.answer()
                     return
             parts = (cq.data or "").split(":")
@@ -1634,7 +1600,7 @@ class TelegramFrontend(Frontend):
                 await cq.answer("⚠️ 格式错误")
                 return
             b = binding_by_token(F_.bindings, token)
-            if not b:
+            if not b or b is not source_binding:
                 await cq.answer("⚠️ binding 未找到")
                 return
             if cq.message is None:
@@ -1671,7 +1637,6 @@ class TelegramFrontend(Frontend):
                 getattr(ev, "new_chat_member", None), "status", None
             )
             removed = new_status in ("left", "kicked")
-            actor_user_id = getattr(getattr(ev, "from_user", None), "id", None)
             if removed:
                 F_._cancel_unknown_chat_leave(chat_id)
 
@@ -1695,25 +1660,15 @@ class TelegramFrontend(Frontend):
                         log.exception(f"deprovision {b.name} err")
                 return
 
-            # 未绑定且 bot 仍在群里: 给 Boss 60s 发送 /init; 到期仍未绑定才自动退群。
+            # 未绑定且 bot 仍在群里: 保持静默，短暂等待外部配置 route；
+            # 到期仍未绑定才自动退群。
             if grace_unknown:
                 F_._cancel_unknown_chat_leave(chat_id)
                 log.info(
-                    "stayed in unbound chat %s invited by user %s; waiting %.0fs for /init",
+                    "stayed silently in unbound chat %s for %.0fs route grace",
                     chat_id,
-                    actor_user_id,
                     UNKNOWN_CHAT_INIT_GRACE_SECONDS,
                 )
-                try:
-                    await ev.bot.send_message(
-                        chat_id,
-                        "已进入群组。请在 60 秒内发送 /init 开通 tmux 会话; "
-                        "如果群/话题名含中文, 用 /init <英文目录名>。"
-                        "超时未开通会自动退出。",
-                    )
-                except Exception as e:
-                    log.debug(f"send unknown chat init hint err: {e}")
-
                 async def _leave_if_still_unbound() -> None:
                     try:
                         await asyncio.sleep(UNKNOWN_CHAT_INIT_GRACE_SECONDS)
@@ -1749,8 +1704,13 @@ class TelegramFrontend(Frontend):
             log.warning(f"get_me err: {e}")
             self.state.channel_health.error(self.health_id, e)
         try:
+            commands = {
+                command: description
+                for backend in self.backends.values()
+                for command, description in backend.bot_commands
+            }
             await self.bot.set_my_commands(
-                [BotCommand(command=c, description=d) for c, d in self.backend.bot_commands]
+                [BotCommand(command=c, description=d) for c, d in commands.items()]
             )
         except Exception as e:
             log.warning(f"set_my_commands err: {e}")

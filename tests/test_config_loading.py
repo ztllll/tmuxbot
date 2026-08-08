@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tmuxbot.config import load_config
+from tmuxbot.config import load_config, save_binding_identity
 from tmuxbot.state import Binding, S
 from tmuxbot.validation import ConfigValidationError
 
@@ -79,6 +79,190 @@ def test_invalid_yaml_never_becomes_unconfigured(tmp_path: Path, contents: str):
             allow_missing_bindings=True,
             allow_empty_bindings=True,
         )
+
+
+def test_admin_dm_route_defaults_to_runtime_home_and_configurable_pi(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "BOSS_USER_ID=123",
+                "TMUXBOT_ADMIN_ENABLED=1",
+                "TMUXBOT_ADMIN_TMUX=tmuxbot-admin",
+                "TMUXBOT_ADMIN_CLI=pi",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("tmuxbot.config.Path.home", lambda: home)
+
+    load_config(env_file, bindings_file, tmp_path / "offsets.json")
+
+    admin = next(binding for binding in S.bindings if binding.admin)
+    assert admin.chat_id == 123
+    assert admin.thread_id is None
+    assert admin.tmux_target == "tmuxbot-admin:0.0"
+    assert admin.cwd == home
+    assert admin.backend == "pi"
+    assert admin.bot_token_env == "TG_BOT_TOKEN"
+
+
+def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+    admin = next(binding for binding in S.bindings if binding.admin)
+    admin.provider_session_id = "pi-session"
+    admin.last_session_id = "pi-session"
+    admin.transcript_path = tmp_path / "session.jsonl"
+
+    save_binding_identity(bindings_file, admin)
+    saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"]
+    assert bindings_file.stat().st_mode & 0o777 == 0o600
+    assert [entry["name"] for entry in saved].count("tmuxbot-admin") == 1
+    assert next(entry for entry in saved if entry.get("admin"))["provider_session_id"] == "pi-session"
+
+    load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+    reloaded = next(binding for binding in S.bindings if binding.admin)
+    assert reloaded.provider_session_id == "pi-session"
+    assert reloaded.transcript_path == tmp_path / "session.jsonl"
+
+
+def test_persisted_admin_identity_does_not_enable_admin_without_env(tmp_path):
+    persisted = _binding("tmuxbot-admin")
+    persisted.update(
+        {
+            "chat_id": 123,
+            "tmux_session": "tmuxbot-admin",
+            "cwd": "/home/admin",
+            "backend": "pi",
+            "admin": True,
+            "provider_session_id": "pi-session",
+        }
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding(), persisted]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+
+    assert all(not binding.admin for binding in S.bindings)
+    assert [binding.name for binding in S.bindings] == ["alpha"]
+
+
+def test_admin_dm_route_can_override_channel_credential_endpoint_and_cwd(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CHANNEL", "feishu")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CHAT_ID", "oc_admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CREDENTIAL", "FEISHU2")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "codex")
+    admin_cwd = tmp_path / "admin"
+    admin_cwd.mkdir()
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(admin_cwd))
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "BOSS_USER_ID=123",
+                "TMUXBOT_ADMIN_ENABLED=1",
+                "TMUXBOT_ADMIN_CHANNEL=feishu",
+                "TMUXBOT_ADMIN_CHAT_ID=oc_admin",
+                "TMUXBOT_ADMIN_CREDENTIAL=FEISHU2",
+                "TMUXBOT_ADMIN_CLI=codex",
+                f"TMUXBOT_ADMIN_CWD={admin_cwd}",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    load_config(env_file, bindings_file, tmp_path / "offsets.json")
+
+    admin = next(binding for binding in S.bindings if binding.admin)
+    assert (admin.channel, admin.chat_id, admin.bot_token_env) == (
+        "feishu",
+        "oc_admin",
+        "FEISHU2",
+    )
+    assert admin.cwd == admin_cwd
+    assert admin.backend == "codex"
+
+
+def test_admin_dm_route_rejects_missing_cwd(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(tmp_path / "missing"))
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="existing directory"):
+        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+
+
+def test_admin_dm_route_rejects_non_private_telegram_endpoint(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CHAT_ID", "-100123")
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="positive private user id"):
+        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+
+
+def test_admin_dm_route_requires_explicit_feishu_endpoint(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CHANNEL", "feishu")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text(
+        "BOSS_USER_ID=123\nTMUXBOT_ADMIN_ENABLED=1\n"
+        "TMUXBOT_ADMIN_CHANNEL=feishu\nTMUXBOT_ADMIN_CLI=pi\n",
+        encoding="utf-8",
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="TMUXBOT_ADMIN_CHAT_ID"):
+        load_config(env_file, bindings_file, tmp_path / "offsets.json")
 
 
 def test_failed_reload_does_not_partially_mutate_global_state(tmp_path: Path):

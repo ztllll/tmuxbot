@@ -22,14 +22,24 @@ def binding(tmp_path: Path) -> Binding:
     )
 
 
-def event(b: Binding, action: str, *, open_id: str = "ou_boss", chat_id: str | None = None):
+def event(
+    b: Binding,
+    action: str,
+    *,
+    open_id: str = "ou_boss",
+    chat_id: str | None = None,
+    message_id: str = "om-panel",
+):
     return SimpleNamespace(
         event=SimpleNamespace(
             operator=SimpleNamespace(open_id=open_id),
             action=SimpleNamespace(
                 value={"token": binding_token(b.name), "action": action}
             ),
-            context=SimpleNamespace(open_chat_id=chat_id or str(b.chat_id)),
+            context=SimpleNamespace(
+                open_chat_id=chat_id or str(b.chat_id),
+                open_message_id=message_id,
+            ),
         )
     )
 
@@ -40,6 +50,7 @@ def frontend(b: Binding):
     instance.boss_open_ids = {"ou_boss"}
     instance.backend = SimpleNamespace(format_status_footer=lambda status: None)
     instance._outbound_message_ids = set()
+    instance._outbound_routes = {}
     instance.bindings_file = None
     instance.group_only_when_mentioned = True
     scheduled = []
@@ -68,6 +79,18 @@ def test_feishu_card_action_rejects_unauthorized_or_wrong_chat(tmp_path):
 
     assert unauthorized.toast.type == "error"
     assert wrong_chat.toast.type == "error"
+    assert scheduled == []
+
+
+def test_feishu_card_action_rejects_same_chat_wrong_thread(tmp_path):
+    b = binding(tmp_path)
+    b.thread_id = "omt_alpha"
+    instance, scheduled = frontend(b)
+    instance._outbound_routes["om-other"] = ("oc_alpha", "omt_other")
+
+    response = instance._on_card_action(event(b, "refresh", message_id="om-other"))
+
+    assert response.toast.type == "error"
     assert scheduled == []
 
 

@@ -377,7 +377,7 @@ async def handle_tui_action(
     frontend: "Frontend",
     b: "Binding",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     action: str,
     *,
     lines: int = 90,
@@ -402,7 +402,7 @@ async def handle_semantic_action(
     frontend: "Frontend",
     b: "Binding",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     action: str,
     *,
     lines: int = 90,
@@ -430,10 +430,11 @@ async def handle_semantic_action(
 
 async def handle_interactive_command(
     frontend: "Frontend",
+    backend: "Backend",
     b: "Binding",
     state: "State",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     spec: CommandSpec,
     injected_text: str,
 ) -> None:
@@ -441,7 +442,7 @@ async def handle_interactive_command(
     await tmux_send_text(
         b.tmux_target,
         injected_text,
-        expected_commands=frontend.backend.running_command_names,
+        expected_commands=backend.running_command_names,
     )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
     await asyncio.sleep(1.0)
@@ -456,10 +457,11 @@ async def handle_interactive_command(
 
 async def handle_passthrough_command(
     frontend: "Frontend",
+    backend: "Backend",
     b: "Binding",
     state: "State",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     spec: CommandSpec,
     injected_text: str,
 ) -> None:
@@ -468,7 +470,7 @@ async def handle_passthrough_command(
     await tmux_send_text(
         b.tmux_target,
         injected_text,
-        expected_commands=frontend.backend.running_command_names,
+        expected_commands=backend.running_command_names,
     )
     await frontend.send_html(
         chat_id,
@@ -486,7 +488,7 @@ async def probe_passthrough_result(
     frontend: "Frontend",
     b: "Binding",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     command: str,
     before_hash: str,
     *,

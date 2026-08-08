@@ -54,7 +54,7 @@ class FeishuChannelAdapter(ChannelAdapter):
             source_id=getattr(message, "chat_id", ""),
             sender_id=sender_id or "",
             text=text,
-            thread_id=None,
+            thread_id=(getattr(message, "thread_id", None) or None),
             platform_message_id=getattr(message, "message_id", None),
             direct_chat=chat_type == "p2p",
             mentioned=feishu_mentions_bot(message, self.bot_open_id),

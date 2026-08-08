@@ -1,8 +1,9 @@
-"""tmuxbot — Telegram ↔ tmux 内 AI cli (claude_code / codex) TUI 桥接。
+"""tmuxbot — Telegram/Feishu ↔ tmux interactive AI CLI bridge.
 
-可插拔架构:
-- backends/  AI cli 后端 (claude_code, codex)
-- frontends/ IM 前端 (telegram, feishu)
-- 主框架: state / utils / tmux / picker / jsonl / heartbeat / commands
+Pluggable architecture:
+- backends/: interactive TUI adapters (Claude Code, Codex, Pi)
+- frontends/: IM transports (Telegram, Feishu)
+- exact topic routes select one tmux pane and one adapter
 """
+
 __version__ = "0.3.0"

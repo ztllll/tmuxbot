@@ -28,9 +28,19 @@ _TUI_BUSY_RE = re.compile(
     _TUI_BUSY_VERBS + r"[…\.]*\s*[^\n]{0,30}?\(\s*\d+(?:m\s+\d+)?s",  # 必须 ( 开头时间
     re.I,
 )
+_PI_BUSY_RE = re.compile(
+    r"^\s*\S*\s*(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
+    re.I | re.M,
+)
 _COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")
 _CODEX_STATUS_RE = re.compile(
     r"^\s*gpt-[\w.-]+(?:\s+[\w-]+)?\s*[·•]\s*(?:~?/|/)\S+",
+    re.I,
+)
+_PI_FOOTER_RE = re.compile(
+    r"(?:\?|\d+(?:\.\d+)?)%?\s*/\s*\d+(?:\.\d+)?[kKmM]?"
+    r"(?:\s*\(auto\))?.*\s[•·]\s*"
+    r"(?:off|minimal|low|medium|high|xhigh|max|thinking off)\s*$",
     re.I,
 )
 
@@ -128,12 +138,13 @@ def tmux_capture(target: str, lines: int = 50) -> str:
 
 
 def _is_tui_busy(pane: str) -> bool:
-    """判断 claude/codex TUI 当前是否 busy (屏幕底部有"动词 + 时间"状态行)"""
-    return bool(_TUI_BUSY_RE.search(pane))
+    """判断 Claude/Codex/Pi TUI 当前是否 busy。"""
+    clean = strip_decorations(pane)
+    return bool(_TUI_BUSY_RE.search(clean) or _PI_BUSY_RE.search(clean))
 
 
 def _active_input_text(pane: str) -> str | None:
-    """Read only the active Claude/Codex composer, excluding prompt history."""
+    """Read only the active Claude/Codex/Pi composer, excluding prompt history."""
     lines = strip_decorations(pane).splitlines()
 
     separators = [
@@ -146,6 +157,15 @@ def _active_input_text(pane: str) -> str | None:
         claude_input = _composer_body(composer, "❯")
         if claude_input is not None:
             return claude_input
+        # Pi's editor has the same two horizontal borders but no prompt marker.
+        # Only accept this shape when a Pi footer follows the lower border, so
+        # historical markdown separators are not mistaken for an active draft.
+        footer = next(
+            (line for line in lines[separators[-1] + 1 :] if _PI_FOOTER_RE.search(line)),
+            None,
+        )
+        if footer is not None:
+            return "\n".join(line.strip() for line in composer if line.strip())
 
     status_index = next(
         (

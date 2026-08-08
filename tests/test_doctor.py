@@ -33,11 +33,71 @@ def test_missing_optional_providers_are_warnings(tmp_path: Path) -> None:
     providers = [
         item
         for item in report.checks
-        if item.name in {"provider:claude", "provider:codex"}
+        if item.name in {"provider:claude", "provider:codex", "provider:pi"}
     ]
     assert providers
     assert all(item.status == "warning" for item in providers)
     assert isinstance(report, DoctorReport)
+
+
+def test_doctor_warns_when_tmux_extended_keys_are_disabled(tmp_path, monkeypatch):
+    paths = RuntimePaths.discover({}, home=tmp_path)
+    monkeypatch.setattr(
+        "tmuxbot.doctor.subprocess.run",
+        lambda argv, **kwargs: type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": (
+                    "tmux 3.4\n"
+                    if argv[0].endswith("tmux") and len(argv) == 2
+                    else ("off\n" if argv[-1] == "extended-keys" else "xterm\n")
+                ),
+                "stderr": "",
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "tmuxbot.doctor.shutil.which",
+        lambda name, path=None: f"/usr/bin/{name}",
+    )
+
+    report = run_doctor(paths, {"PATH": "/usr/bin"})
+
+    check = next(item for item in report.checks if item.name == "tmux:extended_keys")
+    assert check.status == "warning"
+    assert "Pi" in check.summary
+    assert check.details == {"value": "off", "format": "xterm"}
+
+
+def test_doctor_accepts_pi_extended_key_pair(tmp_path, monkeypatch):
+    paths = RuntimePaths.discover({}, home=tmp_path)
+
+    def run(argv, **kwargs):
+        if len(argv) == 2:
+            stdout = "tmux 3.4\n"
+        elif argv[-1] == "extended-keys":
+            stdout = "on\n"
+        else:
+            stdout = "csi-u\n"
+        return type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": stdout, "stderr": ""},
+        )()
+
+    monkeypatch.setattr("tmuxbot.doctor.subprocess.run", run)
+    monkeypatch.setattr(
+        "tmuxbot.doctor.shutil.which",
+        lambda name, path=None: f"/usr/bin/{name}",
+    )
+
+    report = run_doctor(paths, {"PATH": "/usr/bin"})
+
+    check = next(item for item in report.checks if item.name == "tmux:extended_keys")
+    assert check.status == "ok"
+    assert check.details == {"value": "on", "format": "csi-u"}
 
 
 def test_private_paths_are_created(tmp_path: Path) -> None:

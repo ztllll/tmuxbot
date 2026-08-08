@@ -51,3 +51,89 @@ def test_channel_configuration_writes_private_legacy_snapshot(tmp_path: Path) ->
     assert "secret-token" not in listed.text
     assert os.path.isabs(paths.bindings_file)
 
+
+def test_pi_channel_configuration_uses_pi_backend_snapshot(tmp_path: Path) -> None:
+    paths = RuntimePaths.discover({}, home=tmp_path)
+    paths.ensure_private_directories()
+    repository = ControlPlaneRepository(paths.database_file)
+    repository.migrate()
+    now = int(time.time())
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    project_info = project_dir.stat()
+    binary = tmp_path / "pi"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    binary_info = binary.stat()
+    provider = ProviderProfile(
+        "provider-pi",
+        "pi",
+        str(binary),
+        "pi 0.84.1",
+        binary_info.st_dev,
+        binary_info.st_ino,
+        binary_info.st_mtime_ns,
+        now,
+    )
+    project = ProjectRecord(
+        "project-pi",
+        "Pi demo",
+        str(project_dir),
+        project_info.st_dev,
+        project_info.st_ino,
+        project_info.st_mtime_ns,
+        now,
+    )
+    repository.upsert_provider_profile(provider)
+    repository.create_project(project)
+    repository.create_managed_session(
+        ManagedSession(
+            "session-pi",
+            project.id,
+            provider.id,
+            "Pi",
+            "pi-demo",
+            0,
+            0,
+            "running",
+            now,
+        )
+    )
+    settings = WebSettings(
+        "127.0.0.1",
+        8765,
+        paths.database_file,
+        False,
+        setup_token="0123456789abcdef0123456789abcdef",
+    )
+    client = TestClient(
+        create_app(settings, repository, TmuxInventory(), [], runtime_paths=paths),
+        client=("127.0.0.1", 50000),
+    )
+    bootstrap = client.get("/api/auth/status").json()["csrf_token"]
+    setup = client.post(
+        "/api/auth/setup",
+        json={"password": "correct horse battery staple"},
+        headers={"X-CSRF-Token": bootstrap, "X-Setup-Token": settings.setup_token},
+    )
+    csrf = setup.json()["csrf_token"]
+
+    response = client.post(
+        "/api/channels/configure",
+        json={
+            "channel": "telegram",
+            "managed_session_id": "session-pi",
+            "remote_chat_id": "123",
+            "credential_id": "123456:pi-secret",
+            "boss_id": "456",
+            "mention_required": False,
+        },
+        headers={"X-CSRF-Token": csrf},
+    )
+
+    assert response.status_code == 201
+    assert "TG_PI_BOT_TOKEN=123456:pi-secret" in paths.env_file.read_text()
+    binding = paths.bindings_file.read_text()
+    assert "backend: pi" in binding
+    assert "bot_token_env: TG_PI_BOT_TOKEN" in binding
+

@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./VERSIONING.md)
 
-> Telegram + 飞书 ↔ tmux 内 AI CLI(Claude Code / Codex)双向桥 —— 远程在 IM 发消息推动本地 tmux pane 里的 cli,cli 输出实时回推同端点。
+> Telegram + 飞书 ↔ tmux 内 AI CLI(Claude Code / Codex / Pi)双向桥 —— 远程在 IM 话题发消息推动精确 tmux pane 里的 CLI,输出实时回推同一话题。
 >
 > **不调 API、不走 headless `claude -p` / SDK 路径、用 tmux pane TUI 注入** —— 保留本地交互式 CLI 作为唯一执行面。
 
@@ -40,14 +40,14 @@ Anthropic 文档说明:从 **2026-06-15** 起,Claude 订阅用户的 **Agent SDK
 一个 Python(3.10+)的 IM ↔ AI CLI 双向桥,可插拔架构:
 
 - **前端(IM)**:Telegram、飞书(lark-oapi WebSocket 长连接)
-- **后端(AI CLI)**:Claude Code,OpenAI Codex CLI
-- **架构原则**:1 bot ↔ 1 backend ↔ N 个 tmux 子线程(同类 CLI 多项目并行)
+- **后端(AI CLI)**:Claude Code、OpenAI Codex CLI、Pi
+- **架构原则**:一个 IM credential 管多个精确 topic route;每个 route 绑定一个 tmux pane 并选择自己的 adapter
 
 ### 真正实用的场景
 
 - 不在电脑前时,用手机 TG 或飞书推动本地 AI 跑代码 / 改项目 / 看日志
 - 多项目并行:每个项目一个 tmux session 一个 cwd,各自加载项目自己的 `CLAUDE.md`
-- 多 cli 共存:claude 用一个 bot,codex 用另一个 bot,各管各的
+- 多 CLI 共存:同一个项目群的不同话题可分别接 Claude、Codex、Pi，SSH attach 的仍是同一批真实 pane
 
 ---
 
@@ -58,7 +58,7 @@ uv tool install 'tmuxbot[full]'
 tmuxbot serve --open
 ```
 
-首次运行会自动打开中文 WebUI，并生成 10 分钟有效、设置成功后立即失效的一次性本机授权。没有 `.env`、通道或 binding 时 WebUI 也会保持可用；bridge 显示“尚未配置”。运行 `tmuxbot doctor` 可检查 tmux、Claude Code、Codex 和运行目录。
+首次运行会自动打开中文 WebUI，并生成 10 分钟有效、设置成功后立即失效的一次性本机授权。没有 `.env`、通道或 binding 时 WebUI 也会保持可用；bridge 显示“尚未配置”。运行 `tmuxbot doctor` 可检查 tmux、Claude Code、Codex、Pi 和运行目录。
 
 源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
 
@@ -71,7 +71,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 ```
 
-`CLAUDE_BIN` 会在拉起 Claude 时读取,避免 systemd/tmux 的非交互 shell `PATH` 找不到 `claude`,也避免命中坏掉的 npm 全局安装。`CODEX_BIN` 同理可指向 codex 绝对路径。
+`CLAUDE_BIN` 会在拉起 Claude 时读取,避免 systemd/tmux 的非交互 shell `PATH` 找不到 `claude`,也避免命中坏掉的 npm 全局安装。`CODEX_BIN` 与 `PI_BIN` 同理可指向绝对路径。
 
 Codex 的模型不由 tmuxbot 写死。每次新建或恢复 Codex TUI 时，tmuxbot 都读取
 `~/.codex/config.toml` 顶层 `model`，存在时传递 `-m <model>`；因此只要修改 Codex
@@ -103,7 +103,7 @@ bot crash 后 5 秒内自动拉起,无需手动守护。`tmuxbot install-service
 
 tmux 会话默认按消息懒启动：手动执行 `tmux kill-session -t <name>`，或在
 Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一条消息到达时会自动重建
-tmux，并恢复已绑定的 Claude/Codex provider 会话。需要旧版常驻自愈行为时，可显式设置
+tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要旧版常驻自愈行为时，可显式设置
 `TMUXBOT_LIFECYCLE_ENABLED=1`。Telegram、飞书和 Web 控制面板都提供带确认的
 “关闭 tmux”操作，管理记录和历史不会被删除。
 
@@ -133,14 +133,14 @@ journalctl --user -u tmuxbot -f
 
 ## 当前能力
 
-- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型候选仍由当前 CLI 的原生 `/model` picker 提供。
+- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex、Pi，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型候选仍由当前 CLI 的原生 `/model` picker 提供。
 - **原生 Web TUI**:xterm.js 直接 attach 已登记 tmux target，默认只观察；显式接管后才允许键盘输入，断开浏览器不会终止 tmux 会话
 - **Web 通道向导**:可为受管会话配置 Telegram 或飞书，密钥只写入本机 `0600` 配置，不通过 API 回显
 - **TeamRun 多 LLM**:确定性 Coordinator / Implementer / Reviewer 三角色协作，唯一写租约、DAG、mailbox、Artifact、重试、独立验收和恢复；Implementer 交付证据后 Reviewer 自动收到只读审查包
 - **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
 - **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时读取 `~/.codex/config.toml` 的 `model`；可在当前会话中用原生 `/model` 临时切换，下一次 bot 重启则应用最新配置。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**:`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
-- **双 bot 共存**:`@your_claude_bot` 接 claude_code,`@your_codex_bot` 接 codex
+- **按 route 选择 adapter**:同一 Telegram Bot/飞书 App credential 可按精确 topic/thread route 混合承载 Claude Code、Codex 和 Pi；不同 credential 仍可并行部署
 - **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`
 - **TUI 透传**:`/context` `/cost` `/usage` `/compact` `/clear` 等,抓屏结构化反馈
 - **工具调用聚合**:一个 turn 内的 tool_use 流式刷同一条 IM 消息,真说话单独 push 触发通知
@@ -154,7 +154,7 @@ journalctl --user -u tmuxbot -f
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)
-- **健壮性**:tmux paste 等 TUI idle 后提交，并读取 Claude/Codex 活动输入框确认；草稿仍在时有限重试 Enter，CLI 已工作或输入框已清空则停止，避免漏交与重复提交；jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
+- **健壮性**:tmux paste 等 TUI idle 后提交，并读取 Claude/Codex/Pi 活动输入框确认；草稿仍在时有限重试 Enter，CLI 已工作或输入框已清空则停止，避免漏交与重复提交；jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
 
 ---
 
@@ -235,7 +235,7 @@ make release-check
 
 - **M1** ✅ 单文件骨架 + 双 binding + 命令组 + heartbeat
 - **M2** ✅ 代码审查 + 可插拔重构(`backends/` + `frontends/` + `dispatch.py`)
-- **M3** ✅ 接入 Codex CLI + 双 bot 共存(1 bot ↔ 1 backend ↔ N tmux 子线程)+ systemd 部署
+- **M3** ✅ 接入 Codex CLI + 多 bot 共存 + systemd 部署
 - **M4** ✅ 接入飞书前端(lark-oapi WebSocket + interactive card)+ 多实例支持
 - **0.3.0** ✅ Runtime V2、中文 WebUI、XDG/doctor/systemd 安装面、终端接管与 TeamRun 基线
 

@@ -42,6 +42,7 @@ def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         backend=str(item.get("backend", "claude_code")),
         bot_token_env=str(item.get("bot_token_env", "TG_BOT_TOKEN")),
         channel=str(item.get("channel", "telegram")),
+        admin=bool(item.get("admin", False)),
     )
 
 

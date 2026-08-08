@@ -8,8 +8,8 @@ in Git and `CHANGELOG.md`.
 
 tmuxbot is a local control plane for interactive AI CLIs. Telegram, Feishu, and
 the WebUI transport or present commands; tmux panes remain the execution surface.
-Claude Code and Codex session logs, provider events, and terminal state remain the
-local sources of truth.
+Claude Code, Codex, and Pi session logs, provider events, and terminal state
+remain the local sources of truth.
 
 The project deliberately does not replace the interactive CLI with a vendor API,
 SDK, or headless `claude -p` process.
@@ -41,10 +41,10 @@ The 0.3.0 line is feature-frozen with these shipped capabilities:
 ## Architectural Invariants
 
 - tmux is the only provider execution plane.
-- One IM bot/application identity maps to one backend type.
-- `(channel, bot_token_env, chat_id, thread_id)` and `tmux_session` are unique.
+- One IM bot/application identity may serve multiple exact topic routes and adapters.
+- `(channel, bot_token_env, chat_id, thread_id)` and full tmux targets are unique.
 - A frontend routes only to bindings assigned to that frontend.
-- Unknown sources are silent unless they are in an explicit provisioning flow.
+- Unknown sources are silent; route provisioning occurs through explicit configuration, route CLI, Admin DM, or the authenticated Web control plane rather than an unbound IM message.
 - Normal text injection never sends Escape first.
 - Provider parsing and launch policy belong behind backend/provider seams, not in
   transport-specific handlers.
@@ -71,6 +71,9 @@ future work:
    credentials.
 
 ## Next Development Gate
+
+The accepted topic-routing/Admin-DM design is documented in
+[`docs/topic-routing.md`](docs/topic-routing.md) and ADR-0001.
 
 Before adding another major frontend, backend, or TeamRun workflow:
 

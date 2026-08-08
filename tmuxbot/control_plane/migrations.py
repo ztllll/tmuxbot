@@ -204,4 +204,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         CREATE INDEX task_worktrees_run_idx ON task_worktrees(run_id, state, created_at);
         """,
     ),
+    (
+        6,
+        """
+        CREATE TABLE provider_profiles_v2 (
+            id TEXT PRIMARY KEY,
+            binary_name TEXT NOT NULL CHECK(binary_name IN ('tmux', 'claude', 'codex', 'pi')),
+            executable_path TEXT NOT NULL,
+            version TEXT,
+            device INTEGER NOT NULL,
+            inode INTEGER NOT NULL,
+            mtime_ns INTEGER NOT NULL,
+            discovered_at INTEGER NOT NULL,
+            UNIQUE(binary_name, executable_path)
+        );
+        INSERT INTO provider_profiles_v2
+            (id, binary_name, executable_path, version, device, inode, mtime_ns, discovered_at)
+        SELECT id, binary_name, executable_path, version, device, inode, mtime_ns, discovered_at
+        FROM provider_profiles;
+        DROP TABLE provider_profiles;
+        ALTER TABLE provider_profiles_v2 RENAME TO provider_profiles;
+        """,
+    ),
 )

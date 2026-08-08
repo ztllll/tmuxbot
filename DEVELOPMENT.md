@@ -1,14 +1,14 @@
 # tmuxbot — 开发文档
 
-> Telegram + 飞书 ↔ tmux AI CLI (Claude Code / Codex) 双向桥。可插拔多前端/多后端架构。
+> Telegram + 飞书 ↔ tmux AI CLI (Claude Code / Codex / Pi) 双向桥。精确话题路由 + 可插拔 adapter 架构。
 > 决策依据见 `RESEARCH.md`, 代码审查见 `CODE_REVIEW.md`, 变更历史见 `CHANGELOG.md`, 版本策略见 `VERSIONING.md`, 发布流程见 `RELEASE.md`, 项目宪法见 `CLAUDE.md`。
 
 ---
 
 ## 1. 目标
 
-让 Boss 在 Telegram 任意端点 (DM / 群 / forum topic) 发消息 → 注入对应 tmux pane 内的 claude → claude 输出实时回推同端点。
-N 个 TG 端点 ↔ N 个 tmux session ↔ N 个 cwd, 互不串扰。**bot 只搬键盘 + 屏幕**, 不调 Claude API, 不消费 token。
+让 Boss 在 Telegram/飞书精确端点 (DM / 群话题 / thread) 发消息 → 注入对应 tmux pane 内的真实 CLI → 输出实时回推同端点。
+每个 route 绑定一个 pane、cwd 和 adapter；同一 credential 可承载不同 CLI。**bot 只搬键盘 + 屏幕**,不调 vendor API/SDK/headless。
 
 ---
 
@@ -51,7 +51,8 @@ tmuxbot/                       ← 仓库根
 │   │   ├── base.py            ← Backend ABC + CmdOpts
 │   │   ├── claude_code.py     ← ClaudeCodeBackend: parse_event / parse_* / find_active_jsonl
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
-│   │   └── codex.py           ← CodexBackend
+│   │   ├── codex.py           ← CodexBackend
+│   │   └── pi.py              ← PiBackend
 │   └── frontends/
 │       ├── base.py            ← Frontend ABC 与回复发送契约
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + handlers
@@ -122,18 +123,9 @@ tmuxbot/                       ← 仓库根
     └───────────────────────────────────────────────────┘
 ```
 
-**架构原则 (Boss 铁律)**:1 bot ↔ 1 backend ↔ N 个 tmux 子线程。不同 CLI 类型用不同 bot token,避免协议串扰。
+**架构原则**:frontend 先按 `(channel, credential, chat_id, thread_id)` 命中 route，再以 `frontend.backend_for(binding)` 选择 Claude/Codex/Pi adapter。credential 只划分 Bot/App 身份，不决定 CLI 类型。群根与未绑定 topic/thread 完全静默；新增 topic route 通过 YAML、`tmuxbot route bind` 或 Admin DM 显式创建，不由群内 `/init` 隐式开通。
 
-### `TOKEN_TO_BACKEND` 映射 (`__main__.py`)
-
-```python
-TOKEN_TO_BACKEND = {
-    "TG_BOT_TOKEN":       "claude_code",
-    "TG_CODEX_BOT_TOKEN": "codex",
-}
-```
-
-启动时校验每组 binding 的 `backend` 字段与 token 推断一致,不一致强制对齐 + WARNING。
+完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。确定性配置操作使用 `tmuxbot route list|inspect|validate|bind|unbind`；直接编辑 YAML 仍被允许。
 
 ---
 
@@ -168,7 +160,7 @@ lark-oapi>=1.4    # pip install lark-oapi  或  pip install -e ".[feishu]"
 ### ACL
 
 - `open_id` 在 `FEISHU_BOSS_OPEN_IDS` 白名单(逗号分隔)
-- `chat_id` 在本前端的 bindings 子集中
+- 精确 `(chat_id, thread_id)` 在本前端的 bindings 子集中
 - 未配置的 source 会在日志中打印 `chat_id` 提示(便于接入新群),然后**完全静默**
 
 ### 同机多飞书 app(重要踩坑)
@@ -221,7 +213,7 @@ bindings:
     chat_id: 123456789             # TG: int (DM = user_id; group = 负数)
     thread_id: null                # DM 无; forum topic 填 topic_id
     bot_token_env: TG_BOT_TOKEN    # 用哪个 bot token (env 变量名)
-    backend: claude_code           # claude_code / codex
+    backend: claude_code           # claude_code / codex / pi
     tmux_session: "claude-alpha"
     tmux_window: 0
     tmux_pane: 0
@@ -243,7 +235,7 @@ bindings:
   - name: proj-gamma-feishu
     channel: feishu
     chat_id: "oc_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # 飞书 chat_id
-    thread_id: null                # 飞书不分 topic, 恒为 null
+    thread_id: "omt_xxx"           # 飞书 thread 字符串; 群根/私聊填 null
     bot_token_env: FEISHU          # 读 FEISHU_APP_ID / FEISHU_APP_SECRET
     backend: claude_code
     tmux_session: "claude-gamma"
@@ -276,7 +268,7 @@ FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     # 可选: bot 自己 
 # FEISHU_GROUP_MENTION_ONLY=false
 ```
 
-**校验红线**: `(chat_id, thread_id)` 全局唯一; `cwd` 全局唯一 (同 cwd 起两个 claude 会撞 jsonl); `tmux_session` 全局唯一。
+**校验红线**: 完整 endpoint `(channel, bot_token_env, chat_id, thread_id)` 唯一; 完整 tmux target `(tmux_session, tmux_window, tmux_pane)` 唯一。同一 tmux session 可绑定不同 pane；同一 cwd 仅在相同 backend 内禁止重复，避免 transcript 串线。
 
 Codex 的 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 路径不编码 cwd,backend 必须读取首行 `session_meta.payload.cwd` 和 binding `cwd` 比对。找不到 cwd 匹配的 rollout 时返回 `None`,不能兜底到全局最新文件,否则多 binding 会跨 chat tail 同一个 Codex 会话。
 
@@ -361,7 +353,7 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 - `TMUXBOT_RUNTIME_V2=on`:只发送 V2 reducer 结果。
 - `TMUXBOT_CLAUDE_HOOKS=true`:启动时幂等合并 tmuxbot 自有 hooks 到 `~/.claude/settings.json`,保留其他 hook 与设置。hook 命令只把官方事件写入 `data/claude-hooks.jsonl`,由 Claude adapter 消费。
 
-无论模式为何,执行面始终是 tmux pane 内的交互式 Claude/Codex CLI;hooks 与 JSONL 都只是观测源。
+无论模式为何,执行面始终是 tmux pane 内的交互式 Claude/Codex/Pi CLI;hooks 与 JSONL 都只是观测源。
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -447,7 +439,7 @@ Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指�
 参见 `CLAUDE.md` 第 2 节。摘要:
 
 - `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
-- `paste-buffer -p` 前先等 TUI idle；发送 Enter 后读取 Claude/Codex 活动输入框确认。仅当原草稿仍在且 CLI 未进入 busy 时有限重试，输入框清空、内容变化或 CLI 开始工作后立即停止，避免漏交与重复提交。
+- `paste-buffer -p` 前先等 TUI idle；发送 Enter 后读取 Claude/Codex/Pi 活动输入框确认。仅当原草稿仍在且 CLI 未进入 busy 时有限重试，输入框清空、内容变化或 CLI 开始工作后立即停止，避免漏交与重复提交。
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
 - TG 4096 限 UTF-16 单位
 - `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)

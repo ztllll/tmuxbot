@@ -51,7 +51,7 @@ async def dispatch_incoming_text(
     b: "Binding",
     state: "State",
     chat_id: int | str,
-    thread_id: int | None,
+    thread_id: int | str | None,
     text: str,
     *,
     bot_username: str | None = None,   # TG 专属: @bot_username 后缀剥离
@@ -64,7 +64,7 @@ async def dispatch_incoming_text(
         b:            目标 binding
         state:        全局 State (pending_rename / fire 等)
         chat_id:      目标 chat (TG int / 飞书 str)
-        thread_id:    TG topic thread_id, 飞书传 None
+        thread_id:    Telegram topic int / Feishu thread str / root None
         text:         原始消息文本 (TG 传 m.text, 飞书传解析后 text)
         bot_username: TG 在 group 内命令自动加 @bot_username 后缀 — 传入供剥离;
                       飞书不传 (None)
@@ -130,13 +130,13 @@ async def dispatch_incoming_text(
 
         if spec.kind == CommandKind.INTERACTIVE:
             await handle_interactive_command(
-                frontend, b, state, chat_id, thread_id, spec, raw_text
+                frontend, backend, b, state, chat_id, thread_id, spec, raw_text
             )
             return
 
         if spec.kind == CommandKind.PASSTHROUGH:
             await handle_passthrough_command(
-                frontend, b, state, chat_id, thread_id, spec, raw_text
+                frontend, backend, b, state, chat_id, thread_id, spec, raw_text
             )
             return
 

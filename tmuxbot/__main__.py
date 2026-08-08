@@ -16,6 +16,7 @@ from pathlib import Path
 
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.backends.pi import PiBackend
 from tmuxbot.channel_health import channel_health_audit_loop
 from tmuxbot import __version__
 from tmuxbot.config import load_config
@@ -28,7 +29,6 @@ from tmuxbot.paths import RuntimePaths
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
 from tmuxbot.utils import save_offsets
-from tmuxbot.validation import TELEGRAM_TOKEN_BACKENDS
 
 # 飞书前端按需 import (没装 lark-oapi 时不 crash, 只在实际使用时报错)
 try:
@@ -37,10 +37,6 @@ try:
 except ImportError:
     _FEISHU_AVAILABLE = False
     FeishuFrontend = None  # type: ignore[assignment,misc]
-
-# ★ Boss 架构原则: 一个 bot ↔ 一个 backend (CLI 类型) ↔ N 个 tmux 子线程
-# 不同 backend 必须用不同 bot token, 避免协议串扰
-TOKEN_TO_BACKEND = dict(TELEGRAM_TOKEN_BACKENDS)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -94,6 +90,7 @@ async def main(paths: RuntimePaths | None = None) -> None:
     backends_pool = {
         "claude_code": ClaudeCodeBackend(),
         "codex": CodexBackend(),
+        "pi": PiBackend(),
     }
 
     # ── 按 channel 分拣: telegram bindings vs feishu bindings ──
@@ -105,32 +102,14 @@ async def main(paths: RuntimePaths | None = None) -> None:
     for b in tg_bindings:
         bindings_by_token[b.bot_token_env].append(b)
 
-    # 验证: 每组 binding 的 backend 必须跟 TOKEN_TO_BACKEND 映射一致
-    # (Boss 原则: 1 bot ↔ 1 backend, 不能混)
-    for token_env, bs in bindings_by_token.items():
-        expected = TOKEN_TO_BACKEND.get(token_env)
-        if expected is None:
-            log.error(f"unknown {token_env}, skipping {len(bs)} bindings (add to TOKEN_TO_BACKEND)")
-            continue
-        for b in bs:
-            if b.backend != expected:
-                log.warning(
-                    f"[{b.name}] backend={b.backend!r} != frontend backend {expected!r}; "
-                    f"强制对齐到 {expected!r}"
-                )
-                b.backend = expected
-
-    # 为每个 token 创建一个 TelegramFrontend
+    # 为每个 credential 创建一个 TelegramFrontend；adapter 按 route 解析。
     frontends: list = []
     for token_env, bs in bindings_by_token.items():
         token = os.getenv(token_env)
         if not token or ":" not in token:
             log.warning(f"{token_env} missing/invalid; skipping {len(bs)} bindings")
             continue
-        backend_name = TOKEN_TO_BACKEND.get(token_env)
-        if backend_name is None:
-            continue
-        backend = backends_pool[backend_name]
+        backend = backends_pool[bs[0].backend]  # legacy/default adapter for /init
         fe = TelegramFrontend(
             token=token, state=S, backend=backend, bindings=bs,
             env_file=paths.env_file, bindings_file=paths.bindings_file,
@@ -138,6 +117,7 @@ async def main(paths: RuntimePaths | None = None) -> None:
             project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
             bot_token_env=token_env,
             group_only_when_mentioned=_telegram_group_mention_only(token_env),
+            backends=backends_pool,
         )
         frontends.append(fe)
 
@@ -179,7 +159,7 @@ async def main(paths: RuntimePaths | None = None) -> None:
                     log.warning(
                         f"{env_key}_BOSS_OPEN_IDS 未配置, 飞书 ACL 会拒绝所有消息"
                     )
-                backend_name = bs[0].backend  # 同一 env_key 下 backend 应一致
+                backend_name = bs[0].backend  # legacy/default adapter for /init
                 backend = backends_pool.get(backend_name)
                 if backend is None:
                     log.error(f"飞书 binding backend={backend_name!r} 不在 backends_pool; 跳过")
@@ -201,11 +181,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
                     bindings_file=paths.bindings_file,
                     bot_token_env=env_key,
                     project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
+                    backends=backends_pool,
                 )
                 frontends.append(fe)
                 log.info(
-                    f"feishu frontend: app_id={app_id[:8]}… · backend={backend_name} "
-                    f"· {len(bs)} bindings"
+                    f"feishu frontend: app_id={app_id[:8]}… · adapters="
+                    f"{sorted({b.backend for b in bs})} · {len(bs)} bindings"
                 )
 
     if not frontends:
@@ -223,15 +204,15 @@ async def main(paths: RuntimePaths | None = None) -> None:
             try:
                 me = await fe.bot.get_me()
                 log.info(
-                    f"tg bot @{me.username} (id={me.id}) starting · backend={fe.backend.name} "
-                    f"· {len(fe.bindings)} bindings"
+                    f"tg bot @{me.username} (id={me.id}) starting · adapters="
+                    f"{sorted({b.backend for b in fe.bindings})} · {len(fe.bindings)} bindings"
                 )
             except Exception as e:
                 log.warning(f"tg bot get_me err: {e}")
         else:
             log.info(
-                f"{fe.name} frontend starting · backend={fe.backend.name} "
-                f"· {len(fe.bindings)} bindings"
+                f"{fe.name} frontend starting · adapters="
+                f"{sorted({b.backend for b in fe.bindings})} · {len(fe.bindings)} bindings"
             )
     log.info(
         f"BOSS_USER_ID={S.boss_user_id} "
@@ -247,7 +228,7 @@ async def main(paths: RuntimePaths | None = None) -> None:
     # 启动每个 binding 的 jsonl tailer + 每个 frontend 一个 heartbeat
     for fe in frontends:
         for b in fe.bindings:
-            S.fire(jsonl_poll_loop(b, fe.backend, fe, S, paths.offsets_file))
+            S.fire(jsonl_poll_loop(b, fe.backend_for(b), fe, S, paths.offsets_file))
         S.fire(heartbeat_typing_loop(S, fe))
     control_plane = ControlPlaneRepository(paths.database_file)
     control_plane.migrate()
@@ -327,6 +308,11 @@ def build_parser() -> argparse.ArgumentParser:
         "install-service", help="install a systemd user service"
     )
     service_parser.add_argument("--now", action="store_true", dest="start_now")
+    route_parser = subparsers.add_parser(
+        "route", help="inspect and atomically edit IM-to-tmux routes"
+    )
+    route_parser.add_argument("--file", type=Path, dest="route_file")
+    route_parser.add_argument("route_args", nargs=argparse.REMAINDER)
     from tmuxbot.teamrun.worker_cli import add_worker_parser
 
     add_worker_parser(subparsers)
@@ -361,6 +347,18 @@ def run(argv: list[str] | None = None) -> None:
         unit = install_service(start_now=args.start_now)
         print(f"已安装: {unit}")
         return
+    if args.command == "route":
+        from tmuxbot.route_cli import run_route_command
+
+        paths = RuntimePaths.discover(
+            os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
+        )
+        route_args = [
+            "--file",
+            str(args.route_file or paths.bindings_file),
+            *args.route_args,
+        ]
+        raise SystemExit(run_route_command(route_args))
     if args.command == "worker":
         from tmuxbot.teamrun.worker_cli import run_worker
 

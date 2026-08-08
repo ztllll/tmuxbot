@@ -119,6 +119,7 @@ async def provision_chat(
     project_base: str,
     channel: str,
     target_dir: str | None = None,
+    backend_name: str | None = None,
 ) -> "Binding | None":
     """开通一个新 chat 的会话。前端无关。失败返回 None (不留半成品 binding)。
 
@@ -137,9 +138,14 @@ async def provision_chat(
         return None
 
     safe_name = _safe_name(display_name, channel=channel, chat_id=chat_id)
-    # tmux/binding 名按 backend 加友好后缀区分: claude_code→-claude, codex→-codex。
-    # (同一 chat 多 bot 各带后缀, 互不抢同一 tmux 名 + 一眼看出是哪个 CLI。)
-    bname = frontend.backend.name
+    # /init 默认沿用 legacy frontend backend；管理路由可显式选择 adapter。
+    # 新的 topic route 管理路径应传 backend_name，避免 credential 决定 CLI。
+    if backend_name is None:
+        legacy = getattr(frontend, "backend", None)
+        if legacy is None:
+            raise ValueError("backend_name is required for a multi-backend frontend")
+        backend_name = legacy.name
+    bname = backend_name
     suffix = {"claude_code": "claude"}.get(bname, bname)
     sess_name = f"{safe_name}-{suffix}"
     # 目录解析: 只有 proj_dir 受 target_dir 影响 (proj_dir 用 safe_name/target_dir, 非 sess_name)。
@@ -182,22 +188,24 @@ async def provision_chat(
             tmux_window=0,
             tmux_pane=0,
             cwd=Path(proj_dir),
-            backend=frontend.backend.name,
+            backend=backend_name,
             bot_token_env=bot_token_env,
             channel=channel,
         )
         frontend.bindings.append(b)
         state.bindings.append(b)
 
+        backend = frontend.backend_for(b)
+
         # 5. 起 tailer
-        state.fire(jsonl_poll_loop(b, frontend.backend, frontend, state, offsets_file))
+        state.fire(jsonl_poll_loop(b, backend, frontend, state, offsets_file))
 
         # 6. 持久化 bindings.yaml
         entry = {
             "name": sess_name,
             "channel": channel,
             "bot_token_env": bot_token_env,
-            "backend": frontend.backend.name,
+            "backend": backend_name,
             "chat_id": chat_id,
             "thread_id": thread_id,
             "tmux_session": sess_name,
@@ -211,7 +219,7 @@ async def provision_chat(
 
         # 7. 起 CLI
         await ensure_binding_running(
-            frontend.backend, b, state, reason="provision", wait=True
+            backend, b, state, reason="provision", wait=True
         )
 
     except Exception:

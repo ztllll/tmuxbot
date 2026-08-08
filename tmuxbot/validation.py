@@ -6,18 +6,13 @@ not become a cross-chat or cross-project runtime problem.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
 from tmuxbot.state import Binding
 
 SUPPORTED_CHANNELS = frozenset({"telegram", "feishu"})
-SUPPORTED_BACKENDS = frozenset({"claude_code", "codex"})
-TELEGRAM_TOKEN_BACKENDS = {
-    "TG_BOT_TOKEN": "claude_code",
-    "TG_CODEX_BOT_TOKEN": "codex",
-}
+SUPPORTED_BACKENDS = frozenset({"claude_code", "codex", "pi"})
 
 
 class ConfigValidationError(ValueError):
@@ -48,11 +43,10 @@ def validate_bindings(
         errors.append("bindings.yaml must contain at least one binding")
 
     names: dict[str, Binding] = {}
-    sources: dict[tuple[str, str, str, int | None], Binding] = {}
-    sessions: dict[str, Binding] = {}
+    sources: dict[tuple[str, str, str, int | str | None], Binding] = {}
     tmux_targets: dict[tuple[str, int, int], Binding] = {}
     cwd_by_backend: dict[tuple[str, str], Binding] = {}
-    feishu_backend_by_env: dict[str, str] = {}
+    admins: list[Binding] = []
 
     for idx, b in enumerate(bindings, start=1):
         label = b.name or f"#{idx}"
@@ -80,6 +74,14 @@ def validate_bindings(
 
         if not b.bot_token_env:
             errors.append(f"binding {label!r}: bot_token_env is required")
+        if b.admin:
+            admins.append(b)
+            if b.thread_id is not None:
+                errors.append(f"binding {label!r}: admin route thread_id must be null")
+            if b.channel == "telegram" and isinstance(b.chat_id, int) and b.chat_id <= 0:
+                errors.append(
+                    f"binding {label!r}: telegram admin route chat_id must be a positive private user id"
+                )
 
         if b.channel == "telegram":
             if not isinstance(b.chat_id, int):
@@ -87,16 +89,9 @@ def validate_bindings(
                     f"binding {label!r}: telegram chat_id must be an integer, "
                     f"got {b.chat_id!r}"
                 )
-            expected = TELEGRAM_TOKEN_BACKENDS.get(b.bot_token_env)
-            if expected is None:
+            if b.thread_id is not None and not isinstance(b.thread_id, int):
                 errors.append(
-                    f"binding {label!r}: unknown telegram bot_token_env "
-                    f"{b.bot_token_env!r}; add it to TOKEN_TO_BACKEND before use"
-                )
-            elif b.backend != expected:
-                errors.append(
-                    f"binding {label!r}: backend {b.backend!r} does not match "
-                    f"{b.bot_token_env!r} backend {expected!r}"
+                    f"binding {label!r}: telegram thread_id must be an integer or null"
                 )
 
         if b.channel == "feishu":
@@ -104,15 +99,9 @@ def validate_bindings(
                 errors.append(
                     f"binding {label!r}: feishu chat_id must be a non-empty string"
                 )
-            if b.thread_id is not None:
-                errors.append(f"binding {label!r}: feishu thread_id must be null")
-            prior = feishu_backend_by_env.get(b.bot_token_env)
-            if prior is None:
-                feishu_backend_by_env[b.bot_token_env] = b.backend
-            elif prior != b.backend:
+            if b.thread_id is not None and not isinstance(b.thread_id, str):
                 errors.append(
-                    f"binding {label!r}: feishu env {b.bot_token_env!r} mixes "
-                    f"backend {prior!r} and {b.backend!r}"
+                    f"binding {label!r}: feishu thread_id must be a string or null"
                 )
 
         source_key = (b.channel, b.bot_token_env, str(b.chat_id), b.thread_id)
@@ -129,15 +118,6 @@ def validate_bindings(
 
         if not b.tmux_session:
             errors.append(f"binding {label!r}: tmux_session is required")
-        else:
-            prior_session = sessions.get(b.tmux_session)
-            if prior_session is not None:
-                errors.append(
-                    f"binding {label!r}: duplicate tmux_session "
-                    f"{b.tmux_session!r} already used by {prior_session.name!r}"
-                )
-            else:
-                sessions[b.tmux_session] = b
 
         if b.tmux_window < 0 or b.tmux_pane < 0:
             errors.append(
@@ -167,16 +147,10 @@ def validate_bindings(
             else:
                 cwd_by_backend[cwd_key] = b
 
-    by_token: dict[str, set[str]] = defaultdict(set)
-    for b in bindings:
-        if b.channel == "telegram":
-            by_token[b.bot_token_env].add(b.backend)
-    for token_env, backend_names in by_token.items():
-        if len(backend_names) > 1:
-            errors.append(
-                f"telegram bot_token_env {token_env!r} maps to multiple backends: "
-                f"{sorted(backend_names)}"
-            )
+    if len(admins) > 1:
+        errors.append(
+            f"only one admin route is allowed, found {[binding.name for binding in admins]}"
+        )
 
     if errors:
         raise ConfigValidationError(errors)

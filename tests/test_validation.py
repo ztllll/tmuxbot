@@ -52,23 +52,55 @@ def test_allows_no_bindings_when_explicitly_requested():
     validate_bindings([], require_nonempty=False)
 
 
-def test_rejects_duplicate_source_session_and_cwd():
+def test_rejects_duplicate_source_target_and_cwd():
     assert_invalid(
         [
             binding(),
             binding(name="beta", tmux_session="alpha-claude"),
         ],
         "duplicate source",
-        "duplicate tmux_session",
         "duplicate tmux target",
         "duplicate cwd",
     )
 
 
-def test_rejects_telegram_backend_token_mismatch():
-    assert_invalid(
-        [binding(name="codex-on-claude-token", backend="codex")],
-        "does not match",
+def test_allows_multiple_routes_to_distinct_panes_in_one_tmux_session():
+    validate_bindings(
+        [
+            binding(),
+            binding(
+                name="beta",
+                chat_id=123,
+                thread_id=42,
+                tmux_session="alpha-claude",
+                tmux_pane=1,
+                cwd=Path("/tmp/tmuxbot-beta"),
+            ),
+        ]
+    )
+
+
+def test_accepts_multiple_backends_on_one_telegram_credential():
+    validate_bindings(
+        [
+            binding(),
+            binding(
+                name="beta",
+                chat_id=123,
+                thread_id=42,
+                tmux_session="beta-codex",
+                cwd=Path("/tmp/tmuxbot-beta"),
+                backend="codex",
+            ),
+            binding(
+                name="gamma",
+                chat_id=123,
+                thread_id=43,
+                tmux_session="gamma-pi",
+                cwd=Path("/tmp/tmuxbot-gamma"),
+                backend="pi",
+            ),
+        ]
     )
 
 
@@ -80,14 +112,14 @@ def test_rejects_bad_channel_and_backend():
     )
 
 
-def test_rejects_feishu_thread_and_mixed_backend_per_env():
-    assert_invalid(
+def test_accepts_feishu_string_threads_and_mixed_backends_per_credential():
+    validate_bindings(
         [
             binding(
                 name="fs-a",
                 channel="feishu",
                 chat_id="oc_a",
-                thread_id=1,
+                thread_id="omt_thread_a",
                 tmux_session="fs-a",
                 cwd=Path("/tmp/fs-a"),
                 bot_token_env="FEISHU",
@@ -95,13 +127,55 @@ def test_rejects_feishu_thread_and_mixed_backend_per_env():
             binding(
                 name="fs-b",
                 channel="feishu",
-                chat_id="oc_b",
+                chat_id="oc_a",
+                thread_id="omt_thread_b",
                 tmux_session="fs-b",
                 cwd=Path("/tmp/fs-b"),
-                backend="codex",
+                backend="pi",
                 bot_token_env="FEISHU",
             ),
+        ]
+    )
+
+
+def test_rejects_telegram_admin_route_bound_to_group_id():
+    assert_invalid(
+        [binding(chat_id=-100, admin=True)],
+        "telegram admin route chat_id must be a positive private user id",
+    )
+
+
+def test_rejects_multiple_admin_routes():
+    assert_invalid(
+        [
+            binding(admin=True),
+            binding(
+                name="admin-two",
+                chat_id=2,
+                tmux_session="admin-two",
+                cwd=Path("/tmp/admin-two"),
+                admin=True,
+            ),
         ],
-        "feishu thread_id must be null",
-        "mixes backend",
+        "only one admin route is allowed",
+    )
+
+
+def test_rejects_invalid_thread_types_for_each_channel():
+    assert_invalid(
+        [binding(thread_id="telegram-string")],
+        "telegram thread_id must be an integer or null",
+    )
+    assert_invalid(
+        [
+            binding(
+                channel="feishu",
+                chat_id="oc_a",
+                thread_id=123,
+                tmux_session="fs-a",
+                cwd=Path("/tmp/fs-a"),
+                bot_token_env="FEISHU",
+            )
+        ],
+        "feishu thread_id must be a string or null",
     )

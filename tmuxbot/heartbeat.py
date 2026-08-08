@@ -23,9 +23,8 @@ ACTIVE_WINDOW = 10       # 距上次活跃小于这个秒数才发 typing
 
 
 async def heartbeat_typing_loop(state: "State", frontend) -> None:
-    """活性指示主循环。每个 frontend 一个 loop, 用 frontend.backend + frontend.bindings。
+    """活性指示主循环。每个 route 用自己的 provider adapter。
     bot 死 → typing 5s 内消失。"""
-    backend = frontend.backend
     while True:
         try:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
@@ -35,6 +34,7 @@ async def heartbeat_typing_loop(state: "State", frontend) -> None:
             for b in frontend.bindings:
                 if b.chat_id == 0:
                     continue
+                backend = frontend.backend_for(b)
                 try:
                     pane = tmux_capture(b.tmux_target, lines=15)
                 except Exception as e:

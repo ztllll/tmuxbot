@@ -70,7 +70,11 @@ class ProviderDiscovery:
         explicit provider override, then PATH, then the conventional user bin.
         The caller still verifies the resulting file's identity before use.
         """
-        override_name = {"claude": "CLAUDE_BIN", "codex": "CODEX_BIN"}.get(binary_name)
+        override_name = {
+            "claude": "CLAUDE_BIN",
+            "codex": "CODEX_BIN",
+            "pi": "PI_BIN",
+        }.get(binary_name)
         if override_name:
             override = os.getenv(override_name)
             if override:

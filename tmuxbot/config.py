@@ -16,6 +16,63 @@ from tmuxbot.validation import ConfigValidationError, validate_bindings
 
 log = logging.getLogger("tmuxbot")
 _BINDINGS_WRITE_LOCK = threading.Lock()
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def _admin_binding(boss_user_id: int) -> Binding | None:
+    if os.getenv("TMUXBOT_ADMIN_ENABLED", "").strip().lower() not in _TRUE_VALUES:
+        return None
+    channel = os.getenv("TMUXBOT_ADMIN_CHANNEL", "telegram").strip().lower()
+    backend = os.getenv("TMUXBOT_ADMIN_CLI", "").strip()
+    if backend not in {"claude_code", "codex", "pi"}:
+        raise ConfigValidationError(
+            ["TMUXBOT_ADMIN_CLI must be one of: claude_code, codex, pi"]
+        )
+    raw_chat_id = os.getenv("TMUXBOT_ADMIN_CHAT_ID", "").strip()
+    if channel == "telegram":
+        if not raw_chat_id:
+            raw_chat_id = str(boss_user_id)
+        if not raw_chat_id.lstrip("-").isdigit():
+            raise ConfigValidationError(["TMUXBOT_ADMIN_CHAT_ID must be an integer for telegram"])
+        chat_id: int | str = int(raw_chat_id)
+        if chat_id <= 0:
+            raise ConfigValidationError(
+                ["TMUXBOT_ADMIN_CHAT_ID must be a positive private user id for telegram"]
+            )
+        credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "TG_BOT_TOKEN").strip()
+    elif channel == "feishu":
+        if not raw_chat_id:
+            raise ConfigValidationError(
+                ["TMUXBOT_ADMIN_CHAT_ID is required for feishu admin DM"]
+            )
+        chat_id = raw_chat_id
+        credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "FEISHU").strip()
+    else:
+        raise ConfigValidationError(
+            ["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"]
+        )
+    tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin").strip()
+    if not tmux_session:
+        raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
+    cwd = Path(os.getenv("TMUXBOT_ADMIN_CWD") or Path.home()).expanduser().resolve()
+    if not cwd.is_dir():
+        raise ConfigValidationError(
+            [f"TMUXBOT_ADMIN_CWD must be an existing directory: {cwd}"]
+        )
+    return Binding(
+        name="tmuxbot-admin",
+        chat_id=chat_id,
+        thread_id=None,
+        tmux_session=tmux_session,
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=cwd,
+        backend=backend,
+        bot_token_env=credential,
+        channel=channel,
+        mention_required=False,
+        admin=True,
+    )
 
 
 def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
@@ -25,18 +82,45 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
     try:
         with _BINDINGS_WRITE_LOCK:
             raw = yaml.safe_load(bindings_file.read_text(encoding="utf-8")) or {}
-            for entry in raw.get("bindings", []):
-                if entry.get("name") != binding.name:
-                    continue
-                if binding.provider_session_id:
-                    entry["provider_session_id"] = binding.provider_session_id
-                else:
-                    entry.pop("provider_session_id", None)
-                if binding.transcript_path:
-                    entry["transcript_path"] = str(binding.transcript_path)
-                else:
-                    entry.pop("transcript_path", None)
-                rendered = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+            entries = raw.setdefault("bindings", [])
+            entry = next(
+                (candidate for candidate in entries if candidate.get("name") == binding.name),
+                None,
+            )
+            if entry is None and binding.admin:
+                entry = {
+                    "name": binding.name,
+                    "channel": binding.channel,
+                    "bot_token_env": binding.bot_token_env,
+                    "chat_id": binding.chat_id,
+                    "thread_id": binding.thread_id,
+                    "tmux_session": binding.tmux_session,
+                    "tmux_window": binding.tmux_window,
+                    "tmux_pane": binding.tmux_pane,
+                    "cwd": str(binding.cwd),
+                    "backend": binding.backend,
+                    "mention_required": binding.mention_required,
+                    "admin": True,
+                }
+                entries.append(entry)
+            if entry is None:
+                log.warning(
+                    "[%s] binding 不在 %s, 无法持久化会话身份",
+                    binding.name,
+                    bindings_file,
+                )
+                return
+            if binding.provider_session_id:
+                entry["provider_session_id"] = binding.provider_session_id
+            else:
+                entry.pop("provider_session_id", None)
+            if binding.transcript_path:
+                entry["transcript_path"] = str(binding.transcript_path)
+            else:
+                entry.pop("transcript_path", None)
+            rendered = yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+            temp_path: Path | None = None
+            try:
                 with tempfile.NamedTemporaryFile(
                     mode="w",
                     encoding="utf-8",
@@ -46,14 +130,14 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
                     delete=False,
                 ) as handle:
                     handle.write(rendered)
+                    handle.flush()
+                    os.fsync(handle.fileno())
                     temp_path = Path(handle.name)
+                os.chmod(temp_path, 0o600)
                 os.replace(temp_path, bindings_file)
-                return
-            log.warning(
-                "[%s] binding 不在 %s, 无法持久化会话身份",
-                binding.name,
-                bindings_file,
-            )
+            finally:
+                if temp_path is not None and temp_path.exists():
+                    temp_path.unlink()
     except Exception:
         log.exception("[%s] 持久化 provider 会话身份失败", binding.name)
 
@@ -98,8 +182,8 @@ def load_config(
         for b in entries:
             if not isinstance(b, dict):
                 raise TypeError("each binding must be a mapping")
-        # chat_id 兼容 Telegram (int) 和飞书 (str: oc_xxx)
-        # 能转 int 就转 (Telegram); 否则保留 str (飞书)
+            # chat_id 兼容 Telegram (int) 和飞书 (str: oc_xxx)。
+            # 能转 int 就转 (Telegram); 否则保留 str (飞书)。
             cid_raw = b.get("chat_id", 0)
             chat_id: int | str = (
                 int(cid_raw) if str(cid_raw).lstrip("-").isdigit() else str(cid_raw)
@@ -119,6 +203,7 @@ def load_config(
                     bot_token_env=b.get("bot_token_env", "TG_BOT_TOKEN"),
                     channel=b.get("channel", "telegram"),
                     mention_required=b.get("mention_required"),
+                    admin=bool(b.get("admin", False)),
                     provider_session_id=provider_session_id,
                     transcript_path=Path(transcript_raw) if transcript_raw else None,
                     last_session_id=provider_session_id,
@@ -126,6 +211,27 @@ def load_config(
             )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigValidationError([f"invalid binding entry: {exc}"]) from exc
+
+    persisted_admins = [binding for binding in bindings if binding.admin]
+    bindings = [binding for binding in bindings if not binding.admin]
+    admin = _admin_binding(boss_user_id)
+    if admin is not None:
+        if len(persisted_admins) > 1:
+            raise ConfigValidationError(
+                ["bindings.yaml contains multiple persisted admin identity records"]
+            )
+        persisted_admin = persisted_admins[0] if persisted_admins else None
+        if persisted_admin is not None:
+            same_target = (
+                persisted_admin.tmux_target == admin.tmux_target
+                and persisted_admin.cwd.expanduser().resolve() == admin.cwd
+                and persisted_admin.backend == admin.backend
+            )
+            if same_target:
+                admin.provider_session_id = persisted_admin.provider_session_id
+                admin.last_session_id = persisted_admin.last_session_id
+                admin.transcript_path = persisted_admin.transcript_path
+        bindings.append(admin)
 
     offsets = load_offsets(offsets_file)
     validate_bindings(bindings, require_nonempty=not allow_empty_bindings)
