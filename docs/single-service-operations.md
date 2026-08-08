@@ -10,7 +10,7 @@ configured Telegram Bot and Feishu App credential.
 |---|---|---|
 | Boot/logout survival | `systemctl --user enable` + user linger | starts without an interactive login |
 | Main process | `Restart=always`, `RestartSec=5`, `StartLimitIntervalSec=0` | restarts after crashes without a permanent systemd start-limit |
-| Bridge child | `BridgeSupervisor` | respawns the bridge with bounded backoff |
+| Bridge child | `BridgeSupervisor` + Linux parent-death signal | respawns with bounded backoff and cannot survive as an orphan after supervisor SIGKILL |
 | Telegram/Feishu transport | frontend reconnect loop | reconnects a failed polling/WebSocket connection |
 | tmux/provider TUI | `TMUXBOT_LIFECYCLE_ENABLED=1` | recreates missing targets and resumes persisted Claude/Codex/Pi identities; an explicitly missing Claude resume ID falls back once to a fresh TUI |
 

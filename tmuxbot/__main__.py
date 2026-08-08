@@ -76,6 +76,9 @@ def acquire_lock(paths: RuntimePaths | None = None) -> int:
 
 
 async def main(paths: RuntimePaths | None = None) -> None:
+    from tmuxbot.supervisor import arm_bridge_parent_death_signal
+
+    arm_bridge_parent_death_signal(os.environ)
     paths = paths or RuntimePaths.discover(
         os.environ, legacy_project_dir=Path(__file__).resolve().parent.parent
     )

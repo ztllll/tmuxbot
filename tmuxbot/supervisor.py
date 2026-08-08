@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import os
+import signal
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -89,6 +91,28 @@ def inspect_bridge_readiness(
 Spawn = Callable[[list[str], dict[str, str]], Awaitable[Any]]
 
 
+SUPERVISOR_PID_ENV = "TMUXBOT_SUPERVISOR_PID"
+
+
+def arm_bridge_parent_death_signal(environ: Mapping[str, str]) -> None:
+    """Tie a supervised bridge child to its exact parent on Linux."""
+    raw_parent = environ.get(SUPERVISOR_PID_ENV, "").strip()
+    if not raw_parent:
+        return
+    expected_parent = int(raw_parent)
+    if expected_parent <= 1:
+        raise ValueError(f"invalid {SUPERVISOR_PID_ENV}: {raw_parent!r}")
+    if not sys.platform.startswith("linux"):
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(1, signal.SIGTERM) != 0:  # PR_SET_PDEATHSIG
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    # Close the spawn/exec race: the original supervisor may already be gone.
+    if os.getppid() != expected_parent:
+        raise RuntimeError("tmuxbot bridge supervisor disappeared during startup")
+
+
 async def _spawn(argv: list[str], env: dict[str, str]) -> asyncio.subprocess.Process:
     return await asyncio.create_subprocess_exec(*argv, env=env)
 
@@ -163,6 +187,7 @@ class BridgeSupervisor:
                 child_env["TMUXBOT_ENV"] = str(self.paths.env_file)
                 child_env["TMUXBOT_BINDINGS"] = str(self.paths.bindings_file)
                 child_env["TMUXBOT_DATA_DIR"] = str(self.paths.state_dir)
+                child_env[SUPERVISOR_PID_ENV] = str(os.getpid())
                 self._state = "starting"
                 self._reason = "spawning"
                 try:

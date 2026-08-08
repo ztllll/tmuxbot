@@ -66,6 +66,7 @@
 
 ### Fixed
 
+- `tmuxbot serve` 监督的 bridge child 在 Linux 上启用 parent-death signal；即使 Web/supervisor 主进程被 SIGKILL，孤儿 bridge 也会由 kernel 终止，systemd 重启后不会因旧 lock 残留形成双消费或反复 spawn 失败。
 - lifecycle watchdog 恢复 Claude route 时，若持久 `--resume` identity 已被 Claude 删除并明确返回 `No conversation found with session ID`，会清除失效 identity、启动新真实 TUI，再由 JSONL tailer 持久化新 session；不再每轮回到 shell 后无限重试同一无效 ID。
 - offsets 持久化现在强制 state 目录 `0700`、临时文件和最终 JSON `0600`，合并或运行时保存后不再受 umask 影响暴露 transcript 路径元数据。
 - 多飞书 App 单进程运行时不再共享并覆盖 `lark-oapi` 的模块级 event loop；每个 credential 使用独立 SDK module/worker loop，并在服务停止时显式断开 WebSocket 和关闭 loop。

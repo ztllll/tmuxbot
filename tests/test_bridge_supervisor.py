@@ -1,15 +1,72 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 from tmuxbot.paths import RuntimePaths
-from tmuxbot.supervisor import BridgeSupervisor, inspect_bridge_readiness
+from tmuxbot.supervisor import (
+    SUPERVISOR_PID_ENV,
+    BridgeSupervisor,
+    _spawn,
+    arm_bridge_parent_death_signal,
+    inspect_bridge_readiness,
+)
 
 
 def _paths(tmp_path: Path) -> RuntimePaths:
     return RuntimePaths.discover({}, home=tmp_path)
+
+
+def test_spawn_avoids_thread_unsafe_preexec(monkeypatch):
+    observed = {}
+
+    async def create_subprocess_exec(*argv, **kwargs):
+        observed["argv"] = argv
+        observed["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess_exec)
+
+    asyncio.run(_spawn(["python", "-m", "tmuxbot"], {"A": "1"}))
+
+    assert observed["argv"] == ("python", "-m", "tmuxbot")
+    assert observed["kwargs"] == {"env": {"A": "1"}}
+
+
+def test_bridge_arms_parent_death_signal_after_exec(monkeypatch):
+    calls = []
+
+    class Libc:
+        def prctl(self, option, signal_number):
+            calls.append((option, signal_number))
+            return 0
+
+    monkeypatch.setattr("tmuxbot.supervisor.sys.platform", "linux")
+    monkeypatch.setattr("tmuxbot.supervisor.ctypes.CDLL", lambda *_args, **_kwargs: Libc())
+    monkeypatch.setattr("tmuxbot.supervisor.os.getppid", lambda: 4242)
+
+    arm_bridge_parent_death_signal({SUPERVISOR_PID_ENV: "4242"})
+
+    assert calls == [(1, 15)]
+
+
+def test_bridge_rejects_a_supervisor_that_died_during_spawn(monkeypatch):
+    class Libc:
+        def prctl(self, _option, _signal_number):
+            return 0
+
+    monkeypatch.setattr("tmuxbot.supervisor.sys.platform", "linux")
+    monkeypatch.setattr("tmuxbot.supervisor.ctypes.CDLL", lambda *_args, **_kwargs: Libc())
+    monkeypatch.setattr("tmuxbot.supervisor.os.getppid", lambda: 1)
+
+    try:
+        arm_bridge_parent_death_signal({SUPERVISOR_PID_ENV: "4242"})
+    except RuntimeError as exc:
+        assert "disappeared" in str(exc)
+    else:
+        raise AssertionError("bridge must reject a vanished supervisor")
 
 
 def test_readiness_is_unconfigured_without_bindings(tmp_path: Path) -> None:
@@ -93,6 +150,7 @@ def test_bridge_argv_and_setup_grant_not_in_child_environment(tmp_path: Path) ->
     assert observed
     assert observed[0][0] == [sys.executable, "-m", "tmuxbot", "bridge"]
     assert "TMUXBOT_SETUP_GRANT" not in observed[0][1]
+    assert observed[0][1][SUPERVISOR_PID_ENV] == str(os.getpid())
 
 
 def test_supervisor_process_environment_overrides_dotenv(tmp_path: Path) -> None:
