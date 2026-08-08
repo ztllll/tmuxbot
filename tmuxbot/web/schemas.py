@@ -45,6 +45,9 @@ class ChannelConfigureRequest(BaseModel):
     credential_secret: str | None = Field(default=None, min_length=1, max_length=2048)
     boss_id: str = Field(min_length=1, max_length=256)
     mention_required: bool = False
+    cli_idle_timeout_seconds: int | None = Field(default=None, ge=0)
+
+
 class TeamAgentRequest(BaseModel):
     role: Literal["coordinator", "implementer", "reviewer"]
     managed_session_id: str = Field(min_length=1, max_length=256)

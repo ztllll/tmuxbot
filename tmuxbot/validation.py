@@ -74,6 +74,13 @@ def validate_bindings(
 
         if not b.bot_token_env:
             errors.append(f"binding {label!r}: bot_token_env is required")
+        if (
+            b.cli_idle_timeout_seconds is not None
+            and b.cli_idle_timeout_seconds < 0
+        ):
+            errors.append(
+                f"binding {label!r}: cli_idle_timeout_seconds must be >= 0 or null"
+            )
         if b.admin:
             admins.append(b)
             if b.thread_id is not None:

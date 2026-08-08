@@ -228,6 +228,45 @@ async def tmux_safe_launch(target: str, command: str, *, allowed_shells) -> bool
     return await _RUNTIME.safe_launch(target, command, allowed_shells=allowed_shells)
 
 
+async def tmux_native_exit(
+    target: str,
+    command: str,
+    *,
+    expected_commands,
+    allowed_shells,
+    timeout: float = 8.0,
+    poll: float = 0.2,
+) -> bool:
+    """Submit a provider-native exit command and verify return to a shell.
+
+    Unknown foreground programs are never signalled or killed.  A False return
+    means the provider did not leave the pane safely within the bounded window.
+    """
+    if tmux_pane_command(target) not in expected_commands:
+        return False
+    pane = tmux_capture(target, 30)
+    if _is_tui_busy(pane):
+        return False
+    draft = _active_input_text(pane)
+    if draft and draft.strip():
+        return False
+    await tmux_send_text(
+        target,
+        command,
+        expected_commands=expected_commands,
+    )
+    elapsed = 0.0
+    while elapsed <= timeout:
+        foreground = tmux_pane_command(target)
+        if foreground in allowed_shells:
+            return True
+        if foreground not in expected_commands:
+            return False
+        await asyncio.sleep(poll)
+        elapsed += poll
+    return False
+
+
 async def _paste_text(target: str, text: str) -> None:
     buf = f"tb_{os.getpid()}"
     load_proc = await asyncio.create_subprocess_exec(

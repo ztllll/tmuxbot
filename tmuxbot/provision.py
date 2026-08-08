@@ -279,6 +279,7 @@ async def deprovision_chat(
     # 4. 清理运行时状态残留
     state.last_active.pop(name, None)
     state.tui_fp.pop(name, None)
+    state.cli_idle_since.pop(name, None)
     state.picker_notified.pop(name, None)
     state.pending_rename.pop(name, None)
     state.tool_aggregator.pop(name, None)

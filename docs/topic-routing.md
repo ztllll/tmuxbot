@@ -53,6 +53,8 @@ bindings:
     tmux_pane: 0
     cwd: /srv/repos/repo
     backend: pi
+    mention_required: false
+    cli_idle_timeout_seconds: 3600  # null inherits env; 0 keeps CLI resident
 ```
 
 Uniqueness invariants:

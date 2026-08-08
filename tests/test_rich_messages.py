@@ -35,7 +35,8 @@ def test_build_reply_document_parses_common_blocks_without_provider_tail_heurist
                 "普通段落\n\n"
                 "- 第一项\n- 第二项\n\n"
                 "> 详细信息\n\n"
-                "```python\nprint(1)\n```\n\n"
+                "```python filename=worker.py\nprint(1)\n```\n\n"
+                "| 指标 | 数值 |\n| --- | ---: |\n| 缓存命中率 | 92.5% |\n\n"
                 "claude-opus-4-7"
             ),
             actions=("screen", "status"),
@@ -49,9 +50,13 @@ def test_build_reply_document_parses_common_blocks_without_provider_tail_heurist
         "list",
         "quote",
         "code",
+        "table",
         "paragraph",
     ]
     assert document.blocks[4].language == "python"
+    assert document.blocks[4].filename == "worker.py"
+    assert document.blocks[5].headers == ("指标", "数值")
+    assert document.blocks[5].rows == (("缓存命中率", "92.5%"),)
     assert document.blocks[-1].text == "claude-opus-4-7"
     assert document.provider == "codex"
     assert document.actions == ("screen", "status")
@@ -132,6 +137,42 @@ def test_reply_summary_removes_markup_and_never_uses_local_path(tmp_path):
     )
 
     assert reply_summary(document) == "完成 文件已作为附件发送。"
+
+
+def test_telegram_renderer_formats_filename_and_table_as_native_safe_blocks(tmp_path):
+    document = build_reply_document(
+        binding(tmp_path),
+        ReplyEnvelope(
+            title="指标",
+            body=(
+                "```bash filename=deploy.sh\necho ok\n```\n\n"
+                "| 状态 | 耗时 |\n| --- | ---: |\n| 通过 | 42ms |"
+            ),
+        ),
+    )
+
+    result = render_telegram_document(document, full_output_threshold=8000)
+
+    assert "📄 <code>deploy.sh</code>" in result.chat_html
+    assert '<pre><code class="language-bash">echo ok</code></pre>' in result.chat_html
+    assert "状态" in result.chat_html
+    assert "42ms" in result.chat_html
+    assert result.chat_html.count("<pre>") == 2
+
+
+def test_telegram_renderer_balances_crossed_provider_html_tags(tmp_path):
+    document = build_reply_document(
+        binding(tmp_path),
+        ReplyEnvelope(
+            title="回复",
+            body="<b>粗体 <code>value</b></code> 尾部",
+        ),
+    )
+
+    result = render_telegram_document(document, full_output_threshold=8000)
+
+    assert "<b>粗体 <code>value</code></b> 尾部" in result.chat_html
+    assert "</b></code>" not in result.chat_html
 
 
 def test_telegram_renderer_escapes_unknown_angle_brackets_but_keeps_known_tags(tmp_path):

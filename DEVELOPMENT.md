@@ -410,6 +410,20 @@ watchdog 默认每 30 秒按 binding 调用 provider `ensure_running`，恢复�
 Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 
+### cli_idle — 只休眠 provider，不用 IM 时间判断
+
+`cli_idle.py` 是独立于旧 lifecycle watchdog 的深模块。默认
+`TMUXBOT_CLI_IDLE_ENABLED=1`、`TMUXBOT_CLI_IDLE_TIMEOUT=3600`，每 30 秒只读观察 live
+pane。状态至少区分 `WORKING / IDLE / DRAFT / INTERACTION / WAITING / SHELL / ABSENT /
+UNKNOWN`：只有连续、明确的 `IDLE` 才累计时钟；provider working/compacting/retrying、
+composer 草稿、picker/权限界面、命令事务、rename、session handoff、活动 TeamRun 和未知
+前台都会清空时钟。它完全不读取 `State.last_active`（该字段仅用于 typing UI）。
+
+达到阈值后，reaper 与入站消息共用 `State.ensure_locks[binding.name]`，在锁内二次观察，
+再调用 adapter 的 `hibernate(binding)`：Claude `/exit`，Codex/Pi `/quit`。只有
+`pane_current_command` 回到 allowlisted shell 才算成功；不发 SIGKILL，不重建缺失 tmux，
+不触碰未知前台。route 可用 `cli_idle_timeout_seconds` 覆盖全局；`0` 表示 CLI 常驻。
+
 ---
 
 ## 7. 当前命令清单
@@ -452,6 +466,7 @@ Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指�
 - `/compact` 完成硬信号: `type=system, subtype=compact_boundary` + `compactMetadata.preTokens/postTokens`
 - tailer 积压保护: 单次落盘超 512KB 判定为事务式 flush 爆发 → 跳末尾,不回吐
 - 飞书无 typing API; 飞书 text 消息不能编辑,必须用 interactive card
+- `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`（普通 Bot API HTML 不支持原生 table）
 
 ---
 

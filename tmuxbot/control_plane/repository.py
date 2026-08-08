@@ -1354,6 +1354,29 @@ class ControlPlaneRepository:
             cursor = db.execute("DELETE FROM managed_sessions WHERE id = ?", (session_id,))
             return cursor.rowcount == 1
 
+    def active_teamrun_tmux_targets(self) -> set[str]:
+        """Return tmux targets protected by non-terminal TeamRuns."""
+        with self._connection() as db:
+            rows = db.execute(
+                "SELECT DISTINCT session.tmux_session, session.tmux_window, session.tmux_pane "
+                "FROM managed_sessions AS session "
+                "JOIN ("
+                "  SELECT agent.managed_session_id AS managed_session_id, run.state AS run_state "
+                "  FROM team_agents AS agent "
+                "  JOIN team_runs AS run ON run.run_id = agent.run_id "
+                "  UNION ALL "
+                "  SELECT worktree.managed_session_id AS managed_session_id, run.state AS run_state "
+                "  FROM task_worktrees AS worktree "
+                "  JOIN team_runs AS run ON run.run_id = worktree.run_id "
+                "  WHERE worktree.state = 'active'"
+                ") AS active ON active.managed_session_id = session.id "
+                "WHERE active.run_state IN ('draft', 'running', 'paused', 'operator_required')"
+            ).fetchall()
+        return {
+            f"{row['tmux_session']}:{row['tmux_window']}.{row['tmux_pane']}"
+            for row in rows
+        }
+
     def has_active_teamrun_for_managed_session(self, session_id: str) -> bool:
         """A non-terminal plan retains both role and isolated worktree CLI identities."""
         with self._connection() as db:

@@ -363,6 +363,7 @@ def _route_item(args: argparse.Namespace, target: TmuxTarget, cwd: Path) -> dict
         "cwd": str(cwd),
         "backend": args.backend,
         "mention_required": args.mention_required,
+        "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
     }
 
 
@@ -618,6 +619,12 @@ def build_admin_parser() -> argparse.ArgumentParser:
     bind.add_argument("--cwd", required=True)
     bind.add_argument("--backend", choices=("claude_code", "codex", "pi"), required=True)
     bind.add_argument("--mention-required", type=_parse_bool, default=False)
+    bind.add_argument(
+        "--cli-idle-timeout",
+        type=int,
+        dest="cli_idle_timeout_seconds",
+        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
+    )
     bind.add_argument("--create-target", action="store_true")
     bind.add_argument("--apply", action="store_true")
 

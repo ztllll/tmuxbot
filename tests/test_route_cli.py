@@ -57,6 +57,19 @@ def test_route_store_round_trips_feishu_thread_root_anchor(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["thread_root_message_id"] == "om_root"
 
 
+def test_route_store_round_trips_idle_timeout_and_mention_policy(tmp_path):
+    path = tmp_path / "bindings.yaml"
+    write_routes(
+        path,
+        [route(mention_required=False, cli_idle_timeout_seconds=0)],
+    )
+
+    item = RouteStore(path).inspect("alpha")
+
+    assert item.mention_required is False
+    assert item.cli_idle_timeout_seconds == 0
+
+
 def test_route_store_lists_and_inspects_exact_routes(tmp_path):
     path = tmp_path / "bindings.yaml"
     write_routes(path, [route(), route("beta", thread_id=43, backend="codex")])
@@ -100,6 +113,33 @@ def test_route_store_bind_and_unbind_persist_valid_yaml(tmp_path):
     removed = store.unbind("alpha")
     assert removed.name == "alpha"
     assert [item.name for item in store.list()] == ["beta"]
+
+
+def test_route_cli_bind_accepts_explicit_mention_and_idle_policy(tmp_path, capsys):
+    path = tmp_path / "bindings.yaml"
+    write_routes(path, [])
+
+    exit_code = run_route_command(
+        [
+            "--file", str(path), "bind",
+            "--name", "alpha",
+            "--channel", "telegram",
+            "--credential", "TG_BOT_TOKEN",
+            "--chat-id", "-1001",
+            "--thread-id", "42",
+            "--tmux-session", "alpha",
+            "--cwd", "/tmp/alpha",
+            "--backend", "pi",
+            "--no-mention-required",
+            "--cli-idle-timeout", "0",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "bound: alpha"
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))["bindings"][0]
+    assert stored["mention_required"] is False
+    assert stored["cli_idle_timeout_seconds"] == 0
 
 
 def test_route_cli_list_json_is_machine_readable(tmp_path, capsys):

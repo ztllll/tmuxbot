@@ -19,7 +19,10 @@ class ReplyBlock:
     text: str = ""
     level: int = 0
     language: str | None = None
+    filename: str | None = None
     items: tuple[str, ...] = ()
+    headers: tuple[str, ...] = ()
+    rows: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,10 +190,10 @@ def _parse_blocks(source: str) -> tuple[ReplyBlock, ...]:
             index += 1
             continue
 
-        fence = re.match(r"^```([A-Za-z0-9_+-]*)\s*$", stripped)
+        fence = re.match(r"^```([^`]*)$", stripped)
         if fence:
             flush_paragraph()
-            language = fence.group(1) or None
+            language, filename = _parse_fence_info(fence.group(1))
             index += 1
             code_lines: list[str] = []
             while index < len(lines) and lines[index].strip() != "```":
@@ -198,7 +201,21 @@ def _parse_blocks(source: str) -> tuple[ReplyBlock, ...]:
                 index += 1
             if index < len(lines):
                 index += 1
-            blocks.append(ReplyBlock("code", "\n".join(code_lines), language=language))
+            blocks.append(
+                ReplyBlock(
+                    "code",
+                    "\n".join(code_lines),
+                    language=language,
+                    filename=filename,
+                )
+            )
+            continue
+
+        table = _parse_table(lines, index)
+        if table is not None:
+            flush_paragraph()
+            block, index = table
+            blocks.append(block)
             continue
 
         heading = re.match(r"^(#{1,6})\s+(.+)$", stripped)
@@ -249,12 +266,19 @@ def _render_telegram_block(block: ReplyBlock) -> str:
         return f"<b>{_sanitize_telegram_inline(block.text)}</b>"
     if block.kind == "code":
         code = html.escape(html.unescape(block.text), quote=False)
+        label = (
+            f"📄 <code>{html.escape(block.filename)}</code>\n"
+            if block.filename
+            else ""
+        )
         if block.language:
             return (
-                f'<pre><code class="language-{html.escape(block.language)}">'
+                f'{label}<pre><code class="language-{html.escape(block.language)}">'
                 f"{code}</code></pre>"
             )
-        return f"<pre>{code}</pre>"
+        return f"{label}<pre>{code}</pre>"
+    if block.kind == "table":
+        return _render_telegram_table(block)
     if block.kind == "quote":
         return f"<blockquote expandable>{_sanitize_telegram_inline(block.text)}</blockquote>"
     if block.kind == "list":
@@ -298,45 +322,64 @@ class _TelegramHTMLSanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.parts: list[str] = []
+        self.stack: list[tuple[str, str]] = []
+        self.autoclosed: list[str] = []
+
+    def close(self) -> None:
+        super().close()
+        while self.stack:
+            tag, _start = self.stack.pop()
+            self.parts.append(f"</{tag}>")
+
+    def _open(self, tag: str, start: str) -> None:
+        self.parts.append(start)
+        self.stack.append((tag, start))
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
         attr_map = dict(attrs)
         if tag in self._SIMPLE_TAGS:
-            self.parts.append(f"<{tag}>")
+            self._open(tag, f"<{tag}>")
             return
         if tag == "code":
             language = attr_map.get("class", "")
             if re.fullmatch(r"language-[A-Za-z0-9_+-]+", language):
-                self.parts.append(f'<code class="{html.escape(language, quote=True)}">')
+                start = f'<code class="{html.escape(language, quote=True)}">'
             else:
-                self.parts.append("<code>")
+                start = "<code>"
+            self._open("code", start)
             return
         if tag == "blockquote":
             expandable = any(name == "expandable" for name, _value in attrs)
-            self.parts.append("<blockquote expandable>" if expandable else "<blockquote>")
+            start = "<blockquote expandable>" if expandable else "<blockquote>"
+            self._open("blockquote", start)
             return
         if tag == "span" and attr_map.get("class") == "tg-spoiler":
-            self.parts.append('<span class="tg-spoiler">')
+            self._open("span", '<span class="tg-spoiler">')
             return
         if tag == "tg-spoiler":
-            self.parts.append("<tg-spoiler>")
+            self._open("tg-spoiler", "<tg-spoiler>")
             return
         if tag == "a" and attr_map.get("href"):
             href = html.escape(attr_map["href"], quote=True)
-            self.parts.append(f'<a href="{href}">')
+            self._open("a", f'<a href="{href}">')
             return
         self.parts.append(html.escape(self.get_starttag_text() or f"<{tag}>", quote=False))
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
-        allowed = self._SIMPLE_TAGS | {"code", "blockquote", "tg-spoiler", "a"}
-        if tag in allowed:
-            self.parts.append(f"</{tag}>")
-        elif tag == "span":
-            self.parts.append("</span>")
-        else:
+        if tag not in {open_tag for open_tag, _start in self.stack}:
+            if tag in self.autoclosed:
+                self.autoclosed.remove(tag)
+                return
             self.parts.append(html.escape(f"</{tag}>", quote=False))
+            return
+        while self.stack:
+            open_tag, _start = self.stack.pop()
+            self.parts.append(f"</{open_tag}>")
+            if open_tag == tag:
+                break
+            self.autoclosed.append(open_tag)
 
     def handle_data(self, data: str) -> None:
         self.parts.append(html.escape(data, quote=False))
@@ -348,6 +391,67 @@ class _TelegramHTMLSanitizer(HTMLParser):
     def handle_charref(self, name: str) -> None:
         value = html.unescape(f"&#{name};")
         self.parts.append(html.escape(value, quote=False))
+
+
+def _parse_fence_info(value: str) -> tuple[str | None, str | None]:
+    info = value.strip()
+    if not info:
+        return None, None
+    tokens = info.split()
+    language = tokens[0] if re.fullmatch(r"[A-Za-z0-9_+-]+", tokens[0]) else None
+    filename = None
+    for token in tokens[1:] if language else tokens:
+        if token.startswith("filename="):
+            filename = token.removeprefix("filename=").strip('"\'') or None
+            break
+        if token.startswith("file="):
+            filename = token.removeprefix("file=").strip('"\'') or None
+            break
+    return language, filename
+
+
+def _split_table_row(line: str) -> tuple[str, ...]:
+    value = line.strip().strip("|")
+    return tuple(cell.strip() for cell in re.split(r"(?<!\\)\|", value))
+
+
+def _parse_table(lines: list[str], index: int) -> tuple[ReplyBlock, int] | None:
+    if index + 1 >= len(lines) or "|" not in lines[index]:
+        return None
+    headers = _split_table_row(lines[index])
+    separator = _split_table_row(lines[index + 1])
+    if len(headers) < 2 or len(separator) != len(headers):
+        return None
+    if not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in separator):
+        return None
+    rows: list[tuple[str, ...]] = []
+    cursor = index + 2
+    while cursor < len(lines) and "|" in lines[cursor] and lines[cursor].strip():
+        row = _split_table_row(lines[cursor])
+        if len(row) < len(headers):
+            row += ("",) * (len(headers) - len(row))
+        rows.append(row[: len(headers)])
+        cursor += 1
+    return ReplyBlock("table", headers=headers, rows=tuple(rows)), cursor
+
+
+def _render_telegram_table(block: ReplyBlock) -> str:
+    rows = [block.headers, *block.rows]
+    widths = [
+        max(len(_plain_text(row[index])) for row in rows)
+        for index in range(len(block.headers))
+    ]
+    rendered: list[str] = []
+    for row_index, row in enumerate(rows):
+        rendered.append(
+            "  ".join(
+                _plain_text(cell).ljust(widths[index])
+                for index, cell in enumerate(row)
+            ).rstrip()
+        )
+        if row_index == 0:
+            rendered.append("  ".join("─" * width for width in widths))
+    return f"<pre>{html.escape(chr(10).join(rendered), quote=False)}</pre>"
 
 
 def _plain_text(value: str) -> str:

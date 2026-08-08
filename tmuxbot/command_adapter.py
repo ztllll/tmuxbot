@@ -445,14 +445,17 @@ async def handle_interactive_command(
         expected_commands=backend.running_command_names,
     )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
-    await asyncio.sleep(1.0)
-    body = build_interaction_body(
-        b,
-        title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
-        note=spec.notice,
-        lines=spec.lines,
-    )
-    await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
+    try:
+        await asyncio.sleep(1.0)
+        body = build_interaction_body(
+            b,
+            title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
+            note=spec.notice,
+            lines=spec.lines,
+        )
+        await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
+    finally:
+        state.command_transactions.pop(b.name, None)
 
 
 async def handle_passthrough_command(
@@ -480,7 +483,15 @@ async def handle_passthrough_command(
         "再用 <code>/up /down /left /right /tab /space /enter</code> 操作。",
     )
     state.fire(
-        probe_passthrough_result(frontend, b, chat_id, thread_id, spec.command, before_hash)
+        probe_passthrough_result(
+            frontend,
+            b,
+            chat_id,
+            thread_id,
+            spec.command,
+            before_hash,
+            state=state,
+        )
     )
 
 
@@ -492,21 +503,30 @@ async def probe_passthrough_result(
     command: str,
     before_hash: str,
     *,
+    state: "State | None" = None,
     delay: float = 1.4,
 ) -> None:
-    await asyncio.sleep(delay)
-    raw = tmux_capture(b.tmux_target, 90)
-    out = strip_decorations(raw)
-    if _UNKNOWN_FAILURE_RE.search(out):
-        await frontend.send_html(
-            chat_id,
-            thread_id,
-            f"⚠️ <b>{html.escape(command)} 可能被 TUI 拒绝</b>\n"
-            f"<pre>{html.escape(_tail(out, 18))}</pre>",
-        )
-        return
-    if str(hash(raw)) == before_hash:
-        log.info("[%s] passthrough command produced no visible pane delta: %s", b.name, command)
+    try:
+        await asyncio.sleep(delay)
+        raw = tmux_capture(b.tmux_target, 90)
+        out = strip_decorations(raw)
+        if _UNKNOWN_FAILURE_RE.search(out):
+            await frontend.send_html(
+                chat_id,
+                thread_id,
+                f"⚠️ <b>{html.escape(command)} 可能被 TUI 拒绝</b>\n"
+                f"<pre>{html.escape(_tail(out, 18))}</pre>",
+            )
+            return
+        if str(hash(raw)) == before_hash:
+            log.info(
+                "[%s] passthrough command produced no visible pane delta: %s",
+                b.name,
+                command,
+            )
+    finally:
+        if state is not None:
+            state.command_transactions.pop(b.name, None)
 
 
 def build_interaction_body(

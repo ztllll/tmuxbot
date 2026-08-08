@@ -535,6 +535,56 @@ def test_existing_provider_graph_survives_pi_allowlist_migration(tmp_path):
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def test_active_teamrun_tmux_targets_returns_concrete_protected_targets(tmp_path):
+    repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
+    repo.migrate()
+    provider = ProviderProfile(
+        id="provider-pi",
+        binary_name="pi",
+        executable_path="/opt/bin/pi",
+        version="pi 0.84.1",
+        device=8,
+        inode=201,
+        mtime_ns=302,
+        discovered_at=1_700_000_000,
+    )
+    project = ProjectRecord(
+        id="project-alpha",
+        name="Alpha",
+        root_path="/srv/alpha",
+        device=8,
+        inode=303,
+        mtime_ns=404,
+        created_at=1_700_000_001,
+    )
+    session = ManagedSession(
+        id="session-alpha",
+        project_id=project.id,
+        provider_id=provider.id,
+        name="Alpha",
+        tmux_session="team-alpha",
+        tmux_window=1,
+        tmux_pane=2,
+        status="ready",
+        created_at=1_700_000_002,
+    )
+    repo.upsert_provider_profile(provider)
+    repo.create_project(project)
+    repo.create_managed_session(session)
+    with repo._connection() as db:
+        db.execute(
+            "INSERT INTO team_runs(run_id, goal, state, max_retries, created_at, updated_at) "
+            "VALUES ('run-a', 'goal', 'running', 1, '2026-01-01T00:00:00+00:00', "
+            "'2026-01-01T00:00:00+00:00')"
+        )
+        db.execute(
+            "INSERT INTO team_agents(agent_id, run_id, role, managed_session_id) "
+            "VALUES ('agent-a', 'run-a', 'implementer', 'session-alpha')"
+        )
+
+    assert repo.active_teamrun_tmux_targets() == {"team-alpha:1.2"}
+
+
 def test_repository_accepts_pi_provider_after_schema_migration(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()

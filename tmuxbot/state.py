@@ -33,6 +33,8 @@ class Binding:
     bot_token_env: str = "TG_BOT_TOKEN"     # ★ 用哪个 token (env 变量名)
     channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
     mention_required: bool | None = None      # None = inherit frontend deployment default
+    # 0 = provider CLI 常驻；None = inherit TMUXBOT_CLI_IDLE_TIMEOUT (default 3600s)
+    cli_idle_timeout_seconds: int | None = None
     admin: bool = False                       # privileged route; channel must enforce DM shape
     # 飞书 topic 的稳定根消息锚点。仅用于 reply_in_thread=True；Telegram/DM/root route 不使用。
     thread_root_message_id: str | None = None
@@ -72,6 +74,9 @@ class State:
         self.last_active: dict[str, float] = {}
         # TUI 状态行指纹: binding.name → 上次"含时间+token"行的内容
         self.tui_fp: dict[str, str] = {}
+        # provider CLI 连续明确 IDLE 的起点(monotonic time)。不读取 IM last_active；
+        # WORKING/draft/picker/事务/未知前台都会清除此时钟。
+        self.cli_idle_since: dict[str, float] = {}
         # 工具调用聚合器: binding.name → {msg_id, content_lines: list[str], last_ts, target}
         # tool_use/thinking 类事件累计到一条可编辑消息, text 事件触发"封闭"并发新消息
         self.tool_aggregator: dict[str, dict] = {}

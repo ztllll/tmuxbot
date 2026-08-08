@@ -36,6 +36,11 @@ def binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         bot_token_env=str(item.get("bot_token_env", "TG_BOT_TOKEN")),
         channel=str(item.get("channel", "telegram")),
         mention_required=item.get("mention_required"),
+        cli_idle_timeout_seconds=(
+            int(item["cli_idle_timeout_seconds"])
+            if item.get("cli_idle_timeout_seconds") is not None
+            else None
+        ),
         admin=bool(item.get("admin", False)),
         thread_root_message_id=(
             str(item.get("thread_root_message_id"))
@@ -63,6 +68,8 @@ def binding_to_mapping(binding: Binding) -> dict[str, Any]:
     }
     if binding.mention_required is not None:
         item["mention_required"] = binding.mention_required
+    if binding.cli_idle_timeout_seconds is not None:
+        item["cli_idle_timeout_seconds"] = binding.cli_idle_timeout_seconds
     if binding.admin:
         item["admin"] = True
     if binding.thread_root_message_id:
@@ -227,6 +234,20 @@ def build_route_parser() -> argparse.ArgumentParser:
     bind_parser.add_argument(
         "--backend", choices=("claude_code", "codex", "pi"), required=True
     )
+    mention = bind_parser.add_mutually_exclusive_group()
+    mention.add_argument(
+        "--mention-required", action="store_true", dest="mention_required"
+    )
+    mention.add_argument(
+        "--no-mention-required", action="store_false", dest="mention_required"
+    )
+    bind_parser.set_defaults(mention_required=None)
+    bind_parser.add_argument(
+        "--cli-idle-timeout",
+        type=int,
+        dest="cli_idle_timeout_seconds",
+        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
+    )
 
     unbind_parser = subparsers.add_parser("unbind")
     unbind_parser.add_argument("name")
@@ -287,6 +308,8 @@ def run_route_command(argv: Sequence[str]) -> int:
                 "tmux_pane": args.tmux_pane,
                 "cwd": args.cwd,
                 "backend": args.backend,
+                "mention_required": args.mention_required,
+                "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
             }
             bound = store.bind(item)
             print(f"bound: {bound.name}")

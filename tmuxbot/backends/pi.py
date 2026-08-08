@@ -30,6 +30,7 @@ from tmuxbot.tmux import (
     tmux_capture,
     tmux_has_session,
     tmux_new_session,
+    tmux_native_exit,
     tmux_pane_command,
     tmux_safe_launch,
 )
@@ -596,6 +597,14 @@ class PiBackend(Backend):
                     pane = ""
                 if "Working..." in pane or _PI_MODEL_RE.search(strip_decorations(pane)):
                     break
+
+    async def hibernate(self, b: "Binding") -> bool:
+        return await tmux_native_exit(
+            b.tmux_target,
+            "/quit",
+            expected_commands=self.running_command_names,
+            allowed_shells=self.shell_command_names,
+        )
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {

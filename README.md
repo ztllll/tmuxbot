@@ -129,7 +129,12 @@ Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一�
 tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要常驻自愈时，可显式设置
 `TMUXBOT_LIFECYCLE_ENABLED=1`，或用 `tmuxbot install-service --now --self-heal`
 写入 unit。watchdog 默认每 30 秒核对 route target，缺失时按持久 provider identity
-重建 tmux/CLI；它不会执行 `tmux kill-server`。Telegram、飞书和 Web 控制面板都提供带确认的
+重建 tmux/CLI；它不会执行 `tmux kill-server`。独立的 CLI 空闲休眠默认启用：只有真实
+Claude/Codex/Pi TUI 连续明确处于 `IDLE` 60 分钟，且 composer 为空、无 picker/权限等待、
+命令事务、session handoff 或活动 TeamRun 时，才使用 provider 原生退出命令回到 shell；
+不读取“最后一条 IM 消息”的时间。tmux、cwd、route 和 provider identity 保留，下一条精确
+route 消息恢复最近会话。全局用 `TMUXBOT_CLI_IDLE_TIMEOUT=3600`，route 可配置
+`cli_idle_timeout_seconds`，其中 `0` 表示 CLI 常驻。Telegram、飞书和 Web 控制面板都提供带确认的
 “关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
 回滚和验收步骤见 [`docs/single-service-operations.md`](docs/single-service-operations.md)。
 
@@ -172,7 +177,7 @@ journalctl --user -u tmuxbot -f
 - **工具调用聚合**:一个 turn 内的 tool_use 流式刷同一条 IM 消息,真说话单独 push 触发通知
 - **Codex 计划跟随**:`update_plan` 会维护一条可编辑的“当前计划”消息,TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态
 - **双向附件**:Telegram/飞书收到的图片/文件会下载到本机并以 `@path` 注入 TUI;AI 回复里的绝对/相对路径、Markdown 文件链接和图片链接会转成原生 IM 附件,聊天内容不暴露服务器绝对路径
-- **统一富消息**:Codex/Claude 共用 `ReplyDocument`;回复详细信息会显示运行时模型与档位（如 `gpt-5.6-terra medium`）；Telegram 使用 HTML/可展开引用且不附常驻按钮,飞书使用 Card JSON 2.0 header、summary、状态色和可选 CardKit 流式更新
+- **统一富消息**:Claude/Codex/Pi 共用 `ReplyDocument`;回复详细信息会显示运行时模型与档位（如 `gpt-5.6-terra medium`）；代码围栏可保留语言与 `filename=...` 标签，Markdown 表格在 Telegram 退化为对齐的原生 `<pre>` 数据块，在飞书使用 Card 2.0 根级 `table` 组件；Telegram 继续使用安全 HTML/可展开引用，飞书使用 header、summary、状态色和可选 CardKit 流式更新
 - **长回复自动分页**:Telegram 按 HTML/UTF-16 安全边界拆成多条消息并保持代码块标签完整；飞书按 Card JSON 2.0 请求大小拆成连续卡片，不再把普通长回复截断成预览或强制改发 TXT
 - **Telegram 状态标识**:Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色

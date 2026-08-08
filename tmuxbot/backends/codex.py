@@ -38,7 +38,7 @@ from tmuxbot.core.events import (
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import (
-    tmux_capture, tmux_has_session, tmux_new_session,
+    tmux_capture, tmux_has_session, tmux_native_exit, tmux_new_session,
     tmux_pane_command, tmux_pane_process_commands, tmux_safe_launch, tmux_send_key,
 )
 from tmuxbot.utils import strip_decorations
@@ -762,6 +762,14 @@ class CodexBackend(Backend):
             ):
                 break
         await asyncio.sleep(1.0)  # prompt 渲染余量
+
+    async def hibernate(self, b: "Binding") -> bool:
+        return await tmux_native_exit(
+            b.tmux_target,
+            "/quit",
+            expected_commands=self.running_command_names,
+            allowed_shells=self.shell_command_names,
+        )
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {

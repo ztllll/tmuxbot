@@ -217,6 +217,14 @@ def _feishu_blocks_fit(
 
 
 def _split_reply_block(block: ReplyBlock) -> list[ReplyBlock]:
+    if block.kind == "table":
+        if len(block.rows) > 1:
+            middle = len(block.rows) // 2
+            return [
+                replace(block, rows=block.rows[:middle]),
+                replace(block, rows=block.rows[middle:]),
+            ]
+        return [block]
     if block.kind == "list":
         if len(block.items) > 1:
             middle = len(block.items) // 2
@@ -253,6 +261,16 @@ def _reply_blocks_text(blocks: list[ReplyBlock]) -> str:
     for block in blocks:
         if block.kind == "list":
             parts.append("\n".join(f"- {item}" for item in block.items))
+        elif block.kind == "table":
+            parts.append(
+                "\n".join(
+                    [
+                        " | ".join(block.headers),
+                        " | ".join("---" for _ in block.headers),
+                        *(" | ".join(row) for row in block.rows),
+                    ]
+                )
+            )
         else:
             parts.append(block.text)
     return "\n\n".join(part for part in parts if part)
@@ -381,6 +399,35 @@ def build_feishu_interaction_card(
 
 
 def _block_element(block: ReplyBlock, index: int) -> dict[str, Any]:
+    if block.kind == "table":
+        return {
+            "tag": "table",
+            "element_id": f"reply_table_{index}",
+            "page_size": min(max(len(block.rows), 1), 10),
+            "row_height": "auto",
+            "freeze_first_column": len(block.headers) > 3,
+            "header_style": {
+                "background_style": "grey",
+                "bold": True,
+                "lines": 1,
+            },
+            "columns": [
+                {
+                    "name": f"col_{column}",
+                    "display_name": html_to_feishu_markdown(header),
+                    "data_type": "lark_md",
+                    "width": "auto",
+                }
+                for column, header in enumerate(block.headers)
+            ],
+            "rows": [
+                {
+                    f"col_{column}": html_to_feishu_markdown(cell)
+                    for column, cell in enumerate(row)
+                }
+                for row in block.rows
+            ],
+        }
     return {
         "tag": "markdown",
         "element_id": f"reply_body_{index}",
@@ -394,7 +441,8 @@ def _block_markdown(block: ReplyBlock) -> str:
         return f"{'#' * level} {html_to_feishu_markdown(block.text)}"
     if block.kind == "code":
         language = block.language or ""
-        return f"```{language}\n{block.text}\n```"
+        label = f"📄 `{block.filename}`\n" if block.filename else ""
+        return f"{label}```{language}\n{block.text}\n```"
     if block.kind == "quote":
         return "\n".join(f"> {line}" for line in block.text.splitlines())
     if block.kind == "list":

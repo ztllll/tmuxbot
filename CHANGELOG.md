@@ -14,12 +14,13 @@
 - 新增 `tmuxbot route list|inspect|validate|bind|unbind`，写入前校验完整候选配置并原子替换 YAML。
 - 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex；新增 `docs/admin-dm-operations.md`，记录自然语言开通/绑定模板、确定性操作顺序、安全约束和真实 IM 验收清单。
 - 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。
+- 新增 provider CLI-only 空闲休眠：仅在真实 TUI 连续明确 IDLE 时计时，排除草稿、picker/权限等待、命令事务、session handoff 和活动 TeamRun；达到阈值后以 Claude `/exit`、Codex/Pi `/quit` 安全返回 shell，保留 tmux、route 和 provider identity。支持全局 `TMUXBOT_CLI_IDLE_TIMEOUT` 与 route 级 `cli_idle_timeout_seconds`（`0` 常驻）。
 
 ### Changed
 
 - 生产部署收敛为每台主机一个 `tmuxbot.service`：同一 bridge 可承载多个 Telegram/飞书 credential；安装器会停用并删除旧的六小时 `tmuxbot-bridge-refresh@*.timer`，连接恢复改由 frontend 重连循环和 systemd supervisor 负责。
 - 取消一个 credential 固定一个 backend 的限制；heartbeat、tailer、命令、附件、状态与 lifecycle 均按 binding 解析 adapter。
-- Telegram 与飞书统一使用共享 ReplyDocument 展示标题、项目、route 会话、文字状态、正文和 provider footer；Telegram 混合 adapter credential 的状态 footer 也改为按当前 route 解析。
+- Telegram 与飞书统一使用共享 ReplyDocument 展示标题、项目、route 会话、文字状态、正文和 provider footer；Telegram 混合 adapter credential 的状态 footer 也改为按当前 route 解析。代码围栏支持语言和 `filename=...`，Markdown pipe table 在飞书映射为 Card 2.0 根级原生 `table`，在 Telegram HTML 路径安全映射为对齐 `<pre>` 数据块。
 - 增强 Pi 专属状态采集，不替换 Claude/Codex 现有 parser：解析 Pi 原生 footer 的 provider、model、thinking level、累计 input/output、cacheRead/cacheWrite、最近 prompt cache hit、cost/subscription、context 百分比/窗口、auto-compact、cwd、Git branch、session name 与 extension statuses，并用当前 Pi JSONL 补全 TUI 因宽度省略的字段。Pi footer 中 `R` 按官方定义表示 cacheRead。
 - `thread_id` 统一为 `int | str | None`，飞书入站提取字符串 thread，出站通过 `reply_in_thread=True` 回到原 thread；飞书 topic route 新增持久 `thread_root_message_id`，bridge 重启后或直接从 tmux TUI 对话时仍可回到精确 thread。缺少可信回复锚点时继续失败关闭，不降级到群根。
 - tmux session 可被多个 route 共享，只要求完整 pane target 唯一。

@@ -209,6 +209,15 @@ class Backend(ABC):
     async def ensure_running(self, b: "Binding") -> None:
         """如果 binding 对应的 tmux pane 没在跑这个 backend, 拉起来"""
 
+    async def hibernate(self, b: "Binding") -> bool:
+        """Ask an idle provider TUI to exit while preserving tmux and route state.
+
+        Implementations must use the provider's native exit command and return
+        True only after the pane foreground is verified to be an allowed shell.
+        The base implementation is fail-closed.
+        """
+        return False
+
     @abstractmethod
     def command_opts(self) -> dict[str, CmdOpts]:
         """slash 命令到 CmdOpts 的映射 (per-backend 配置)"""

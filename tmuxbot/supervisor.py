@@ -44,6 +44,12 @@ def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         backend=str(item.get("backend", "claude_code")),
         bot_token_env=str(item.get("bot_token_env", "TG_BOT_TOKEN")),
         channel=str(item.get("channel", "telegram")),
+        mention_required=item.get("mention_required"),
+        cli_idle_timeout_seconds=(
+            int(item["cli_idle_timeout_seconds"])
+            if item.get("cli_idle_timeout_seconds") is not None
+            else None
+        ),
         admin=bool(item.get("admin", False)),
         thread_root_message_id=(
             str(item.get("thread_root_message_id"))

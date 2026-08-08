@@ -12,16 +12,19 @@ configured Telegram Bot and Feishu App credential.
 | Main process | `Restart=always`, `RestartSec=5`, `StartLimitIntervalSec=0` | restarts after crashes without a permanent systemd start-limit |
 | Bridge child | `BridgeSupervisor` + Linux parent-death signal | respawns with bounded backoff and cannot survive as an orphan after supervisor SIGKILL |
 | Telegram/Feishu transport | frontend reconnect loop | reconnects a failed polling/WebSocket connection |
-| tmux/provider TUI | `TMUXBOT_LIFECYCLE_ENABLED=1` | recreates missing targets and resumes persisted Claude/Codex/Pi identities; an explicitly missing Claude resume ID falls back once to a fresh TUI |
+| tmux/provider TUI | `TMUXBOT_LIFECYCLE_ENABLED=0` (recommended) | missing tmux targets stay dormant until the next exact-route message; opt-in `1` restores legacy resident self-heal |
+| Provider memory | `TMUXBOT_CLI_IDLE_ENABLED=1`, timeout 3600s | exits only a continuously explicit-IDLE provider TUI, preserving tmux shell, route, cwd and provider identity |
 
-The lifecycle watchdog never runs `tmux kill-server`. Existing panes survive
+The lifecycle watchdog never runs `tmux kill-server`. CLI idle hibernation does
+not use last IM activity, never recreates a missing tmux target, and fails closed
+for drafts, interaction screens, unknown foreground commands and active TeamRuns. Existing panes survive
 service deploys because the unit uses `KillMode=process`.
 
 ## Install
 
 ```bash
 uv tool install 'tmuxbot[full]'
-tmuxbot install-service --now --self-heal
+tmuxbot install-service --now
 loginctl enable-linger "$USER"
 
 systemctl --user status tmuxbot.service
@@ -65,7 +68,7 @@ Use a maintenance window and keep a rollback copy.
 6. Stop every old bridge, atomically install the merged bindings/offsets, then
    start only `tmuxbot.service`.
 7. Verify one service process, one bridge child, every expected frontend,
-   channel-health state, lifecycle watchdog start, and unchanged tmux panes.
+   channel-health state, CLI idle reaper start, and unchanged tmux panes.
 8. Run a real inbound/outbound smoke for every credential and at least one exact
    topic/thread route.
 9. Only after acceptance, disable/remove old app-specific units and rotation or
@@ -85,16 +88,21 @@ journalctl --user -u tmuxbot.service -n 200 --no-pager
 Expected log markers include:
 
 ```text
-lifecycle watchdog starting
+lifecycle watchdog disabled by TMUXBOT_LIFECYCLE_ENABLED
+CLI idle hibernation starting · timeout=3600s
 feishu ws starting                 # once per configured Feishu credential
 N frontend(s) ready
 ```
 
 To test process recovery, terminate only the systemd main PID and confirm the
-unit returns to `active/running` with an incremented `NRestarts`. To test session
-recovery, close one disposable bound tmux session and confirm the watchdog
-recreates the full target and resumes its persisted provider identity. Do not
-perform either test on a pane running an irreplaceable active task.
+unit returns to `active/running` with an incremented `NRestarts`. To test dormant
+session recovery, close one disposable bound tmux session, wait beyond the old
+watchdog interval to prove it stays absent, then send one message to that exact
+route and confirm tmux/provider resume. To test warm hibernation, use a short
+route-level `cli_idle_timeout_seconds` on a disposable idle CLI and confirm the
+pane returns to shell without changing its tmux target/cwd; the next route message
+must resume the persisted provider identity. Do not perform either test on a pane
+running an irreplaceable active task.
 
 If consolidation fails, stop the new service, restore the backed-up bindings,
 offsets, unit files/drop-ins, and data paths, run `systemctl --user daemon-reload`,

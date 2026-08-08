@@ -54,7 +54,11 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
         b,
         ReplyEnvelope(
             title="回复",
-            body="## 结论\n\n完成 <b>部署</b>。\n\n```bash\necho ok\n```",
+            body=(
+                "## 结论\n\n完成 <b>部署</b>。\n\n"
+                "```bash filename=deploy.sh\necho ok\n```\n\n"
+                "| 指标 | 数值 |\n| --- | ---: |\n| 缓存命中率 | 92.5% |"
+            ),
             footer=TerminalStatus(state=TerminalState.WORKING, model="claude-opus"),
             actions=("screen", "status", "cancel", "interrupt"),
         ),
@@ -79,7 +83,11 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     )
     assert "## 结论" in markdown
     assert "完成 **部署**。" in markdown
-    assert "```bash\necho ok\n```" in markdown
+    assert "📄 `deploy.sh`\n```bash\necho ok\n```" in markdown
+    table = next(element for element in elements if element["tag"] == "table")
+    assert [column["display_name"] for column in table["columns"]] == ["指标", "数值"]
+    assert table["rows"] == [{"col_0": "缓存命中率", "col_1": "92.5%"}]
+    assert table["header_style"]["bold"] is True
     assert not any(element["tag"] == "note" for element in elements)
     state = next(element for element in elements if element["element_id"] == "reply_state")
     assert state["text"]["content"] == "🟡 工作中"

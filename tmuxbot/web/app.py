@@ -981,6 +981,7 @@ def create_app(
             "tmux_pane": managed.tmux_pane,
             "cwd": project.root_path,
             "mention_required": body.mention_required,
+            "cli_idle_timeout_seconds": body.cli_idle_timeout_seconds,
         }
         entries = [
             item
