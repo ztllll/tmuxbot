@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -94,6 +95,44 @@ def test_pi_new_session_handoff_adopts_only_newer_matching_session(tmp_path, mon
     os.utime(newer, (stamp, stamp))
 
     assert PiBackend().find_active_jsonl(route) == newer
+
+
+def test_pi_compact_metadata_since_reads_native_compaction_entries(tmp_path):
+    transcript = tmp_path / "session.jsonl"
+    prefix = json.dumps({"type": "session", "id": "session-1", "cwd": "/tmp/repo"}) + "\n"
+    transcript.write_text(prefix, encoding="utf-8")
+    since_byte = transcript.stat().st_size
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "compaction",
+                    "timestamp": "2026-08-09T00:00:00Z",
+                    "tokensBefore": 64000,
+                    "retainedTail": [
+                        {"role": "user", "content": "latest"},
+                        {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "done"}],
+                            "usage": {
+                                "input": 1200,
+                                "output": 50,
+                                "cacheRead": 800,
+                                "cacheWrite": 0,
+                            },
+                        },
+                    ],
+                }
+            )
+            + "\n"
+        )
+
+    assert PiBackend().compact_metadata_since(transcript, since_byte) == {
+        "preTokens": 64000,
+        "postTokens": 2050,
+        "durationMs": None,
+        "trigger": "manual",
+    }
 
 
 def test_pi_parser_normalizes_text_thinking_and_tool_calls():
@@ -310,6 +349,50 @@ def test_pi_terminal_status_accepts_non_reasoning_model_footer():
     assert status is not None
     assert status.model == "model-without-reasoning"
     assert status.effort is None
+
+
+def test_pi_reconcile_session_identity_parses_wrapped_native_session_screen(
+    tmp_path, monkeypatch
+):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    transcript = tmp_path / "very-long-session-directory" / "session.jsonl"
+    write_session(transcript, cwd, session_id="new-session")
+    route = binding(cwd)
+    route.provider_session_id = "old-session"
+    route.pending_session_handoff_after = 123.0
+    wrapped = str(transcript)
+    split = len(wrapped) // 2
+    pane = (
+        "Session Info\n\n"
+        " File:\n"
+        f" {wrapped[:split]}\n"
+        f" {wrapped[split:]}\n"
+        " ID: new-session\n\nMessages\n"
+    )
+
+    async def send_text(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(pi, "tmux_send_text", send_text)
+    monkeypatch.setattr(pi, "tmux_capture", lambda *_args: pane)
+
+    assert asyncio.run(PiBackend().reconcile_session_identity(route)) is True
+    assert route.provider_session_id == "new-session"
+    assert route.transcript_path == transcript
+    assert route.pending_session_handoff_after is None
+
+
+def test_pi_command_options_only_capture_noninteractive_text_commands():
+    opts = PiBackend().command_opts()
+
+    assert set(opts) == {"/new", "/clone", "/compact", "/session"}
+    assert opts["/compact"].expect_compact_done is True
+    assert opts["/new"].defer_new_session_persistence is True
+    assert opts["/clone"].expect_session_handoff is True
+    assert PiBackend().interactive_session_handoff_commands() == frozenset(
+        {"/resume", "/fork", "/import"}
+    )
 
 
 def test_pi_status_footer_preserves_all_pi_specific_metrics():

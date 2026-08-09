@@ -50,6 +50,22 @@ def test_classify_known_capture_interactive_blocked_and_unknown():
     assert classify_command(backend, "/whatever").kind == CommandKind.PASSTHROUGH
 
 
+def test_pi_builtin_command_matrix_uses_pi_specific_interactions():
+    backend = FakeBackend()
+    backend.name = "pi"
+
+    assert classify_command(backend, "/model").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/scoped-models").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/settings").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/resume").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/tree").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/fork").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/trust").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/name").kind == CommandKind.PASSTHROUGH
+    assert classify_command(backend, "/session").kind == CommandKind.PASSTHROUGH
+    assert classify_command(backend, "/quit").kind == CommandKind.BLOCKED
+
+
 def test_tui_action_commands():
     assert action_from_command("/down", "") == "down"
     assert action_from_command("/key", "return") == "enter"

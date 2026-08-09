@@ -64,6 +64,42 @@ def test_channel_new_arms_session_handoff_before_tmux_injection(monkeypatch):
     assert sent[0][1] == "/new"
 
 
+def test_channel_clone_arms_session_handoff_before_tmux_injection(monkeypatch):
+    binding = _binding()
+    sent = []
+
+    class Backend(_Backend):
+        def command_opts(self):
+            return {"/clone": CmdOpts(expect_session_handoff=True)}
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*args, **_kwargs):
+        sent.append(args)
+
+    def fire(coro):
+        coro.close()
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            SimpleNamespace(),
+            Backend(),
+            binding,
+            SimpleNamespace(pending_rename={}, fire=fire),
+            1,
+            None,
+            "/clone",
+        )
+    )
+
+    assert binding.pending_session_handoff_after is not None
+    assert sent[0][1] == "/clone"
+
+
 def test_stop_closes_tmux_without_starting_it_first(monkeypatch):
     b = _binding()
     calls = []

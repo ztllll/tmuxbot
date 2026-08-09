@@ -33,6 +33,7 @@ from tmuxbot.tmux import (
     tmux_native_exit,
     tmux_pane_command,
     tmux_safe_launch,
+    tmux_send_text,
 )
 from tmuxbot.utils import strip_decorations
 
@@ -123,6 +124,40 @@ def _parse_pi_location_line(line: str) -> tuple[str | None, str | None, str | No
         location = branch_match.group(1).strip()
         branch = branch_match.group(2).strip()
     return location, branch, session_name.strip() if separator else None
+
+
+def _usage_tokens(usage: Any) -> int:
+    if not isinstance(usage, dict):
+        return 0
+    total = usage.get("totalTokens")
+    if total is not None:
+        try:
+            return int(total or 0)
+        except (TypeError, ValueError):
+            pass
+    result = 0
+    for key in ("input", "output", "cacheRead", "cacheWrite"):
+        try:
+            result += int(usage.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _retained_tail_tokens(value: Any) -> int | None:
+    if not isinstance(value, list):
+        return None
+    total = 0
+    found = False
+    for message in value:
+        if not isinstance(message, dict):
+            continue
+        usage = message.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        found = True
+        total += _usage_tokens(usage)
+    return total if found else 0
 
 
 def _usage_cost(usage: Any) -> float:
@@ -606,6 +641,46 @@ class PiBackend(Backend):
             allowed_shells=self.shell_command_names,
         )
 
+    async def reconcile_session_identity(self, b: "Binding") -> bool:
+        """Read Pi's native `/session` screen after an interactive switch."""
+        if b.pending_session_handoff_after is None:
+            return False
+        try:
+            await tmux_send_text(
+                b.tmux_target,
+                "/session",
+                expected_commands=self.running_command_names,
+            )
+            await asyncio.sleep(0.45)
+            pane = strip_decorations(tmux_capture(b.tmux_target, 120))
+        except Exception:
+            log.exception("[%s] Pi session identity probe failed", b.name)
+            return False
+        session_match = re.search(r"^\s*ID:\s*([A-Za-z0-9-]+)\s*$", pane, re.M)
+        file_match = re.search(r"^\s*File:\s*\n(?P<path>(?:\s+[^\n]+\n?)+?)^\s*ID:", pane, re.M)
+        if session_match is None or file_match is None:
+            return False
+        session_id = session_match.group(1)
+        path_text = "".join(line.strip() for line in file_match.group("path").splitlines())
+        transcript = Path(path_text).expanduser()
+        header = _session_header(transcript)
+        if not header or str(header.get("id") or "") != session_id:
+            return False
+        try:
+            actual_cwd = Path(str(header.get("cwd") or "")).expanduser().resolve()
+        except OSError:
+            return False
+        if actual_cwd != b.cwd.expanduser().resolve():
+            return False
+        b.provider_session_id = session_id
+        b.transcript_path = transcript
+        b.last_session_id = session_id
+        b.pending_session_handoff_after = None
+        return True
+
+    def interactive_session_handoff_commands(self) -> frozenset[str]:
+        return frozenset({"/resume", "/fork", "/import"})
+
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
             "/new": CmdOpts(
@@ -617,19 +692,63 @@ class PiBackend(Backend):
                 done_pattern=re.compile(r"✓\s*New session started", re.I),
                 fallback_summary="✅ <b>Pi 新会话已启动</b>\n· 新会话将在首条回复落盘后绑定",
             ),
+            "/clone": CmdOpts(
+                init_delay=0.4,
+                poll=0.3,
+                max_iters=20,
+                expect_new_session=True,
+                expect_session_handoff=True,
+                done_pattern=re.compile(r"Cloned to new session", re.I),
+                fallback_summary="✅ <b>Pi 会话已克隆</b>",
+                failure_summary="⚠️ <b>Pi clone 未确认完成</b>",
+            ),
             "/compact": CmdOpts(
                 init_delay=1.0,
                 poll=0.5,
-                max_iters=120,
+                max_iters=240,
+                expect_compact_done=True,
                 notice="⏳ Pi 压缩上下文中…",
                 fallback_summary="✅ <b>Pi 上下文压缩已结束</b>",
+                failure_summary=(
+                    "⚠️ <b>Pi 未生成压缩记录</b>\n"
+                    "· 当前会话可能太小、压缩被取消或 provider 返回错误；请用 /screen 查看 TUI"
+                ),
             ),
-            "/resume": CmdOpts(init_delay=0.5, poll=0.3, max_iters=8),
             "/session": CmdOpts(init_delay=0.4, poll=0.3, max_iters=8, lines=120),
         }
 
     def command_aliases(self) -> dict[str, str]:
         return {}
+
+    def compact_metadata_since(
+        self, jsonl_path: Path | None, since_byte: int = 0
+    ) -> dict | None:
+        if jsonl_path is None:
+            return None
+        try:
+            with jsonl_path.open("rb") as stream:
+                stream.seek(max(0, since_byte))
+                chunk = stream.read().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+        for line in reversed(chunk.splitlines()):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if row.get("type") != "compaction":
+                continue
+            try:
+                pre_tokens = int(row.get("tokensBefore", 0) or 0)
+            except (TypeError, ValueError):
+                pre_tokens = 0
+            return {
+                "preTokens": pre_tokens or None,
+                "postTokens": _retained_tail_tokens(row.get("retainedTail")),
+                "durationMs": None,
+                "trigger": "manual",
+            }
+        return None
 
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         try:

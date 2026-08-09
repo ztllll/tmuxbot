@@ -468,6 +468,8 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - 飞书无 typing API; 飞书 text 消息不能编辑,必须用 interactive card
 - `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`（普通 Bot API HTML 不支持原生 table）
 - Pi `/new` 的 JSONL 是延迟持久化：TUI 先显示 `✓ New session started`，新文件要等首条 assistant 回复才落盘。命令确认使用 TUI marker，但 `pending_session_handoff_after` 必须一直保留到 tailer 认领新 JSONL，不能因即时看不到文件而清除。
+- Pi 命令分三类维护：文本 capture（`/session`）、JSONL 硬信号（`/new`、`/clone`、`/compact`）和 interactive picker（`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import`）。interactive session switch 的事务必须保留到用户按 Enter 完成选择，再调用 Pi 原生 `/session` 读取 File/ID 同步 route identity；不得 capture 后自动 Escape 关闭 picker。
+- Pi `/compact` 的完成硬信号是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。`tokensBefore` 是压缩前上下文；有 `retainedTail` 时从其中 usage 估算保留 token。没有新增 entry（例如 `Nothing to compact`）必须失败关闭，不能发送成功兜底。
 
 ---
 

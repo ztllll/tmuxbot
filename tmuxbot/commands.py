@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tmuxbot.backends.base import CmdOpts
@@ -132,6 +133,27 @@ async def capture_and_push(
             new_session_seen = True
             early_reason = "session_switch"
             break
+        # ★ 硬信号 1b: clone/fork 类命令会立即切换到新的 transcript；
+        # tailer 负责最终写回 identity，这里只确认当前 backend 已能精确找到新 session。
+        if opts.expect_session_handoff and initial_session:
+            try:
+                active_jsonl = backend.find_active_jsonl(b)
+                if active_jsonl is not None:
+                    identity = backend.session_identity(b, active_jsonl)
+                    if identity.session_id != initial_session:
+                        b.provider_session_id = identity.session_id
+                        b.transcript_path = (
+                            Path(identity.transcript_path)
+                            if identity.transcript_path
+                            else active_jsonl
+                        )
+                        b.last_session_id = identity.session_id
+                        b.pending_session_handoff_after = None
+                        new_session_seen = True
+                        early_reason = "transcript_handoff"
+                        break
+            except Exception as e:
+                log.debug(f"capture_and_push {key} transcript handoff err: {e}")
         # ★ 硬信号 2: jsonl 末尾出现 compact_boundary system event — /compact 不切 session 但写 marker
         if opts.expect_compact_done:
             try:
@@ -274,6 +296,9 @@ async def capture_and_push(
             await frontend.send_html(chat_id, thread_id, warn)
             return
         if opts.expect_compact_done and compact_meta is None:
+            if opts.failure_summary:
+                await frontend.send_html(chat_id, thread_id, opts.failure_summary)
+                return
             warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未出现 compact_boundary marker (命令可能未真触发, 检查 TUI 屏幕)"
             await frontend.send_html(chat_id, thread_id, warn)
             return

@@ -44,9 +44,11 @@ class CmdOpts:
     # after the first assistant reply. Keep the handoff armed instead of
     # requiring an immediate transcript switch.
     defer_new_session_persistence: bool = False
+    expect_session_handoff: bool = False  # clone 等会立即创建/切换 transcript 的命令
     expect_compact_done: bool = False # /compact: 不切 session_id, 同 jsonl 末尾追加压缩 marker
     notice: str | None = None         # 进度提示文案
     fallback_summary: str | None = None  # 走完都没出 summary 时用
+    failure_summary: str | None = None   # 期待硬信号但未出现时的 provider 专属提示
 
 
 class Backend(ABC):
@@ -221,6 +223,16 @@ class Backend(ABC):
         The base implementation is fail-closed.
         """
         return False
+
+    async def reconcile_session_identity(self, b: "Binding") -> bool:
+        """Refresh provider identity after an interactive TUI session switch.
+
+        Backends without a safe native-TUI query leave this fail-closed.
+        """
+        return False
+
+    def interactive_session_handoff_commands(self) -> frozenset[str]:
+        return frozenset()
 
     @abstractmethod
     def command_opts(self) -> dict[str, CmdOpts]:

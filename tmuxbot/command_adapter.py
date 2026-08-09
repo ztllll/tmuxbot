@@ -113,6 +113,18 @@ _CLAUDE_INTERACTIVE = {
     "/workflows": "打开 workflow 进度界面。",
 }
 
+_PI_INTERACTIVE = {
+    "/login": "管理 Pi provider 登录凭据。",
+    "/model": "切换模型, 无参数时打开模型 picker。",
+    "/scoped-models": "配置当前会话的模型循环范围。",
+    "/settings": "打开 Pi 设置界面。",
+    "/resume": "恢复历史会话并切换当前 provider session。",
+    "/tree": "浏览当前会话树并选择继续位置。",
+    "/trust": "保存当前项目的信任决定。",
+    "/fork": "从历史 user message 创建新会话。",
+    "/import": "导入 JSONL 并切换当前 provider session。",
+}
+
 _CODEX_INTERACTIVE = {
     "/agent": "切换/查看 agent thread。",
     "/apps": "打开 app/connector picker。",
@@ -252,7 +264,12 @@ def classify_command(backend: "Backend", command: str) -> CommandSpec:
     if command in backend.command_opts():
         return CommandSpec(command, CommandKind.CAPTURE)
 
-    interactive = _CODEX_INTERACTIVE if backend.name == "codex" else _CLAUDE_INTERACTIVE
+    if backend.name == "codex":
+        interactive = _CODEX_INTERACTIVE
+    elif backend.name == "pi":
+        interactive = _PI_INTERACTIVE
+    else:
+        interactive = _CLAUDE_INTERACTIVE
     if command in interactive:
         return CommandSpec(
             command,
@@ -380,6 +397,8 @@ async def handle_tui_action(
     thread_id: int | str | None,
     action: str,
     *,
+    backend: "Backend | None" = None,
+    state: "State | None" = None,
     lines: int = 90,
 ) -> None:
     key, label = _TUI_ACTIONS.get(action, (None, ""))
@@ -394,6 +413,24 @@ async def handle_tui_action(
     if key is not None:
         tmux_send_key(b.tmux_target, key)
         await asyncio.sleep(0.45)
+    txn = state.command_transactions.get(b.name) if state is not None else None
+    if (
+        action == "enter"
+        and backend is not None
+        and txn is not None
+        and txn.command in backend.interactive_session_handoff_commands()
+    ):
+        b.pending_session_handoff_after = txn.started_at
+        if await backend.reconcile_session_identity(b):
+            txn.status = "completed"
+            state.command_transactions.pop(b.name, None)
+            await frontend.send_html(
+                chat_id,
+                thread_id,
+                f"✅ <b>{html.escape(txn.command)} 会话切换已绑定</b>\n"
+                f"· session <code>{html.escape((b.provider_session_id or '')[:8])}</code>",
+            )
+            return
     body = build_interaction_body(b, title=f"🎛 TUI 控制 · {html.escape(label)}", lines=lines)
     await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
 
@@ -445,16 +482,15 @@ async def handle_interactive_command(
         expected_commands=backend.running_command_names,
     )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
-    try:
-        await asyncio.sleep(1.0)
-        body = build_interaction_body(
-            b,
-            title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
-            note=spec.notice,
-            lines=spec.lines,
-        )
-        await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
-    finally:
+    await asyncio.sleep(1.0)
+    body = build_interaction_body(
+        b,
+        title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
+        note=spec.notice,
+        lines=spec.lines,
+    )
+    await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
+    if spec.command not in backend.interactive_session_handoff_commands():
         state.command_transactions.pop(b.name, None)
 
 

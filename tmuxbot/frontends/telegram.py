@@ -1629,7 +1629,13 @@ class TelegramFrontend(Frontend):
                 )
             else:
                 await handle_tui_action(
-                    F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                    F_,
+                    b,
+                    cq.message.chat.id,
+                    getattr(cq.message, "message_thread_id", None),
+                    action,
+                    backend=F_.backend_for(b),
+                    state=S,
                 )
             await cq.answer("✓")
 

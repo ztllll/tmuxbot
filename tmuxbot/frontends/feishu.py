@@ -1432,7 +1432,15 @@ class FeishuFrontend(Frontend):
         if action == "status":
             await self.send_light_status_summary(b, chat_id, b.thread_id)
             return
-        await handle_tui_action(self, b, chat_id, b.thread_id, action)
+        await handle_tui_action(
+            self,
+            b,
+            chat_id,
+            b.thread_id,
+            action,
+            backend=self.backend_for(b),
+            state=self.state,
+        )
 
     # ────────── auto-provision (/init 自动开通会话) ──────────
 
