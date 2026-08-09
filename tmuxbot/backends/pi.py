@@ -773,20 +773,19 @@ class PiBackend(Backend):
         if self.is_running_command(command):
             return
         if not self.can_start_from_command(command):
-            log.warning(
-                "[%s] refusing to start Pi in pane with foreground command %r",
-                b.name,
-                command,
+            raise RuntimeError(
+                f"refusing to start Pi in pane {b.tmux_target} "
+                f"with foreground command {command!r}"
             )
-            return
         launched = await tmux_safe_launch(
             b.tmux_target,
             _start_cmd(b.provider_session_id or b.last_session_id),
             allowed_shells=self.shell_command_names,
         )
         if not launched:
-            log.warning("[%s] Pi launch aborted after foreground revalidation", b.name)
-            return
+            raise RuntimeError(
+                f"Pi launch aborted after foreground revalidation in pane {b.tmux_target}"
+            )
         for _ in range(40):
             await asyncio.sleep(0.25)
             if self.is_running_command(tmux_pane_command(b.tmux_target)):

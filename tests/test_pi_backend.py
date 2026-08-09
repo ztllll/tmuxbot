@@ -541,6 +541,15 @@ def test_pi_terminal_status_accepts_non_reasoning_model_footer():
     assert status.effort is None
 
 
+def test_pi_ensure_running_rejects_an_unknown_foreground_command(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    monkeypatch.setattr(pi, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(pi, "tmux_pane_command", lambda _target: "python3")
+
+    with pytest.raises(RuntimeError, match="refusing to start"):
+        asyncio.run(PiBackend().ensure_running(route))
+
+
 def test_pi_ensure_running_fails_closed_when_tui_never_becomes_ready(tmp_path, monkeypatch):
     route = binding(tmp_path)
     commands = iter(["bash", "bash", "pi", "pi", "pi"])
