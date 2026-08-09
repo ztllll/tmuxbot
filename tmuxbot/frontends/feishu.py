@@ -872,14 +872,22 @@ class FeishuFrontend(Frontend):
         await asyncio.to_thread(self._patch_card_sync, message_id, _build_card(md))
 
     async def finalize_status_html(
-        self, chat_id: int | str, message_id: str, html_text: str
+        self,
+        chat_id: int | str,
+        message_id: str,
+        html_text: str,
+        *,
+        display_state: str = "completed",
     ) -> None:
         """Close a V2 status card while retaining its provider details."""
         if message_id in getattr(self, "_v2_message_ids", set()):
-            self._remember_completed_v2_message(
-                message_id,
-                getattr(self, "_v2_message_footers", {}).get(message_id),
-            )
+            if display_state == "completed":
+                self._remember_completed_v2_message(
+                    message_id,
+                    getattr(self, "_v2_message_footers", {}).get(message_id),
+                )
+            else:
+                self._v2_message_states[message_id] = display_state
         await self.edit_html(chat_id, message_id, html_text)
 
     def _remember_completed_v2_message(

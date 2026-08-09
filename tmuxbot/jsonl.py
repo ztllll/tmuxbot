@@ -255,6 +255,10 @@ async def on_tmux_event(
 
     now = time.time()
 
+    if kind == "provider_lifecycle":
+        await _handle_provider_lifecycle(frontend, b, state, backend, body)
+        return
+
     if kind == "attachment":
         await _send_html_with_outbound_attachments(frontend, b, body)
         return
@@ -341,6 +345,27 @@ async def on_tmux_event(
         new_html = _append_footer("\n".join(agg["content"]), agg["task_footer"])
         await frontend.edit_html(agg["chat_id"], agg["msg_id"], new_html)
     await _send_outbound_attachments(frontend, b, attachments)
+
+
+async def _handle_provider_lifecycle(frontend, b, state, backend, body: str) -> None:
+    current = state.compaction_status.pop(b.name, None)
+    footer = _task_footer(b, backend)
+    content = _append_footer(body, footer)
+    if current and current.get("msg_id") is not None:
+        await frontend.finalize_status_html(
+            current["chat_id"],
+            current["msg_id"],
+            content,
+            display_state="completed",
+        )
+    else:
+        await frontend.send_status_html(
+            b.chat_id,
+            b.thread_id,
+            content,
+            display_state="completed",
+            footer=await _capture_terminal_status(b, backend),
+        )
 
 
 def _task_footer(b: "Binding", backend: "Backend") -> str:

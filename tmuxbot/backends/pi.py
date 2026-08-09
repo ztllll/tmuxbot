@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shlex
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -115,6 +116,15 @@ def encode_pi_cwd(cwd: Path) -> str:
     body = resolved.lstrip("/\\")
     body = re.sub(r"[/\\:]", "-", body)
     return f"--{body}--"
+
+
+def _pi_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _scaled_number(value: str) -> int:
@@ -518,7 +528,27 @@ class PiBackend(Backend):
             row = json.loads(line)
         except json.JSONDecodeError:
             return []
-        if row.get("type") != "message":
+        row_type = row.get("type")
+        if row_type == "compaction":
+            tokens_before = int(row.get("tokensBefore", 0) or 0)
+            usage = row.get("usage") or {}
+            return [
+                self.provider_event(
+                    row,
+                    ProviderEventKind.LIFECYCLE_CHANGE,
+                    (
+                        "✅ <b>Pi 自动压缩已完成</b>\n"
+                        f"· 压缩前上下文 <code>{tokens_before:,}</code> tokens\n"
+                        f"· 摘要用量 <code>{int(usage.get('totalTokens', 0) or 0):,}</code> tokens"
+                    ),
+                    provider_session_id=provider_session_id,
+                    metadata={
+                        "lifecycle": "compaction_end",
+                        "tokens_before": tokens_before,
+                    },
+                )
+            ]
+        if row_type != "message":
             return []
         message = row.get("message") or {}
         if message.get("role") != "assistant":
@@ -549,6 +579,17 @@ class PiBackend(Backend):
                 )
         native_id = row.get("id") or message.get("responseId")
         events: list[ProviderEvent] = []
+        if message.get("stopReason") == "error":
+            error_message = str(message.get("errorMessage") or "Pi provider request failed")
+            events.append(
+                self.provider_event(
+                    row,
+                    ProviderEventKind.PROVIDER_ERROR,
+                    f"⚠️ <b>Pi 请求失败</b>\n· {html.escape(error_message)}",
+                    provider_session_id=provider_session_id,
+                    native_id=f"{native_id}:error" if native_id else None,
+                )
+            )
         if tools:
             events.append(
                 self.provider_event(
@@ -753,8 +794,18 @@ class PiBackend(Backend):
                     pane = tmux_capture(b.tmux_target, 12)
                 except Exception:
                     pane = ""
-                if "Working..." in pane or _PI_MODEL_RE.search(strip_decorations(pane)):
-                    break
+                clean = strip_decorations(pane)
+                status = self.parse_terminal_status(pane)
+                if _PI_WORKING_RE.search(clean) or (
+                    status is not None
+                    and (
+                        status.model is not None
+                        or status.context_limit is not None
+                        or bool(status.extension_statuses)
+                    )
+                ):
+                    return
+        raise RuntimeError(f"Pi TUI did not become ready in pane {b.tmux_target}")
 
     async def hibernate(self, b: "Binding") -> bool:
         return await tmux_native_exit(
@@ -926,6 +977,34 @@ class PiBackend(Backend):
         result = [task for task in latest if task.get("status") in allowed]
         result.sort(key=lambda task: int(task.get("id", 0) or 0))
         return result
+
+    def estimated_compaction_seconds(self, b: "Binding") -> int:
+        transcript = self.find_active_jsonl(b)
+        if transcript is None:
+            return 180
+        durations: list[float] = []
+        previous_timestamp: float | None = None
+        try:
+            rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return 180
+        for line in rows:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            timestamp = _pi_timestamp(row.get("timestamp"))
+            if row.get("type") == "compaction" and timestamp is not None:
+                if previous_timestamp is not None:
+                    duration = timestamp - previous_timestamp
+                    if 20 <= duration <= 600:
+                        durations.append(duration)
+            if timestamp is not None and row.get("type") in {"message", "compaction"}:
+                previous_timestamp = timestamp
+        if not durations:
+            return 180
+        recent = sorted(durations[-5:])
+        return max(30, min(360, round(recent[len(recent) // 2])))
 
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         try:

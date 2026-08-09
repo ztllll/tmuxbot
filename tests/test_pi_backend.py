@@ -166,6 +166,66 @@ def test_pi_parser_normalizes_text_thinking_and_tool_calls():
     assert events[1].text == "Ready &lt;now&gt;"
 
 
+def test_pi_estimates_compaction_eta_from_recent_session_history(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"type": "session", "version": 3, "id": "session-1", "cwd": str(cwd)},
+        {"type": "message", "id": "m1", "timestamp": "2026-08-09T00:00:00Z"},
+        {"type": "compaction", "id": "c1", "timestamp": "2026-08-09T00:02:00Z"},
+        {"type": "message", "id": "m2", "timestamp": "2026-08-09T01:00:00Z"},
+        {"type": "compaction", "id": "c2", "timestamp": "2026-08-09T01:03:20Z"},
+        {"type": "message", "id": "m3", "timestamp": "2026-08-09T02:00:00Z"},
+        {"type": "compaction", "id": "c3", "timestamp": "2026-08-09T02:03:00Z"},
+    ]
+    transcript.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    assert PiBackend().estimated_compaction_seconds(binding(cwd)) == 180
+
+
+def test_pi_parser_emits_provider_errors_and_compaction_lifecycle():
+    backend = PiBackend()
+    error_events = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "id": "error-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "stopReason": "error",
+                    "errorMessage": "Request timed out.",
+                },
+            }
+        ),
+        "session-1",
+    )
+    compaction_events = backend.parse_event(
+        json.dumps(
+            {
+                "type": "compaction",
+                "id": "compact-1",
+                "timestamp": "2026-08-09T07:54:15.528Z",
+                "tokensBefore": 333342,
+                "summary": "summary",
+                "usage": {"totalTokens": 73611},
+            }
+        ),
+        "session-1",
+    )
+
+    assert error_events[0].kind == ProviderEventKind.PROVIDER_ERROR
+    assert "Request timed out" in error_events[0].text
+    assert compaction_events[0].kind == ProviderEventKind.LIFECYCLE_CHANGE
+    assert compaction_events[0].metadata["lifecycle"] == "compaction_end"
+    assert compaction_events[0].metadata["tokens_before"] == 333342
+
+
 def test_pi_parser_ignores_user_and_tool_result_messages():
     backend = PiBackend()
     for role in ("user", "toolResult"):
@@ -479,6 +539,27 @@ def test_pi_terminal_status_accepts_non_reasoning_model_footer():
     assert status is not None
     assert status.model == "model-without-reasoning"
     assert status.effort is None
+
+
+def test_pi_ensure_running_fails_closed_when_tui_never_becomes_ready(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    commands = iter(["bash", "bash", "pi", "pi", "pi"])
+
+    monkeypatch.setattr(pi, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(pi, "tmux_pane_command", lambda _target: next(commands, "pi"))
+
+    async def safe_launch(*_args, **_kwargs):
+        return True
+
+    async def fast_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(pi, "tmux_safe_launch", safe_launch)
+    monkeypatch.setattr(pi, "tmux_capture", lambda *_args: "starting without footer")
+    monkeypatch.setattr(pi.asyncio, "sleep", fast_sleep)
+
+    with pytest.raises(RuntimeError, match="did not become ready"):
+        asyncio.run(PiBackend().ensure_running(route))
 
 
 def test_pi_reconcile_session_identity_parses_wrapped_native_session_screen(

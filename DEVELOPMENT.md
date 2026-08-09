@@ -458,7 +458,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 参见 `CLAUDE.md` 第 2 节。摘要:
 
 - `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
-- Claude/Codex 的 `paste-buffer -p` 前先等 TUI idle；paste 渲染后及每次 Enter 前再要求连续稳定 idle 0.5s，封住“初检 idle → 队列/重绘转 busy → Enter 被忽略”的竞态。Pi 是显式例外：官方 TUI 在 streaming/Working 时支持普通 Enter 将消息作为 steering queue 提交，所以 `ProviderCapabilities.accepts_input_while_busy=True`，入站文字/附件会立即 paste + Enter，不等待 300s idle；此路径不能以“仍 busy”作为成功，必须观察 composer 清空/变化，避免假确认。所有 provider 的原草稿仍在时才有限重试，避免漏交与重复提交。
+- Claude/Codex 的 `paste-buffer -p` 前先等 TUI idle；paste 渲染后及每次 Enter 前再要求连续稳定 idle 0.5s，封住“初检 idle → 队列/重绘转 busy → Enter 被忽略”的竞态。Pi 是显式例外：官方 TUI 在 streaming/Working 时支持普通 Enter 将消息作为 steering queue 提交，所以 `ProviderCapabilities.accepts_input_while_busy=True`，入站文字/附件会立即 paste + Enter，不等待 300s idle；此路径不能以“仍 busy”作为成功，必须观察 composer 清空/变化，避免假确认。provider CLI 从 shell 唤醒是另一条显式路径：只按 foreground allowlist 判断，不得让旧 TUI scrollback 的 `Working...` 阻止启动；启动后必须验证真实 provider footer/status 出现，否则 fail closed，不能继续把用户消息粘进 shell。所有 provider 的原草稿仍在时才有限重试，避免漏交与重复提交。
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
 - TG 4096 限 UTF-16 单位
 - `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)
@@ -469,7 +469,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`（普通 Bot API HTML 不支持原生 table）
 - Pi `/new` 的 JSONL 是延迟持久化：TUI 先显示 `✓ New session started`，新文件要等首条 assistant 回复才落盘。命令确认使用 TUI marker，但 `pending_session_handoff_after` 必须一直保留到 tailer 认领新 JSONL，不能因即时看不到文件而清除。
 - Pi 命令分三类维护：文本 capture（`/session`）、JSONL 硬信号（`/new`、`/clone`、`/compact`）和 interactive picker（`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import`）。interactive session switch 的事务必须保留到用户按 Enter 完成选择，再调用 Pi 原生 `/session` 读取 File/ID 同步 route identity；不得 capture 后自动 Escape 关闭 picker。
-- Pi `/compact` 的完成硬信号是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。`tokensBefore` 是压缩前上下文；有 `retainedTail` 时从其中 usage 估算保留 token。没有新增 entry（例如 `Nothing to compact`）必须失败关闭，不能发送成功兜底。
+- Pi `/compact` 与自动压缩的完成硬信号都是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。heartbeat 从 TUI `Compacting context...` / `Auto-compacting...` 建立可编辑 IM 状态卡，ETA 使用当前 session 最近 5 次 compaction 的中位耗时（无历史默认 180s），每约 12s 更新；entry 落盘后编辑为完成回执并带 `tokensBefore`/summary usage/Todo。若 TUI 离开 compacting 但无 entry，必须标记“未确认完成/可能未续跑”，不能假报成功。
 - Pi 可由 extension 替换原生 footer。当前 parser 同时支持原生 footer 与 `pi-statusline` powerline（provider/model/thinking/cwd/Git/context/tokens/cache/cost/extension status）；composer 识别也必须接受该 statusline，Todo overlay 出现在编辑器上方时不能误入草稿。
 - `rpiv-todo` 的权威状态不是独立文件，而是当前 Pi JSONL 分支上最后一条合法 `toolResult(toolName="todo")` 的 `message.details.tasks` 完整快照。`read_tasks()` 必须沿最后 leaf 的 `parentId` 链 replay、忽略 abandoned branch 与 `deleted` 项。只要快照里仍有非 deleted task，Pi 的每条 assistant/working IM 消息都固定追加 TUI 风格的完整 `Todos (completed/total)` 面板，保留原顺序、`○/◐/✓`、task ID、`activeForm` 和 `blockedBy`；即使全部 completed 也继续显示，只有 clear/全部 deleted 后隐藏。Claude harness 继续使用原有 summary footer 语义。
 

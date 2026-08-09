@@ -649,6 +649,20 @@ class TelegramFrontend(Frontend):
             self._status_messages[message_id] = (binding, display_state, footer)
         return first_msg
 
+    async def finalize_status_html(
+        self,
+        chat_id: int,
+        message_id: int,
+        html_text: str,
+        *,
+        display_state: str = "completed",
+    ) -> None:
+        status = getattr(self, "_status_messages", {}).get(message_id)
+        if status is not None:
+            binding, _old_state, footer = status
+            self._status_messages[message_id] = (binding, display_state, footer)
+        await self.edit_html(chat_id, message_id, html_text)
+
     async def edit_html(self, chat_id: int, message_id: int, html_text: str) -> None:
         """编辑已发送消息 — 工具调用聚合用。超长直接 truncate 末尾。"""
         status = getattr(self, "_status_messages", {}).get(message_id)

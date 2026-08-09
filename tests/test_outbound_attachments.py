@@ -44,8 +44,10 @@ class FakeFrontend:
 
 
 class FinalizingFrontend(FakeFrontend):
-    async def finalize_status_html(self, chat_id, message_id, html_text):
-        self.sent.append(("finalize", chat_id, message_id, html_text))
+    async def finalize_status_html(
+        self, chat_id, message_id, html_text, *, display_state="completed"
+    ):
+        self.sent.append(("finalize", chat_id, message_id, html_text, display_state))
 
 
 class EnhancedFakeFrontend(FakeFrontend):
@@ -105,6 +107,44 @@ def binding(tmp_path):
         tmux_pane=0,
         cwd=tmp_path,
     )
+
+
+def test_pi_compaction_end_edits_the_existing_status_message(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(
+            setup_mode=False,
+            compaction_status={
+                "alpha": {"msg_id": 101, "chat_id": 123, "started_at": 1000.0}
+            },
+        )
+        b = binding(tmp_path)
+        backend = PiTodoBackend(
+            [{"id": 1, "subject": "Continue", "status": "in_progress"}]
+        )
+
+        await on_tmux_event(
+            b,
+            "provider_lifecycle",
+            "✅ <b>Pi 自动压缩已完成</b>",
+            frontend,
+            state,
+            backend,
+        )
+
+        assert state.compaction_status == {}
+        assert frontend.sent == [
+            (
+                "finalize",
+                123,
+                101,
+                "✅ <b>Pi 自动压缩已完成</b>\n\n"
+                "● <b>Todos (0/1)</b>\n└─ ◐ <b>Continue</b>",
+                "completed",
+            )
+        ]
+
+    asyncio.run(run())
 
 
 def test_pi_todo_snapshot_is_appended_to_every_final_assistant_message(tmp_path):
@@ -351,7 +391,11 @@ def test_final_assistant_text_immediately_completes_the_tool_status_card(tmp_pat
 
         assert state.tool_aggregator == {}
         assert frontend.sent[0] == (
-            "finalize", 123, "om-working", "💭 <b>工作中…</b>\n工具执行\n\n<i>✓ 完成</i>",
+            "finalize",
+            123,
+            "om-working",
+            "💭 <b>工作中…</b>\n工具执行\n\n<i>✓ 完成</i>",
+            "completed",
         )
 
     asyncio.run(run())

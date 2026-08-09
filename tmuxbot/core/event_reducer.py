@@ -28,5 +28,9 @@ def reduce_provider_event(event: ProviderEvent) -> list[ReducedEvent]:
         return [ReducedEvent("assistant_tools", event.text)]
     if event.kind == ProviderEventKind.PROVIDER_ERROR:
         return [ReducedEvent("assistant_tools", event.text)]
-    # Lifecycle and usage events update runtime state in v2; legacy channels stay silent.
+    if event.kind == ProviderEventKind.LIFECYCLE_CHANGE:
+        lifecycle = event.metadata.get("lifecycle")
+        if lifecycle in {"compaction_start", "compaction_end", "compaction_failed"}:
+            return [ReducedEvent("provider_lifecycle", event.text)]
+    # Other lifecycle and usage events update runtime state silently.
     return []

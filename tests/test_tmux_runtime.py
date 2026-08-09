@@ -441,6 +441,26 @@ def test_unknown_foreground_process_rejects_launch():
     assert fake.pasted == []
 
 
+def test_launch_from_shell_ignores_stale_busy_scrollback():
+    fake = FakeTmux()
+    fake.foreground = "bash"
+    fake.statuses = ["busy"]
+    runtime = runtime_for(fake)
+
+    launched = asyncio.run(
+        runtime.safe_launch("pane", "pi --session old", allowed_shells={"bash", "zsh"})
+    )
+
+    assert launched
+    assert fake.pasted == ["pi --session old"]
+    assert fake.operations == [
+        "inspect",
+        "paste:pi --session old",
+        "sleep:0.5",
+        "key:Enter",
+    ]
+
+
 def test_launch_from_shell_uses_the_same_safe_queue():
     fake = FakeTmux()
     fake.foreground = "bash"

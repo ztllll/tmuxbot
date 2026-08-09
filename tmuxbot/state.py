@@ -91,6 +91,8 @@ class State:
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction
         self.command_transactions: dict[str, object] = {}
+        # Pi auto-compaction IM 状态卡：binding.name → {msg_id, chat_id, started_at, eta_seconds, ...}
+        self.compaction_status: dict[str, dict] = {}
         # 通道连接健康：Telegram/飞书共用同一份运行时审计口径。
         self.channel_health = ChannelHealthRegistry()
 

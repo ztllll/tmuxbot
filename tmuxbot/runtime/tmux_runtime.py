@@ -148,6 +148,7 @@ class TmuxRuntime:
             command,
             expected_commands=allowed_shells,
             verify_submission=False,
+            allow_busy_submission=True,
         )
         return True
 

@@ -134,6 +134,17 @@ class Frontend(ABC):
         """Send state-aware status content; unsupported channels render normal HTML."""
         return await self.send_html(chat_id, thread_id, html_text)
 
+    async def finalize_status_html(
+        self,
+        chat_id: int | str,
+        message_id: int | str,
+        html_text: str,
+        *,
+        display_state: str = "completed",
+    ) -> None:
+        """Finalize an editable status message. Basic channels only edit its body."""
+        await self.edit_html(chat_id, message_id, html_text)
+
     async def send_reply_stream_start(
         self, binding: "Binding", html_text: str
     ) -> Any:
