@@ -24,15 +24,17 @@ def strip_handwritten_footer(text: str) -> str:
     return _HANDWRITTEN_FOOTER_RE.sub("", text).rstrip()
 
 
-def render_task_footer(todos: "list | None") -> str:
-    """任务列表 → §6 格式的任务 footer (HTML)。无任务返回 ""(不渲染)。
+def render_task_footer(todos: "list | None", *, style: str = "summary") -> str:
+    """任务列表 → HTML footer。无任务返回 ``""``。
 
-    task item: {"subject": str, "status": "pending|in_progress|completed", ...}
-    (兼容旧 TodoWrite 的 "content" 字段)
-    格式: ◼ in_progress(加粗) · ◻ pending · ✓ <s>completed</s>(最早3个, 其余折叠)
+    ``summary`` 保持 Claude harness 的历史折叠语义；``pi`` 镜像
+    rpiv-todo 当前 branch 的 persistent overlay，只要存在非 deleted task
+    就渲染完整快照，包括 completed-only 状态。
     """
     if not todos:
         return ""
+    if style == "pi":
+        return _render_pi_task_footer(todos)
     done = [t for t in todos if t.get("status") == "completed"]
     in_prog = [t for t in todos if t.get("status") == "in_progress"]
     pending = [t for t in todos if t.get("status") == "pending"]
@@ -67,6 +69,38 @@ def render_task_footer(todos: "list | None") -> str:
     if len(done) > 3:
         lines.append(f"… +{len(done) - 3} completed")
     return "\n".join(lines)
+
+
+def _render_pi_task_footer(todos: list) -> str:
+    visible = [task for task in todos if task.get("status") != "deleted"]
+    if not visible:
+        return ""
+    completed = sum(task.get("status") == "completed" for task in visible)
+    has_active = any(
+        task.get("status") in {"pending", "in_progress"} for task in visible
+    )
+    show_ids = any(task.get("blockedBy") for task in visible)
+    lines = [f"{'●' if has_active else '○'} <b>Todos ({completed}/{len(visible)})</b>"]
+    for index, task in enumerate(visible):
+        status = task.get("status")
+        glyph = {"pending": "○", "in_progress": "◐", "completed": "✓"}.get(
+            status, "?"
+        )
+        subject = html.escape(str(task.get("subject") or task.get("content") or ""))
+        if status == "completed":
+            subject = f"<s>{subject}</s>"
+        elif status == "in_progress":
+            subject = f"<b>{subject}</b>"
+        task_id = task.get("id")
+        label = f"#{task_id} {subject}" if show_ids and task_id is not None else subject
+        active = html.escape(str(task.get("activeForm") or "").strip())
+        active_text = f" <i>({active})</i>" if status == "in_progress" and active else ""
+        blocked = task.get("blockedBy") or []
+        deps = f" ⛓ {','.join(f'#{item}' for item in blocked)}" if blocked else ""
+        branch = "└─" if index == len(visible) - 1 else "├─"
+        lines.append(f"{branch} {glyph} {label}{active_text}{deps}")
+    return "\n".join(lines)
+
 
 # ────────── 路径编码 ──────────
 def encode_cwd(p: Path) -> str:

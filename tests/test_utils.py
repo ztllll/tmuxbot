@@ -53,6 +53,46 @@ def test_render_task_footer_hides_completed_history_when_no_task_is_active():
     ]) == ""
 
 
+def test_render_pi_task_footer_matches_tui_and_keeps_completed_only_snapshot():
+    footer = render_task_footer(
+        [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {"id": 2, "subject": "Implement", "status": "completed", "blockedBy": [1]},
+        ],
+        style="pi",
+    )
+
+    assert footer == (
+        "○ <b>Todos (2/2)</b>\n"
+        "├─ ✓ #1 <s>Audit</s>\n"
+        "└─ ✓ #2 <s>Implement</s> ⛓ #1"
+    )
+
+
+def test_render_pi_task_footer_preserves_snapshot_order_and_active_form():
+    footer = render_task_footer(
+        [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {
+                "id": 2,
+                "subject": "Implement",
+                "status": "in_progress",
+                "activeForm": "implementing adapter",
+                "blockedBy": [1],
+            },
+            {"id": 3, "subject": "Deploy", "status": "pending", "blockedBy": [2]},
+        ],
+        style="pi",
+    )
+
+    assert footer == (
+        "● <b>Todos (1/3)</b>\n"
+        "├─ ✓ #1 <s>Audit</s>\n"
+        "├─ ◐ #2 <b>Implement</b> <i>(implementing adapter)</i> ⛓ #1\n"
+        "└─ ○ #3 Deploy ⛓ #2"
+    )
+
+
 def test_save_offsets_keeps_runtime_state_private(tmp_path):
     path = tmp_path / "state/offsets.json"
 

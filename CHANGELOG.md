@@ -68,7 +68,7 @@
 ### Fixed
 
 - 适配最新 Pi TUI extension 组合：同时解析原生 footer 与 `pi-statusline` powerline，恢复 provider/model/thinking/cwd/Git/context/token/cache/cost/JSONL 状态；IM footer 按同一语义恢复 `🔌/🤖/🧠/🔢/📦/💸/🪟/📁/🌿` 图标，不复制 TUI 的 powerline 色块；composer 提交确认也识别自定义 statusline，不会因 Todo overlay 位于编辑器上方而退回单次 Enter。
-- 接入 `rpiv-todo`：从当前 Pi JSONL branch 最后一条合法 `todo` toolResult 完整快照恢复任务，忽略 abandoned branch 和 deleted 项，并在 Telegram/飞书最终回复附加 `activeForm`、依赖 ID 与真实任务状态；`/todos` 可原样透传，`/statusline` 按交互界面处理。
+- 接入 `rpiv-todo`：从当前 Pi JSONL branch 最后一条合法 `todo` toolResult 完整快照恢复任务，忽略 abandoned branch 和 deleted 项。只要仍有非 deleted task，Telegram/飞书的每条 Pi assistant/working 消息都固定附加与 TUI 对齐的完整 `Todos (completed/total)` 面板，保留任务顺序、`○/◐/✓`、ID、`activeForm` 与依赖；completed-only 也继续显示，clear/全部 deleted 后才隐藏。`/todos` 可原样透传，`/statusline` 按交互界面处理。
 - 修复飞书/TG 向忙碌 provider TUI 偶发投递失败：paste 后、每次 Enter 前都要求 TUI 连续稳定 idle 0.5s；若 Pi/Claude/Codex 在初次检查后因队列或重绘进入 working，保留 composer 草稿等待真正 idle，不再快速耗尽 3 次 Enter 并遗留未提交的文字或附件路径。
 - 修复 Telegram/飞书向 Pi 注入 `/new` 后错误提示“未确认完成”：Pi 会先在内存切换并显示 `✓ New session started`，直到新会话首条 assistant 回复才创建 JSONL。tmuxbot 现在以该 TUI marker 确认即时成功，并保留 session handoff，待首条回复落盘后再持久化新 identity。
 - 完成 Pi 原生命令审计：`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import` 按 Pi 交互界面处理，不再误用 Claude 命令表；`/resume`/`/fork` 选择完成后通过 Pi 原生 `/session` 精确同步 identity，`/clone` 自动认领新 transcript；`/compact` 必须观察到 Pi JSONL `compaction` entry 才报告成功，空会话不再假报“压缩已结束”。

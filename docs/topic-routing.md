@@ -138,7 +138,7 @@ Pi runs in its interactive TUI in tmux. tmuxbot does not use Pi RPC, SDK, or pri
 - reads model/thinking/usage metadata;
 - recognizes Pi TUI process and activity state;
 - mirrors Pi's native footer or the installed `pi-statusline` powerline fields: provider/model/thinking, cumulative input/output, cacheRead (`R`)/cacheWrite (`W`), latest prompt cache-hit rate, cost/subscription, context usage/window and auto-compaction, cwd/Git branch/session name, plus extension status lines. TUI values remain the real-time source; the active Pi JSONL only fills fields omitted by terminal width. Claude/Codex retain their existing provider-specific status parsers;
-- replays `rpiv-todo` from the active JSONL branch's latest valid `todo` tool-result snapshot and appends pending/in-progress/completed work, `activeForm`, and dependency IDs to the shared IM task footer. Deleted tasks and abandoned JSONL branches are ignored.
+- replays `rpiv-todo` from the active JSONL branch's latest valid `todo` tool-result snapshot. Whenever at least one non-deleted task exists, every Pi assistant/working IM message carries a persistent TUI-style `Todos (completed/total)` panel with snapshot order, status glyphs, task IDs, `activeForm`, and dependency IDs. Completed-only snapshots remain visible; the panel disappears only after clear/all-deleted. Deleted tasks and abandoned JSONL branches are ignored.
 
 For reliable modified-key handling Pi recommends tmux `extended-keys on` and `extended-keys-format csi-u`. Doctor may diagnose this but must not kill or restart the user's tmux server.
 

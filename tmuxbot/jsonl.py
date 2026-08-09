@@ -191,7 +191,9 @@ async def _dispatch_provider_events(
                 log.exception(f"[{b.name}] on_tmux_event err")
 
 
-async def _close_aggregator(b: "Binding", state: "State", frontend: "Frontend") -> None:
+async def _close_aggregator(
+    b: "Binding", state: "State", frontend: "Frontend", backend: "Backend | None" = None,
+) -> None:
     """把 aggregator 标记完成 (编辑消息加 ✓), 然后从 state 移除"""
     aggregators = getattr(state, "tool_aggregator", None)
     if not aggregators:
@@ -199,7 +201,9 @@ async def _close_aggregator(b: "Binding", state: "State", frontend: "Frontend") 
     agg = aggregators.pop(b.name, None)
     if not agg:
         return
-    closing = "\n".join(agg["content"]) + "\n\n<i>✓ 完成</i>"
+    content = "\n".join(agg["content"]) + "\n\n<i>✓ 完成</i>"
+    footer = _task_footer(b, backend) if backend is not None else agg.get("task_footer", "")
+    closing = _append_footer(content, footer)
     try:
         finalize = getattr(frontend, "finalize_status_html", None)
         if callable(finalize):
@@ -211,7 +215,7 @@ async def _close_aggregator(b: "Binding", state: "State", frontend: "Frontend") 
 
 
 async def _aggregator_idle_watcher(
-    b: "Binding", state: "State", frontend: "Frontend",
+    b: "Binding", state: "State", frontend: "Frontend", backend: "Backend",
 ) -> None:
     """背景 task: 等 AGGREGATOR_IDLE_SECONDS 秒后, 如果还是同一个 aggregator, 自动封闭。
     每次新 event 进来会刷 last_ts, watcher 重新计时。"""
@@ -221,7 +225,7 @@ async def _aggregator_idle_watcher(
         if agg is None:
             return  # 已被别处封闭
         if (time.time() - agg["last_ts"]) >= AGGREGATOR_IDLE_SECONDS:
-            await _close_aggregator(b, state, frontend)
+            await _close_aggregator(b, state, frontend, backend)
             return
 
 
@@ -274,12 +278,11 @@ async def on_tmux_event(
         # A final provider response is the terminal event that closes a tool
         # cycle.  Finish the yellow status card immediately instead of leaving
         # a stale “working” card until the idle watcher wakes up.
-        await _close_aggregator(b, state, frontend)
+        await _close_aggregator(b, state, frontend, backend)
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
         # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
-        footer = render_task_footer(backend.read_tasks(b))
-        out = f"{text}\n\n{footer}" if footer else text
+        out = _append_footer(text, _task_footer(b, backend))
         if out.strip():
             if await _finalize_reply_stream(frontend, b, state, out, backend):
                 return
@@ -302,13 +305,14 @@ async def on_tmux_event(
     agg = state.tool_aggregator.get(b.name)
     if agg and sum(len(s) for s in agg["content"]) > AGGREGATOR_MAX_CHARS:
         # 累计超长 → 主动 close 开新
-        await _close_aggregator(b, state, frontend)
+        await _close_aggregator(b, state, frontend, backend)
         agg = None
 
     if agg is None:
         # 新建 aggregator: 发首条 + 缓存 msg_id + 启动 idle watcher
         header = "💭 <b>工作中…</b>"
-        initial_html = header + "\n" + body
+        task_footer = _task_footer(b, backend)
+        initial_html = _append_footer(header + "\n" + body, task_footer)
         send_status = getattr(frontend, "send_status_html", None)
         status = await _capture_terminal_status(b, backend)
         if send_status is None:
@@ -327,14 +331,27 @@ async def on_tmux_event(
                 "chat_id": b.chat_id,
                 "content": [header, body],
                 "last_ts": now,
+                "task_footer": task_footer,
             }
-            state.fire(_aggregator_idle_watcher(b, state, frontend))
+            state.fire(_aggregator_idle_watcher(b, state, frontend, backend))
     else:
         agg["content"].append(body)
         agg["last_ts"] = now
-        new_html = "\n".join(agg["content"])
+        agg["task_footer"] = _task_footer(b, backend)
+        new_html = _append_footer("\n".join(agg["content"]), agg["task_footer"])
         await frontend.edit_html(agg["chat_id"], agg["msg_id"], new_html)
     await _send_outbound_attachments(frontend, b, attachments)
+
+
+def _task_footer(b: "Binding", backend: "Backend") -> str:
+    return render_task_footer(
+        backend.read_tasks(b),
+        style="pi" if backend.name == "pi" else "summary",
+    )
+
+
+def _append_footer(body: str, footer: str) -> str:
+    return f"{body.rstrip()}\n\n{footer}" if footer else body.rstrip()
 
 
 async def _send_html_with_outbound_attachments(
@@ -478,8 +495,9 @@ async def _send_live_text(
     frontend: "Frontend", b: "Binding", state: "State", html_text: str,
     backend: "Backend",
 ) -> None:
-    await _send_assistant_reply(frontend, b, html_text, backend)
-    _remember_live_text(state, b, html_text)
+    out = _append_footer(strip_handwritten_footer(html_text), _task_footer(b, backend))
+    await _send_assistant_reply(frontend, b, out, backend)
+    _remember_live_text(state, b, out)
 
 
 async def _append_reply_stream(

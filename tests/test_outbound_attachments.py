@@ -76,11 +76,23 @@ class StreamingFooterFrontend(FakeFrontend):
 
 
 class FakeBackend:
+    name = "claude_code"
+
     def read_tasks(self, binding):
         return []
 
     def parse_terminal_status(self, pane):
         return None
+
+
+class PiTodoBackend(FakeBackend):
+    name = "pi"
+
+    def __init__(self, tasks):
+        self.tasks = tasks
+
+    def read_tasks(self, binding):
+        return self.tasks
 
 
 def binding(tmp_path):
@@ -93,6 +105,33 @@ def binding(tmp_path):
         tmux_pane=0,
         cwd=tmp_path,
     )
+
+
+def test_pi_todo_snapshot_is_appended_to_every_final_assistant_message(tmp_path):
+    async def run():
+        tasks = [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {"id": 2, "subject": "Implement", "status": "completed", "blockedBy": [1]},
+        ]
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = PiTodoBackend(tasks)
+
+        await on_tmux_event(b, "assistant_text", "第一条", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "第二条", frontend, state, backend)
+
+        panel = (
+            "○ <b>Todos (2/2)</b>\n"
+            "├─ ✓ #1 <s>Audit</s>\n"
+            "└─ ✓ #2 <s>Implement</s> ⛓ #1"
+        )
+        assert frontend.sent == [
+            ("html", 123, None, f"第一条\n\n{panel}"),
+            ("html", 123, None, f"第二条\n\n{panel}"),
+        ]
+
+    asyncio.run(run())
 
 
 def test_assistant_text_sends_local_paths_as_real_attachments(tmp_path):
@@ -234,6 +273,40 @@ def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_pat
     asyncio.run(run())
 
 
+def test_pi_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
+    async def run():
+        tasks = [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {"id": 2, "subject": "Implement", "status": "in_progress", "blockedBy": [1]},
+        ]
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False, tool_aggregator={}, fire=close_coro)
+        b = binding(tmp_path)
+
+        await on_tmux_event(
+            b,
+            "assistant_tools",
+            "📋 任务 update",
+            frontend,
+            state,
+            PiTodoBackend(tasks),
+        )
+
+        assert frontend.sent == [
+            (
+                "html",
+                123,
+                None,
+                "💭 <b>工作中…</b>\n📋 任务 update\n\n"
+                "● <b>Todos (1/2)</b>\n"
+                "├─ ✓ #1 <s>Audit</s>\n"
+                "└─ ◐ #2 <b>Implement</b> ⛓ #1",
+            )
+        ]
+
+    asyncio.run(run())
+
+
 def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
     async def run():
         image = tmp_path / "tool-screen.jpg"
@@ -315,6 +388,29 @@ def test_assistant_plan_edits_latest_plan_message(tmp_path):
                 101,
                 "📋 当前计划\n✓ 第一步 <code>completed</code>\n→ 第二步 <code>in_progress</code>",
             ),
+        ]
+
+    asyncio.run(run())
+
+
+def test_pi_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
+    async def run():
+        tasks = [{"id": 1, "subject": "Done", "status": "completed"}]
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = PiTodoBackend(tasks)
+
+        await on_tmux_event(b, "assistant_live_text", "进度", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "进度", frontend, state, backend)
+
+        assert frontend.sent == [
+            (
+                "html",
+                123,
+                None,
+                "进度\n\n○ <b>Todos (1/1)</b>\n└─ ✓ <s>Done</s>",
+            )
         ]
 
     asyncio.run(run())

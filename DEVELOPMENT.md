@@ -471,7 +471,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - Pi 命令分三类维护：文本 capture（`/session`）、JSONL 硬信号（`/new`、`/clone`、`/compact`）和 interactive picker（`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import`）。interactive session switch 的事务必须保留到用户按 Enter 完成选择，再调用 Pi 原生 `/session` 读取 File/ID 同步 route identity；不得 capture 后自动 Escape 关闭 picker。
 - Pi `/compact` 的完成硬信号是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。`tokensBefore` 是压缩前上下文；有 `retainedTail` 时从其中 usage 估算保留 token。没有新增 entry（例如 `Nothing to compact`）必须失败关闭，不能发送成功兜底。
 - Pi 可由 extension 替换原生 footer。当前 parser 同时支持原生 footer 与 `pi-statusline` powerline（provider/model/thinking/cwd/Git/context/tokens/cache/cost/extension status）；composer 识别也必须接受该 statusline，Todo overlay 出现在编辑器上方时不能误入草稿。
-- `rpiv-todo` 的权威状态不是独立文件，而是当前 Pi JSONL 分支上最后一条合法 `toolResult(toolName="todo")` 的 `message.details.tasks` 完整快照。`read_tasks()` 必须沿最后 leaf 的 `parentId` 链 replay、忽略 abandoned branch 与 `deleted` 项，再由共享 footer 渲染 `activeForm` 和 `blockedBy`。
+- `rpiv-todo` 的权威状态不是独立文件，而是当前 Pi JSONL 分支上最后一条合法 `toolResult(toolName="todo")` 的 `message.details.tasks` 完整快照。`read_tasks()` 必须沿最后 leaf 的 `parentId` 链 replay、忽略 abandoned branch 与 `deleted` 项。只要快照里仍有非 deleted task，Pi 的每条 assistant/working IM 消息都固定追加 TUI 风格的完整 `Todos (completed/total)` 面板，保留原顺序、`○/◐/✓`、task ID、`activeForm` 和 `blockedBy`；即使全部 completed 也继续显示，只有 clear/全部 deleted 后隐藏。Claude harness 继续使用原有 summary footer 语义。
 
 ---
 
