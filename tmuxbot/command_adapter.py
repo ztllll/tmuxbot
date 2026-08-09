@@ -424,6 +424,13 @@ async def handle_tui_action(
         if await backend.reconcile_session_identity(b):
             txn.status = "completed"
             state.command_transactions.pop(b.name, None)
+            from tmuxbot.config import save_binding_identity
+
+            await asyncio.to_thread(
+                save_binding_identity,
+                getattr(frontend, "bindings_file", None),
+                b,
+            )
             await frontend.send_html(
                 chat_id,
                 thread_id,

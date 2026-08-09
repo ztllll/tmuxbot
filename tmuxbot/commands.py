@@ -149,6 +149,13 @@ async def capture_and_push(
                         )
                         b.last_session_id = identity.session_id
                         b.pending_session_handoff_after = None
+                        from tmuxbot.config import save_binding_identity
+
+                        await asyncio.to_thread(
+                            save_binding_identity,
+                            getattr(frontend, "bindings_file", None),
+                            b,
+                        )
                         new_session_seen = True
                         early_reason = "transcript_handoff"
                         break
