@@ -134,6 +134,58 @@ def test_feishu_assistant_reply_sends_long_output_as_multiple_cards(tmp_path):
     assert "最后一段" in cards[-1][1]
 
 
+def test_feishu_assistant_reply_splits_real_large_pi_reply_below_element_limit(tmp_path):
+    cards = []
+    frontend = FeishuFrontend.__new__(FeishuFrontend)
+    frontend.backend = ClaudeCodeBackend()
+    frontend._outbound_message_ids = set()
+    frontend._outbound_routes = {}
+    frontend._v2_message_ids = set()
+    frontend.card_v2_enabled = True
+
+    def send_card(chat_id, thread_id, content):
+        card = json.loads(content)
+        elements = card.get("body", {}).get("elements", [])
+        if card.get("schema") != "2.0" or len(elements) > 50:
+            return None
+        cards.append((chat_id, thread_id, card))
+        return f"om_{len(cards)}"
+
+    frontend._send_card_for_route_sync = send_card
+    b = Binding(
+        name="pi-网络同传系统项目",
+        chat_id="oc_group",
+        thread_id="omt_topic",
+        tmux_session="pi-network",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=Path(tmp_path),
+        backend="claude_code",
+        channel="feishu",
+    )
+    body = "\n\n".join(
+        f"## 必须先修的问题 {index}\n\n- 当前证据 {index}\n- 修复方案 {index}"
+        for index in range(180)
+    ) + "\n\n## 发布硬化\n\n- 完成真实验收"
+
+    result = asyncio.run(
+        frontend.send_assistant_reply(b, ReplyEnvelope(title="回复", body=body))
+    )
+
+    assert result.message_id == "om_1"
+    assert len(cards) > 3
+    assert all(thread_id == "omt_topic" for _, thread_id, _ in cards)
+    assert all(len(card["body"]["elements"]) <= 50 for _, _, card in cards)
+    markdown = "\n".join(
+        element.get("content", "")
+        for _, _, card in cards
+        for element in card["body"]["elements"]
+        if element.get("tag") == "markdown"
+    )
+    assert "必须先修的问题 0" in markdown
+    assert "发布硬化" in markdown
+
+
 def test_feishu_assistant_reply_falls_back_to_legacy_card_when_v2_send_fails(tmp_path):
     sent = []
     frontend = FeishuFrontend.__new__(FeishuFrontend)

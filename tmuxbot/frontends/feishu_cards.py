@@ -124,6 +124,7 @@ def serialize_feishu_reply_chunks(
     token: str,
     *,
     max_bytes: int = 30_000,
+    max_elements: int = 50,
 ) -> list[str]:
     """Serialize a complete reply as as many valid Card JSON messages as needed."""
     if not document.blocks:
@@ -136,7 +137,13 @@ def serialize_feishu_reply_chunks(
     while pending:
         block = pending.pop(0)
         candidate = current + [block]
-        if _feishu_blocks_fit(document, candidate, token, pack_limit):
+        if _feishu_blocks_fit(
+            document,
+            candidate,
+            token,
+            pack_limit,
+            max_elements=max_elements,
+        ):
             current = candidate
             continue
         if current:
@@ -199,6 +206,8 @@ def _feishu_blocks_fit(
     blocks: list[ReplyBlock],
     token: str,
     max_bytes: int,
+    *,
+    max_elements: int,
 ) -> bool:
     candidate = replace(
         document,
@@ -206,9 +215,12 @@ def _feishu_blocks_fit(
         source_text=_reply_blocks_text(blocks),
         footer_text=None,
     )
+    card = build_feishu_card_v2(candidate, token)
+    if len(card.get("body", {}).get("elements", ())) > max_elements:
+        return False
     try:
         serialize_feishu_card(
-            build_feishu_card_v2(candidate, token),
+            card,
             max_bytes=max_bytes,
         )
     except FeishuCardTooLarge:

@@ -151,7 +151,7 @@ lark-oapi>=1.4    # pip install lark-oapi  或  pip install -e ".[feishu]"
 | `<code>...</code>` | `` `...` `` |
 | `<pre>...</pre>` | ` ```\n...\n``` ` |
 
-所有消息以 **interactive card** 形式发送(设 `update_multi=True`),支持 PATCH 就地编辑——与 TelegramFrontend 的 `edit_message_text` 对等,工具调用聚合器可复用。
+所有消息以 **interactive card** 形式发送(设 `update_multi=True`),支持 PATCH 就地编辑——与 TelegramFrontend 的 `edit_message_text` 对等,工具调用聚合器可复用。长 assistant 回复必须同时按 Card JSON 2.0 的 30KB payload 限制和每卡最多 50 个 body element 分片；只按 bytes 分片会让大量短 Markdown block 触发飞书 `230099 / element exceeds the limit`，legacy 单卡 fallback 又可能触发 `230025 / message content reaches its limit`。
 
 ### typing 状态
 
