@@ -6,4 +6,5 @@ def test_restart_script_prefers_installed_systemd_service():
 
     assert "systemctl --user cat tmuxbot.service" in script
     assert "systemctl --user restart tmuxbot.service" in script
+    assert 'uv tool install --force --reinstall "$PROJECT_DIR[full]"' in script
     assert 'pkill -KILL -f "python3 tmuxbot.py"' not in script

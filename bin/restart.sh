@@ -8,6 +8,11 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 if systemctl --user cat tmuxbot.service >/dev/null 2>&1; then
+    exec_start="$(systemctl --user show tmuxbot.service -p ExecStart --value 2>/dev/null || true)"
+    if [[ "$exec_start" == *"/.local/bin/tmuxbot serve"* ]] && command -v uv >/dev/null 2>&1; then
+        echo "[restart] systemd 使用 uv tool；先重装当前 checkout..."
+        uv tool install --force --reinstall "$PROJECT_DIR[full]" || exit 1
+    fi
     echo "[restart] 使用 systemd user service..."
     # 清理旧版本脚本可能遗留的 runner，避免两个实例争抢 Telegram getUpdates。
     tmux kill-session -t tmuxbot-runner 2>/dev/null || true

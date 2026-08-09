@@ -330,7 +330,7 @@ loopback,且 setup secret 必须常量时间匹配;`X-Forwarded-For` 不参与�
 ### 开发启动 (tmux session)
 
 ```bash
-bash bin/restart.sh         # 含 3 次重试, 启动后验证
+bash bin/restart.sh         # systemd 若运行 ~/.local/bin/tmuxbot，先强制重装当前 checkout 的 uv tool，再重启并验证；fallback runner 含 3 次重试
 bash bin/status.sh          # 看进程 / session / 日志
 bash bin/stop.sh            # 优雅停
 ```
