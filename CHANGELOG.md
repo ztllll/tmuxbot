@@ -15,6 +15,7 @@
 - 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex；新增 `docs/admin-dm-operations.md`，记录自然语言开通/绑定模板、确定性操作顺序、安全约束和真实 IM 验收清单。
 - 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。
 - 新增 provider CLI-only 空闲休眠：仅在真实 TUI 连续明确 IDLE 时计时，排除草稿、picker/权限等待、命令事务、session handoff 和活动 TeamRun；达到阈值后以 Claude `/exit`、Codex/Pi `/quit` 安全返回 shell，保留 tmux、route 和 provider identity。支持全局 `TMUXBOT_CLI_IDLE_TIMEOUT` 与 route 级 `cli_idle_timeout_seconds`（`0` 常驻）。
+- 新增 Pi 自动压缩 IM lifecycle：从 TUI compacting 状态建立可编辑倒计时卡，以 session 最近压缩中位耗时估算 ETA，并以 JSONL `type=compaction` 作为完成硬信号。
 
 ### Changed
 
@@ -25,6 +26,17 @@
 - `thread_id` 统一为 `int | str | None`，飞书入站提取字符串 thread，出站通过 `reply_in_thread=True` 回到原 thread；飞书 topic route 新增持久 `thread_root_message_id`，bridge 重启后或直接从 tmux TUI 对话时仍可回到精确 thread。缺少可信回复锚点时继续失败关闭，不降级到群根。
 - tmux session 可被多个 route 共享，只要求完整 pane target 唯一。
 - 未绑定群根/topic/thread 统一静默且不触碰 tmux；新增 route 改由 YAML、route CLI、Admin DM 或 Web control plane 显式创建。
+- Pi 当前 branch 的 `rpiv-todo` 快照成为持久 IM 任务面板；普通文字、附件和 `/rename` pending 名称在 Working 时使用 steering queue，interactive slash 命令仍等待 idle。
+- Telegram 最终回复采用送达确认后提交 transcript offset：每个分片必须返回 `message_id`，失败时保留当前行并重试；源码部署重启会先重装当前 checkout 的 uv tool。
+- 飞书长回复同时按 30KB Card JSON payload 与每卡最多 50 个 body element 分页。
+
+### Fixed
+
+- 修复最终 assistant 回复未送达 Telegram 时仍推进 JSONL offset，消除“tailer 有 final 日志但用户无消息且重启不补发”的静默丢失。
+- 修复 Pi `/rename` pending 值在 Working 时错误等待 300 秒 idle。
+- 修复 provider 冷唤醒被旧 TUI scrollback 阻塞，以及 Pi TUI 未 ready 时仍继续投递用户 payload。
+- 修复飞书长回复因 Card V2 元素数超限后 legacy fallback 仍超长而整条丢失。
+- Pi provider 空正文 timeout/error 现在会回推；自动压缩离开 compacting 但无 JSONL marker 时明确提示未确认完成。
 
 ## [0.3.0] - 2026-08-08
 
@@ -69,9 +81,6 @@
 
 - 适配最新 Pi TUI extension 组合：同时解析原生 footer 与 `pi-statusline` powerline，恢复 provider/model/thinking/cwd/Git/context/token/cache/cost/JSONL 状态；IM footer 按同一语义恢复 `🔌/🤖/🧠/🔢/📦/💸/🪟/📁/🌿` 图标，不复制 TUI 的 powerline 色块；composer 提交确认也识别自定义 statusline，不会因 Todo overlay 位于编辑器上方而退回单次 Enter。
 - 接入 `rpiv-todo`：从当前 Pi JSONL branch 最后一条合法 `todo` toolResult 完整快照恢复任务，忽略 abandoned branch 和 deleted 项。只要仍有非 deleted task，Telegram/飞书的每条 Pi assistant/working 消息都固定附加与 TUI 对齐的完整 `Todos (completed/total)` 面板，保留任务顺序、`○/◐/✓`、ID、`activeForm` 与依赖；completed-only 也继续显示，clear/全部 deleted 后才隐藏。`/todos` 可原样透传，`/statusline` 按交互界面处理。
-- 修复最终 assistant 回复未送达 Telegram 时仍推进 JSONL offset：Telegram reply 现在要求每个分片都返回真实 `message_id` 并记录审计日志；任一分片没有 ID 会抛错到 tailer，当前 transcript 行保留 offset、下一轮自动重试，不再形成“日志有 assistant final、用户无消息、重启也不补发”的静默丢失。
-- 修复 Pi `/rename` pending 状态下的下一条文字仍走 Claude/Codex idle 门禁：若 Pi 正在 Working，该 handler 会等待 300 秒后 `TmuxBusyTimeout`，让用户误以为后续多条 Telegram 消息都没进来。rename 值现在与普通 Pi 文字相同，允许立即进入 steering queue；已固化用户实发的 `__pycache__/tmuxbot.cpython-310.` 回归场景。
-- 修复源码部署中 `bash bin/restart.sh` 只重启 systemd、却继续运行旧 `uv tool` wheel 的版本漂移：当 unit 的 `ExecStart` 是 `~/.local/bin/tmuxbot serve` 时，restart 现在先以 `--force --reinstall` 安装当前 checkout（含 full extras），再重启服务，避免代码已提交但生产 handler 仍执行旧 site-packages。
 - 修复 provider CLI 休眠后消息无法唤醒 Pi：shell pane 的历史滚屏残留 `Working...` 曾让 `tmux_safe_launch` 在启动命令粘贴前等待 300 秒并失败。shell launch 现在只按 foreground allowlist 执行，忽略旧 TUI scrollback；随后 Pi `ensure_running` 必须观察到真实 footer/status 才返回，未 ready、foreground 未知或启动时 foreground 改变都抛出显式错误，dispatch 不会继续把用户消息送进 shell。
 - 修复飞书长回复因 Card V2 元素数超限而整条丢失：此前只按 30KB JSON 大小分片，网络同传项目一条 19,755 字符回复被分成含 217 个元素的 card，飞书返回 `230099 / element exceeds the limit`，legacy fallback 又因总长度返回 `230025`。现在同时按 payload bytes 与每卡最多 50 个元素分片，所有分片继续精确回复原 thread。
 - 新增 Pi 自动压缩 IM 回执：检测 TUI `Auto-compacting...` 后建立可编辑状态卡，以当前 session 最近 5 次压缩中位耗时估算倒计时（无历史默认 180s），周期更新并保留 Todo；JSONL `type=compaction` 落盘后显示压缩前 tokens 和摘要 usage。若 TUI 离开压缩但没有硬 marker，则提示未确认完成/任务可能未续跑。Pi provider 的空正文 timeout/error 也会回推，不再静默。

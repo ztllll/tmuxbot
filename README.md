@@ -182,11 +182,11 @@ journalctl --user -u tmuxbot -f
 - **Telegram 状态标识**:Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
 - **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
-- **Pi 原生运行语义**:Working/streaming 时的普通文字和附件立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾
+- **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)
-- **健壮性**:tmux paste 等 TUI idle 后提交，并读取 Claude/Codex/Pi 活动输入框确认；草稿仍在时有限重试 Enter，CLI 已工作或输入框已清空则停止，避免漏交与重复提交；jsonl tailer 积压保护(512KB 阈值);GC 强引用修复;offsets debounce 写盘
+- **健壮性**:tmux paste 等 TUI idle 后提交，并读取 Claude/Codex/Pi 活动输入框确认；草稿仍在时有限重试 Enter，CLI 已工作或输入框已清空则停止。Telegram 最终回复逐分片校验 Bot API `message_id`，未确认送达时不推进 JSONL offset、下轮自动重试；tailer 另有 512KB 积压保护、GC 强引用和 offsets debounce。源码部署的 `bin/restart.sh` 会先重装当前 checkout 的 uv tool，避免 systemd 运行旧 wheel
 
 ---
 

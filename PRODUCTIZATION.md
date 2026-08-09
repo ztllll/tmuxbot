@@ -57,7 +57,12 @@ maintenance line on top of that baseline and additionally includes:
   metadata, provider-error visibility, and explicit warning when compaction exits
   without a JSONL completion marker;
 - Feishu long-reply pagination constrained by both the 30KB Card JSON payload and
-  a maximum of 50 body elements per card, preserving exact thread routing.
+  a maximum of 50 body elements per card, preserving exact thread routing;
+- Telegram final-reply delivery confirmation: every chunk must return a Bot API
+  message ID before the transcript offset advances, so transient send failure is
+  retried instead of silently losing the assistant response;
+- source-checkout service restarts reinstall the active uv tool before restarting
+  systemd, preventing deployed site-packages from lagging behind `main`.
 
 The authoritative itemized record for this line is the `Unreleased` section of
 `CHANGELOG.md`; release version metadata remains `0.3.0` until the next release is
@@ -98,6 +103,9 @@ future work:
    CI intentionally uses local contracts and temporary tmux panes instead of live
    credentials. The Admin transaction layer verifies route/tmux/service state, while
    final IM delivery and thread anchoring remain explicit live acceptance steps.
+7. Transcript offset retry now prevents silent Telegram loss, but it is not yet a
+   durable cross-channel outbox with idempotency keys; a process crash after remote
+   send and before offset persistence can still produce an at-least-once duplicate.
 
 ## Next Development Gate
 
