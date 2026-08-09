@@ -467,6 +467,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - tailer 积压保护: 单次落盘超 512KB 判定为事务式 flush 爆发 → 跳末尾,不回吐
 - 飞书无 typing API; 飞书 text 消息不能编辑,必须用 interactive card
 - `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`（普通 Bot API HTML 不支持原生 table）
+- Pi `/new` 的 JSONL 是延迟持久化：TUI 先显示 `✓ New session started`，新文件要等首条 assistant 回复才落盘。命令确认使用 TUI marker，但 `pending_session_handoff_after` 必须一直保留到 tailer 认领新 JSONL，不能因即时看不到文件而清除。
 
 ---
 

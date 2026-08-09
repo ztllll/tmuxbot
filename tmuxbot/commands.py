@@ -116,6 +116,7 @@ async def capture_and_push(
     last_hash, stable, out = "", 0, ""
     summary: str | None = None
     new_session_seen = False
+    deferred_new_session_seen = False
     compact_meta: dict | None = None
     early_reason = "max_iters"
 
@@ -142,6 +143,18 @@ async def capture_and_push(
                     break
             except Exception as e:
                 log.debug(f"capture_and_push {key} compact_metadata_since err: {e}")
+        # Pi /new creates the replacement session in memory but defers JSONL
+        # creation until its first assistant reply. Its fresh-screen marker is
+        # therefore the immediate completion signal; the tailer claims the file later.
+        if (
+            opts.expect_new_session
+            and opts.defer_new_session_persistence
+            and opts.done_pattern
+            and opts.done_pattern.search(strip_decorations(out))
+        ):
+            deferred_new_session_seen = True
+            early_reason = "deferred_session_started"
+            break
         # done_pattern 仅对不要求 jsonl 硬信号的命令用 (避免屏幕历史里残留字样假阳)
         if (
             not opts.expect_new_session
@@ -249,6 +262,13 @@ async def capture_and_push(
             return
         total_wait = opts.init_delay + opts.max_iters * opts.poll + 5  # +5s for final retry
         if opts.expect_new_session and not new_session_seen:
+            if opts.defer_new_session_persistence and deferred_new_session_seen:
+                # Pi's SessionManager does not create the physical JSONL at
+                # /new time. The handoff remains armed until the first
+                # assistant response flushes the new session file.
+                if opts.fallback_summary:
+                    await frontend.send_html(chat_id, thread_id, opts.fallback_summary)
+                return
             b.pending_session_handoff_after = None
             warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
             await frontend.send_html(chat_id, thread_id, warn)

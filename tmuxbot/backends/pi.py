@@ -608,7 +608,15 @@ class PiBackend(Backend):
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
-            "/new": CmdOpts(init_delay=0.4, poll=0.3, max_iters=20, expect_new_session=True),
+            "/new": CmdOpts(
+                init_delay=0.4,
+                poll=0.3,
+                max_iters=20,
+                expect_new_session=True,
+                defer_new_session_persistence=True,
+                done_pattern=re.compile(r"✓\s*New session started", re.I),
+                fallback_summary="✅ <b>Pi 新会话已启动</b>\n· 新会话将在首条回复落盘后绑定",
+            ),
             "/compact": CmdOpts(
                 init_delay=1.0,
                 poll=0.5,

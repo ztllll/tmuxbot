@@ -40,6 +40,10 @@ class CmdOpts:
     parser_can_retry: bool = False    # parser 返回 None 时是否继续等
     done_pattern: re.Pattern | None = None    # 屏幕命中即结束
     expect_new_session: bool = False  # /clear /new: 切 session_id 新建 jsonl
+    # Pi creates the new session in memory first and persists its JSONL only
+    # after the first assistant reply. Keep the handoff armed instead of
+    # requiring an immediate transcript switch.
+    defer_new_session_persistence: bool = False
     expect_compact_done: bool = False # /compact: 不切 session_id, 同 jsonl 末尾追加压缩 marker
     notice: str | None = None         # 进度提示文案
     fallback_summary: str | None = None  # 走完都没出 summary 时用
