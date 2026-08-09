@@ -96,6 +96,8 @@ The transaction interface is:
 ```text
 tmuxbot admin contract
 tmuxbot admin install-contract --cwd PATH
+tmuxbot admin provision-project --name ROUTE --channel telegram|feishu ... [--apply]
+# Lower-level recovery/diagnostics:
 tmuxbot admin inventory [--json]
 tmuxbot admin telegram-topic --message-link URL [--json]
 tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
@@ -106,7 +108,7 @@ tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]
 ```
 
-`create-topic`, `bind-topic`, and `move-topic` are plan-only by default. The create command exists for the common Admin-DM request “create this named Telegram/Feishu topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the channel API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created topic. Existing topics and tmux sessions are never destroyed by rollback. Telegram topic URLs may be `https://t.me/c/CHAT/THREAD` or include an optional message ID; Telegram never requires a durable root-message anchor.
+`provision-project` is the normal deep interface and is plan-only by default. It accepts one topic intent—create by title, bind a Telegram topic URL, or bind exact chat/thread IDs—then owns endpoint resolution, exact-cwd target creation/reuse, candidate validation, atomic write, supervised restart, verification, and rollback. Its default target is `NAME:0.0`, so callers do not need to coordinate separate discovery/create/bind commands. `create-topic`, `bind-topic`, and `move-topic` remain plan-only low-level recovery interfaces. The create command exists for the common Admin-DM request “create this named Telegram/Feishu topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the channel API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created topic. Existing topics and tmux sessions are never destroyed by rollback. Telegram topic URLs may be `https://t.me/c/CHAT/THREAD` or include an optional message ID; Telegram never requires a durable root-message anchor.
 
 ## Route CLI
 

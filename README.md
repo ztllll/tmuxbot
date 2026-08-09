@@ -67,15 +67,14 @@ tmuxbot serve --open
 ```bash
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   install-contract --cwd /home/you
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service inventory --json
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  telegram-topic --message-link https://t.me/c/CHAT/THREAD/MESSAGE --json
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  create-topic ...           # 明确新建 TG/飞书话题时，一次规划 topic+tmux+route
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  bind-topic ...             # 绑定已有话题；默认仅输出 plan，核对后加 --apply
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  verify ROUTE --json
+  provision-project --name demo-pi --channel telegram \
+  --credential TG_CODEX_BOT_TOKEN \
+  --topic-link https://t.me/c/CHAT/THREAD \
+  --cwd /absolute/project/demo --backend pi
+# 新话题则改用 --chat-id + --topic-title；核对 plan 后原命令增加 --apply。
+# inventory / telegram-topic / feishu-topics / create-topic / bind-topic / verify
+# 保留为低层诊断、恢复和迁移接口。
 ```
 
 事务内部负责完整候选校验、原子 YAML 替换、监督服务重启、post-apply verify 和失败回滚；LLM 只负责提供明确的 endpoint、target、cwd 与 adapter。

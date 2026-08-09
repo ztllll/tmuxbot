@@ -724,6 +724,189 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
     assert "restart failed" in capsys.readouterr().out
 
 
+def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target(
+    tmp_path, capsys
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime()
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "provision-project",
+            "--name",
+            "pi-cliproxyapi",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--topic-link",
+            "https://t.me/c/3799747978/42337",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    assert bindings.read_bytes() == original
+    assert runtime.created == []
+    assert runtime.restarts == []
+    payload = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
+    assert payload["operation"] == "provision-project"
+    assert payload["endpoint"] == {
+        "mode": "existing",
+        "channel": "telegram",
+        "credential": "TG_CODEX_BOT_TOKEN",
+        "chat_id": -1003799747978,
+        "thread_id": 42337,
+        "thread_root_message_id": None,
+        "topic_title": None,
+    }
+    assert payload["route"]["tmux_target"] == "pi-cliproxyapi:0.0"
+    assert payload["target_action"] == "create"
+
+
+def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    runtime = FakeRuntime()
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "provision-project",
+            "--name",
+            "pi-cliproxyapi",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--topic-link",
+            "https://t.me/c/3799747978/42337",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    bound = RouteStore(bindings).inspect("pi-cliproxyapi")
+    assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
+        -1003799747978,
+        42337,
+        None,
+    )
+    assert bound.tmux_target == "pi-cliproxyapi:0.0"
+    assert runtime.created == [("pi-cliproxyapi:0.0", cwd)]
+    assert runtime.restarts == ["bridge.service"]
+
+
+def test_provision_project_apply_creates_feishu_topic_and_route(monkeypatch, tmp_path):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    runtime = FakeRuntime()
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_feishu_topic",
+        lambda *_args, **_kwargs: {
+            "title": "Network branch",
+            "chat_id": "oc_group",
+            "thread_id": "omt_topic",
+            "root_message_id": "om_root",
+        },
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "provision-project",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "network-branch",
+            "--channel",
+            "feishu",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_group",
+            "--topic-title",
+            "Network branch",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    bound = RouteStore(bindings).inspect("network-branch")
+    assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
+        "oc_group",
+        "omt_topic",
+        "om_root",
+    )
+    assert bound.tmux_target == "network-branch:0.0"
+
+
+def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "provision-project",
+            "--name",
+            "project",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--chat-id",
+            "-1003799747978",
+            "--thread-id",
+            "42337",
+            "--topic-title",
+            "Duplicate intent",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "exactly one topic intent" in capsys.readouterr().out
+
+
 def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
     cwd = tmp_path / "project"
     cwd.mkdir()

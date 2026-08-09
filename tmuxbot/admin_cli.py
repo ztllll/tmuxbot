@@ -645,20 +645,20 @@ Hard rules:
    message link. Never create a new topic unless the user explicitly asks.
 2. A group root and every topic/thread are different endpoints. Unbound endpoints
    stay silent and must not touch tmux.
-3. Run the plan form first. Use --apply only after all displayed values match the
-   request. After apply, run `tmuxbot admin verify ROUTE`.
+3. Project creation and existing-topic binding both use `provision-project`.
+   Run its plan first, repeat with --apply after all values match, then perform
+   live IM acceptance. Do not make the LLM assemble discovery/bind steps itself.
 4. Do not reuse a pane with a different cwd. Do not bind two routes to one pane.
 5. Do not run `tmux kill-server`. Moving a route preserves its provider identity.
 6. Project topics normally use `--mention-required false`.
-7. Never create a tmux target before exact endpoint discovery, inventory review,
-   and a valid bind plan. Do not run `tmux new-session` directly for a route;
-   new sessions must be created transactionally by repeating the reviewed plan
-   with `bind-topic --create-target --apply`.
+7. Never create a tmux target before a valid provisioning plan. Do not run
+   `tmux new-session` directly for a route; `provision-project --apply` creates a
+   missing NAME:0.0 target transactionally and reuses only an exact-cwd target.
 8. Config changes are complete only after validated atomic write, supervised
    bridge restart, and verification. The Admin command owns those steps.
-9. If the user explicitly requests a new Telegram or Feishu topic and supplies
-   the exact chat_id, use `create-topic`; do not reconstruct channel APIs, tmux,
-   YAML, provider launch, or rollback by hand.
+9. `provision-project` is the normal high-level interface for Telegram and
+   Feishu, whether the topic already exists or must be created. `create-topic`,
+   `bind-topic`, and discovery commands are low-level recovery/diagnostic tools.
 10. Telegram topic routes need only chat_id + thread_id. Accept either
     https://t.me/c/CHAT/THREAD or a full message link; never demand a message ID
     or thread_root_message_id for Telegram.
@@ -667,7 +667,19 @@ Deployment:
 - bindings: {bindings_file}
 - supervised bridge: {service}
 
-Required workflow:
+Required normal workflow:
+```bash
+# Existing Telegram topic URL (message ID optional):
+tmuxbot admin --file {bindings_file} --service {service} provision-project \
+  --name ROUTE --channel telegram --credential TG_CODEX_BOT_TOKEN \
+  --topic-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID \
+  --cwd /absolute/project --backend pi
+# New Telegram or Feishu topic: replace --topic-link with exact --chat-id and
+# --topic-title. tmux target defaults to NAME:0.0. Review the plan, then repeat
+# the same command with --apply.
+```
+
+Low-level recovery and diagnostics:
 ```bash
 tmuxbot admin --file {bindings_file} --service {service} inventory --json
 # For Telegram private forums, a topic URL is enough; message ID is optional:
@@ -793,6 +805,32 @@ def build_admin_parser() -> argparse.ArgumentParser:
     )
     create_topic.add_argument("--create-target", action="store_true")
     create_topic.add_argument("--apply", action="store_true")
+    provision = subparsers.add_parser(
+        "provision-project",
+        help="plan or apply one fixed endpoint + tmux + route provisioning workflow",
+    )
+    provision.add_argument("--env-file", type=Path)
+    provision.add_argument("--name", required=True)
+    provision.add_argument("--channel", choices=("telegram", "feishu"), required=True)
+    provision.add_argument("--credential", required=True)
+    provision.add_argument("--chat-id")
+    provision.add_argument("--thread-id")
+    provision.add_argument("--thread-root-message-id")
+    provision.add_argument("--topic-link")
+    provision.add_argument("--topic-title")
+    provision.add_argument("--tmux-target")
+    provision.add_argument("--cwd", required=True)
+    provision.add_argument(
+        "--backend", choices=("claude_code", "codex", "pi"), required=True
+    )
+    provision.add_argument("--mention-required", type=_parse_bool, default=False)
+    provision.add_argument(
+        "--cli-idle-timeout",
+        type=int,
+        dest="cli_idle_timeout_seconds",
+        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
+    )
+    provision.add_argument("--apply", action="store_true")
     install = subparsers.add_parser(
         "install-contract", help="install/update managed AGENTS.md and CLAUDE.md blocks"
     )
@@ -996,6 +1034,173 @@ def run_admin_command(
                         pass
                 raise
             verification["created_topic"] = topic
+            print(json.dumps(verification, ensure_ascii=False))
+            return 0
+        if args.admin_command == "provision-project":
+            target = parse_tmux_target(args.tmux_target or f"{args.name}:0.0")
+            cwd = _resolved_directory(args.cwd)
+            env_file = (
+                args.env_file.expanduser()
+                if args.env_file is not None
+                else args.bindings_file.expanduser().resolve().parent / ".env"
+            )
+            intents = sum(
+                (
+                    bool(args.topic_title),
+                    bool(args.topic_link),
+                    bool(args.chat_id and args.thread_id),
+                )
+            )
+            if intents != 1:
+                raise AdminOperationError(
+                    "provision-project requires exactly one topic intent: "
+                    "--topic-title with --chat-id, --topic-link, or --chat-id + --thread-id"
+                )
+            topic_mode = "create" if args.topic_title else "existing"
+            topic_title = " ".join((args.topic_title or "").split()) or None
+            if topic_mode == "create":
+                if not args.chat_id:
+                    raise AdminOperationError("new topics require exact --chat-id")
+                chat_id = _parse_identifier(args.chat_id, channel=args.channel)
+                thread_id: int | str | None = None
+                root_message_id = None
+            elif args.topic_link:
+                if args.channel != "telegram":
+                    raise AdminOperationError(
+                        "--topic-link currently accepts Telegram private forum URLs only; "
+                        "use Feishu --chat-id + --thread-id + --thread-root-message-id"
+                    )
+                parsed = parse_telegram_topic_link(args.topic_link)
+                chat_id = parsed["chat_id"]
+                thread_id = parsed["thread_id"]
+                root_message_id = None
+            else:
+                chat_id = _parse_identifier(args.chat_id, channel=args.channel)
+                thread_id = _parse_identifier(args.thread_id, channel=args.channel)
+                root_message_id = args.thread_root_message_id
+                _require_feishu_thread_root(
+                    channel=args.channel,
+                    thread_id=thread_id,
+                    root_message_id=root_message_id,
+                )
+            if any(binding.name == args.name for binding in store.list()):
+                raise AdminOperationError(f"route name already exists: {args.name!r}")
+            if any(binding.tmux_target == target.value for binding in store.list()):
+                raise AdminOperationError(f"duplicate tmux target: {target.value}")
+            target_status = _preflight_target(
+                runtime, target, cwd, create_target=False
+            )
+            item_base = {
+                "name": args.name,
+                "channel": args.channel,
+                "bot_token_env": args.credential,
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "thread_root_message_id": root_message_id,
+                "tmux_session": target.session,
+                "tmux_window": target.window,
+                "tmux_pane": target.pane,
+                "cwd": str(cwd),
+                "backend": args.backend,
+                "mention_required": args.mention_required,
+                "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
+            }
+            if topic_mode == "existing":
+                validate_bindings([*store.list(), binding_from_mapping(item_base)])
+            plan = {
+                "operation": "provision-project",
+                "apply": args.apply,
+                "endpoint": {
+                    "mode": topic_mode,
+                    "channel": args.channel,
+                    "credential": args.credential,
+                    "chat_id": chat_id,
+                    "thread_id": thread_id,
+                    "thread_root_message_id": root_message_id,
+                    "topic_title": topic_title,
+                },
+                "route": {
+                    "name": args.name,
+                    "tmux_target": target.value,
+                    "cwd": str(cwd),
+                    "backend": args.backend,
+                    "mention_required": args.mention_required,
+                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
+                },
+                "tmux": target_status,
+                "target_action": (
+                    "create" if target_status["state"] == "stopped" else "reuse"
+                ),
+                "service": args.service,
+                "fixed_flow": [
+                    "resolve exact endpoint",
+                    "validate complete candidate",
+                    "create or reuse exact-cwd tmux target",
+                    "atomically write route",
+                    "restart supervised bridge",
+                    "verify route + tmux + service",
+                    "live IM acceptance",
+                ],
+            }
+            if not args.apply:
+                print(json.dumps(plan, ensure_ascii=False, indent=2))
+                print("plan only: repeat with --apply after verifying every value")
+                return 0
+            topic: dict[str, Any] | None = None
+            created_target = False
+            try:
+                item = dict(item_base)
+                if topic_mode == "create":
+                    if args.channel == "telegram":
+                        topic = create_telegram_topic(
+                            env_file, args.credential, int(chat_id), str(topic_title)
+                        )
+                    else:
+                        topic = create_feishu_topic(
+                            env_file, args.credential, str(chat_id), str(topic_title)
+                        )
+                    item["thread_id"] = topic["thread_id"]
+                    item["thread_root_message_id"] = topic["root_message_id"]
+                    validate_bindings([*store.list(), binding_from_mapping(item)])
+                if target_status["state"] == "stopped":
+                    _preflight_target(runtime, target, cwd, create_target=True)
+                    created_target = True
+                _bound, verification = _apply_route_transaction(
+                    args.bindings_file,
+                    args.service,
+                    runtime,
+                    store,
+                    lambda: store.bind(item),
+                )
+            except Exception:
+                if created_target:
+                    try:
+                        runtime.remove_created_target(target)
+                    except Exception:
+                        pass
+                if topic is not None:
+                    try:
+                        if args.channel == "telegram":
+                            delete_telegram_topic(
+                                env_file,
+                                args.credential,
+                                int(chat_id),
+                                int(topic["thread_id"]),
+                            )
+                        else:
+                            delete_feishu_message(
+                                env_file,
+                                args.credential,
+                                str(topic["root_message_id"]),
+                            )
+                    except Exception:
+                        pass
+                raise
+            verification["provisioning"] = {
+                "endpoint_mode": topic_mode,
+                "created_topic": topic,
+                "target_action": plan["target_action"],
+            }
             print(json.dumps(verification, ensure_ascii=False))
             return 0
         if args.admin_command == "install-contract":

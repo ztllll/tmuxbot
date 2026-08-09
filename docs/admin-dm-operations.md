@@ -47,9 +47,24 @@ systemctl --user restart tmuxbot.service
 
 ## 2. Admin Operations Contract（所有 LLM 的统一入口）
 
-Admin LLM 不应自行拼装 YAML、tmux 和 systemd 操作。安装后使用同一套确定性事务命令：
+Admin LLM 不应自行拼装 YAML、tmux 和 systemd 操作。普通“创建项目/绑定项目”只使用一个高层接口 `provision-project`；topic 发现、平台创建、tmux、route、重启、verify 和 rollback 都藏在该深模块内部：
 
 ```bash
+# 已有 Telegram topic：三段式 URL 已足够，tmux 默认 NAME:0.0
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  provision-project --name pi-demo --channel telegram \
+  --credential TG_CODEX_BOT_TOKEN \
+  --topic-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID \
+  --cwd /absolute/project/demo --backend pi
+
+# 新建 Telegram/飞书 topic：用精确 chat_id + 名称替换 --topic-link
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  provision-project --name pi-demo --channel feishu \
+  --credential FEISHU_CODEX --chat-id oc_xxx --topic-title "Demo 项目" \
+  --cwd /absolute/project/demo --backend pi
+# 两种模式都先核对 plan，再原命令增加 --apply。
+
+# 以下是安装契约和低层诊断/恢复命令
 # 打印机器可读/人可读的操作契约
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service contract
 
@@ -84,13 +99,16 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 标准事务流程固定为：
 
 ```text
-inventory / telegram-topic / feishu-topics
-→ bind-topic 或 move-topic（默认只输出 plan）
-→ 人或 Admin LLM 核对完整 endpoint/target/cwd/adapter
-→ 重复命令并增加 --apply
-→ 命令内部原子写 YAML、重启指定 systemd user service、执行 verify
-→ 由 Boss 在真实 DM/topic 发消息完成最终双向验收
+provision-project（默认 plan-only）
+→ 核对 endpoint intent / route / cwd / adapter / target_action
+→ 原命令增加 --apply
+→ 内部解析或创建精确 endpoint
+→ 内部创建或复用 exact-cwd tmux target
+→ 原子写 route、重启 supervised bridge、post-apply verify
+→ 由 Boss 在真实 topic 发消息完成双向验收
 ```
+
+LLM 不再自行决定先跑 `inventory`、`telegram-topic`、`feishu-topics`、`create-topic` 还是 `bind-topic`。这些命令继续存在，但只用于离线恢复、独立诊断和迁移；正常项目开通固定走 `provision-project`。
 
 用户明确要求创建新的 Telegram 或飞书话题时，统一使用一体化事务：
 
@@ -151,7 +169,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 
-只有在 endpoint 已精确发现、`inventory` 已核对且 bind plan 已生成后，才允许重复同一计划并增加 `--create-target --apply`。禁止为 route 直接运行 `tmux new-session`：如果后续 endpoint 校验失败，这会留下无 route 的孤儿 pane。当前 `--create-target` 只创建全新 session 的 `0.0` pane；在已有 session 中增加 window/pane 仍需先由确定性 tmux 操作创建，再用不带 `--create-target` 的 `bind-topic` 绑定。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
+`provision-project` 默认把 route 名作为 tmux session 名并使用 `NAME:0.0`；可用 `--tmux-target` 显式覆盖。目标不存在时 `--apply` 自动事务创建，不再要求操作者额外记 `--create-target`；目标已存在时只在 cwd 完全相同且未被 route 占用时复用。禁止为 route 直接运行 `tmux new-session`。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
 
 ## 3. 在 DM 中需要提供什么
 
@@ -263,17 +281,13 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 ## 5. 确定性底层流程
 
-管理 AI 必须优先使用 Admin Contract 的顺序：
+管理 AI 的正常顺序只有：
 
 ```text
-1. tmuxbot admin inventory
-2. Telegram 私有 forum 消息链接使用 tmuxbot admin telegram-topic；飞书 topic 使用 tmuxbot admin feishu-topics
-3. bind-topic / move-topic 生成 plan（不带 --apply）
-4. 核对完整 endpoint、cwd、adapter 和完整 tmux target
-5. 重复同一命令并增加 --apply
-6. tmuxbot admin verify ROUTE --json
-7. 检查 polling、pane command、pane cwd、JSONL tailer、heartbeat
-8. 由 Boss 在真实 DM/topic 各发一条消息完成双向验收
+1. tmuxbot admin provision-project ...        # plan
+2. 核对 endpoint intent、cwd、adapter、target action
+3. 原命令增加 --apply                          # 内部 create/bind/restart/verify
+4. 由 Boss 在真实 topic 发消息验收双向链路
 ```
 
 只有高层命令尚未覆盖的操作（例如已有 tmux session 新增 window/pane）才允许使用底层 `tmux`，且必须回到 `bind-topic plan → --apply → verify` 收口。直接编辑 YAML 仍是离线恢复能力，不是普通 Admin LLM 的首选路径。
