@@ -39,6 +39,30 @@ The 0.3.0 line is feature-frozen with these shipped capabilities:
 - Python package metadata, wheel checks, CI, release documentation, and broad unit
   and tmux-backed integration coverage.
 
+## Current Main After 0.3.0
+
+The `v0.3.0` tag remains the frozen release point. Current `main` is an Unreleased
+maintenance line on top of that baseline and additionally includes:
+
+- exact Telegram topic and Feishu thread routes down to unique tmux panes, with
+  route-local Claude Code, Codex, or Pi adapter selection and deterministic Admin
+  discover/plan/apply/verify transactions;
+- Pi-native session handoff, command classification, statusline/usage projection,
+  persistent current-branch Todo panels, Working-state steering input, and JSONL
+  hard-signal confirmation for `/new`, `/clone`, `/resume`, and compaction;
+- provider CLI idle hibernation and fail-closed cold wake: stale TUI scrollback
+  cannot block a shell launch, but the first payload is not delivered until the
+  resumed Pi TUI exposes a real ready/working footer;
+- editable Pi auto-compaction lifecycle cards with session-history ETA, completion
+  metadata, provider-error visibility, and explicit warning when compaction exits
+  without a JSONL completion marker;
+- Feishu long-reply pagination constrained by both the 30KB Card JSON payload and
+  a maximum of 50 body elements per card, preserving exact thread routing.
+
+The authoritative itemized record for this line is the `Unreleased` section of
+`CHANGELOG.md`; release version metadata remains `0.3.0` until the next release is
+cut.
+
 ## Architectural Invariants
 
 - tmux is the only provider execution plane.
