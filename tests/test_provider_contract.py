@@ -4,6 +4,7 @@ from pathlib import Path
 from tmuxbot.backends import claude_code, codex
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.backends.pi import PiBackend
 from tmuxbot.core.events import TerminalState
 from tmuxbot.state import Binding
 
@@ -38,6 +39,7 @@ def test_provider_process_detection_and_safe_start_are_explicit():
 def test_provider_capabilities_describe_real_provider_features():
     claude = ClaudeCodeBackend().capabilities
     codex = CodexBackend().capabilities
+    pi = PiBackend().capabilities
 
     assert claude.name == "claude_code"
     assert claude.supports_hooks
@@ -47,6 +49,7 @@ def test_provider_capabilities_describe_real_provider_features():
     assert codex.supports_incremental_text
     assert codex.supports_plans
     assert codex.supports_usage
+    assert pi.accepts_input_while_busy
 
 
 def test_claude_terminal_status_normalizes_permission_and_context():

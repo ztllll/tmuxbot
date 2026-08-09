@@ -1318,6 +1318,7 @@ class TelegramFrontend(Frontend):
                 b.tmux_target,
                 inject,
                 expected_commands=backend.running_command_names,
+                allow_busy_submission=backend.accepts_input_while_busy,
             )
             await m.reply(f"📎 已注入 <code>{html.escape(str(save_path))}</code>")
 

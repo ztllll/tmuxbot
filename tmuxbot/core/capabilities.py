@@ -17,6 +17,7 @@ class ProviderCapabilities:
     supports_plans: bool = False
     supports_usage: bool = False
     supports_interactive_pickers: bool = False
+    accepts_input_while_busy: bool = False
 
 
 @dataclass(frozen=True, slots=True)

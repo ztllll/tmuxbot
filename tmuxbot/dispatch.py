@@ -237,4 +237,5 @@ async def dispatch_incoming_text(
         b.tmux_target,
         raw_text,
         expected_commands=backend.running_command_names,
+        allow_busy_submission=backend.accepts_input_while_busy,
     )

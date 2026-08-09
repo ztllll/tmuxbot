@@ -260,6 +260,7 @@ class PiBackend(Backend):
             supports_resume=True,
             supports_usage=True,
             supports_interactive_pickers=True,
+            accepts_input_while_busy=True,
         )
 
     bot_commands = [

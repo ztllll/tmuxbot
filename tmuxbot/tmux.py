@@ -218,13 +218,15 @@ async def tmux_send_text(
     *,
     with_enter: bool = True,
     expected_commands=None,
+    allow_busy_submission: bool = False,
 ) -> None:
-    """Queue input, wait for idle, then paste and verify a bounded submission."""
+    """Queue input, optionally preserve provider-native busy input, and verify submission."""
     await _RUNTIME.send_text(
         target,
         text,
         with_enter=with_enter,
         expected_commands=expected_commands,
+        allow_busy_submission=allow_busy_submission,
     )
 
 

@@ -136,7 +136,7 @@ Pi runs in its interactive TUI in tmux. tmuxbot does not use Pi RPC, SDK, or pri
 - validates the session header cwd before claiming a transcript;
 - normalizes assistant text, thinking, and tool calls;
 - reads model/thinking/usage metadata;
-- recognizes Pi TUI process and activity state;
+- recognizes Pi TUI process and activity state, and preserves Pi's native Working-state steering queue: ordinary text and attachments are pasted and submitted immediately while streaming instead of waiting for an idle window; composer clear/change confirms acceptance;
 - mirrors Pi's native footer or the installed `pi-statusline` powerline fields: provider/model/thinking, cumulative input/output, cacheRead (`R`)/cacheWrite (`W`), latest prompt cache-hit rate, cost/subscription, context usage/window and auto-compaction, cwd/Git branch/session name, plus extension status lines. TUI values remain the real-time source; the active Pi JSONL only fills fields omitted by terminal width. Claude/Codex retain their existing provider-specific status parsers;
 - replays `rpiv-todo` from the active JSONL branch's latest valid `todo` tool-result snapshot. Whenever at least one non-deleted task exists, every Pi assistant/working IM message carries a persistent TUI-style `Todos (completed/total)` panel with snapshot order, status glyphs, task IDs, `activeForm`, and dependency IDs. Completed-only snapshots remain visible; the panel disappears only after clear/all-deleted. Deleted tasks and abandoned JSONL branches are ignored.
 

@@ -81,10 +81,15 @@ class TmuxRuntime:
         with_enter: bool = True,
         expected_commands: Collection[str] | None = None,
         verify_submission: bool = True,
+        allow_busy_submission: bool = False,
     ) -> None:
         lock = self._input_locks.setdefault(target, asyncio.Lock())
         async with lock:
-            ready_pane = await self._wait_until_ready(target)
+            ready_pane = (
+                self._capture(target, self.capture_lines)
+                if allow_busy_submission
+                else await self._wait_until_ready(target)
+            )
             if expected_commands is not None:
                 command = self._pane_command(target)
                 if command not in expected_commands:
@@ -110,12 +115,17 @@ class TmuxRuntime:
                     # check but before Enter (for example a queued Pi tool/run).
                     # Keep the rendered draft intact and wait; do not consume
                     # bounded Enter attempts while the TUI cannot submit it.
-                    await self._wait_until_ready(
-                        target,
-                        stable_for=self.retry_idle_stability,
-                    )
+                    if not allow_busy_submission:
+                        await self._wait_until_ready(
+                            target,
+                            stable_for=self.retry_idle_stability,
+                        )
                     self._send_key(target, "Enter")
-                    transition = await self._wait_for_submission_transition(target, draft)
+                    transition = await self._wait_for_submission_transition(
+                        target,
+                        draft,
+                        busy_confirms_submission=not allow_busy_submission,
+                    )
                     if transition:
                         return
                 raise TmuxSubmissionTimeout(
@@ -185,12 +195,14 @@ class TmuxRuntime:
         self,
         target: str,
         expected: str,
+        *,
+        busy_confirms_submission: bool = True,
     ) -> bool:
         elapsed = 0.0
         changed_elapsed: float | None = None
         while True:
             pane = self._capture(target, self.capture_lines)
-            if self._is_busy(pane):
+            if self._is_busy(pane) and busy_confirms_submission:
                 return True
             current = self._input_reader(pane) if self._input_reader else None
             if current is not None:

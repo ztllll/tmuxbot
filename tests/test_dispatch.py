@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot.backends.base import CmdOpts
+from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.dispatch import dispatch_incoming_text
 from tmuxbot.state import Binding
 
@@ -13,6 +14,14 @@ class _Backend:
 
     def command_aliases(self):
         return {}
+
+    @property
+    def capabilities(self):
+        return ProviderCapabilities(name=self.name)
+
+    @property
+    def accepts_input_while_busy(self):
+        return self.capabilities.accepts_input_while_busy
 
     def command_opts(self):
         return {"/new": CmdOpts(expect_new_session=True)}
@@ -163,6 +172,43 @@ def test_message_after_stop_starts_runtime_before_injection(monkeypatch):
     )
 
     assert calls == ["ensure", "inject"]
+
+
+def test_pi_normal_message_enables_busy_submission(monkeypatch):
+    b = _binding()
+    b.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+        @property
+        def capabilities(self):
+            return ProviderCapabilities(name=self.name, accepts_input_while_busy=True)
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            SimpleNamespace(),
+            PiBackend(),
+            b,
+            SimpleNamespace(pending_rename={}),
+            1,
+            None,
+            "在当前工作后继续检查",
+        )
+    )
+
+    assert calls[0][1]["allow_busy_submission"] is True
 
 
 def test_tmuxstop_reports_a_real_tmux_failure(monkeypatch):

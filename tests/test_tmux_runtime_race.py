@@ -49,6 +49,20 @@ class IdleAfterPasteFake(BusyAfterPasteFake):
             self.draft = ""
 
 
+class BusyQueueFake(BusyAfterPasteFake):
+    def capture(self, _target: str, _lines: int) -> str:
+        if not self.draft:
+            return "Working...\nEDITOR:"
+        return f"Working...\nEDITOR:{self.draft}"
+
+    def send_key(self, _target: str, key: str) -> None:
+        assert key == "Enter"
+        self.enter_count += 1
+        if self.draft:
+            self.submission_count += 1
+            self.draft = ""
+
+
 class FlappingIdleFake(BusyAfterPasteFake):
     def capture(self, _target: str, _lines: int) -> str:
         if not self.draft:
@@ -89,6 +103,25 @@ def runtime_for(fake):
         retry_idle_stability=0.5,
         max_submit_attempts=3,
     )
+
+
+def test_pi_busy_queue_submission_does_not_wait_for_idle():
+    fake = BusyQueueFake()
+    runtime = runtime_for(fake)
+    runtime._input_reader = lambda pane: pane.partition("EDITOR:")[2]
+
+    asyncio.run(
+        runtime.send_text(
+            "pane",
+            "steer the current run",
+            allow_busy_submission=True,
+        )
+    )
+
+    assert fake.submission_count == 1
+    assert fake.enter_count == 1
+    assert fake.now < 1.0
+    assert fake.draft == ""
 
 
 def test_busy_race_after_paste_waits_for_idle_before_consuming_enter_attempts():

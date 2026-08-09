@@ -42,6 +42,7 @@ class Frontend:
 class Backend:
     name = "pi"
     running_command_names = frozenset({"pi"})
+    accepts_input_while_busy = True
 
     def interactive_session_handoff_commands(self):
         return frozenset({"/resume"})

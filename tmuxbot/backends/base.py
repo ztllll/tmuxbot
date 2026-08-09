@@ -80,6 +80,10 @@ class Backend(ABC):
     def parse_terminal_status(self, pane: str) -> TerminalStatus | None:
         return None
 
+    @property
+    def accepts_input_while_busy(self) -> bool:
+        return self.capabilities.accepts_input_while_busy
+
     def current_model(self, b: "Binding") -> str | None:
         """Return the model recorded by the active provider transcript, if known.
 

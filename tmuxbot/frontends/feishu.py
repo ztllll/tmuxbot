@@ -1950,6 +1950,7 @@ class FeishuFrontend(Frontend):
                     b.tmux_target,
                     inject,
                     expected_commands=backend.running_command_names,
+                    allow_busy_submission=backend.accepts_input_while_busy,
                 )
                 return
 
@@ -2013,6 +2014,7 @@ class FeishuFrontend(Frontend):
                     b.tmux_target,
                     inject,
                     expected_commands=backend.running_command_names,
+                    allow_busy_submission=backend.accepts_input_while_busy,
                 )
                 return
 
