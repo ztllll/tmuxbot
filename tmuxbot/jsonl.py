@@ -162,9 +162,12 @@ async def jsonl_poll_loop(
                     # ★ 同一 binding 内串行 await, 避免 aggregator race condition
                     # (旧 S.fire 并发让多个 event 同时拿到 agg=None, 各自新建 → 多条"工作中"卡片)
                     # 串行只影响本 binding tailer 实时性, 不影响其他 binding 并发
-                    await _dispatch_provider_events(
+                    delivered = await _dispatch_provider_events(
                         b, events, frontend, state, backend
                     )
+                    if not delivered:
+                        safe_off -= len(line.encode("utf-8")) + 1
+                        break
                 state.offsets[key] = safe_off
                 save_offsets(offsets_file, state.offsets)
         except Exception:
@@ -174,7 +177,7 @@ async def jsonl_poll_loop(
 
 async def _dispatch_provider_events(
     b: "Binding", events, frontend: "Frontend", state: "State", backend: "Backend"
-) -> None:
+) -> bool:
     for event in events:
         decision = RuntimeV2Router.from_environment().route(event)
         for reduced in decision.deliveries:
@@ -188,7 +191,9 @@ async def _dispatch_provider_events(
                     backend,
                 )
             except Exception:
-                log.exception(f"[{b.name}] on_tmux_event err")
+                log.exception(f"[{b.name}] on_tmux_event err; retaining transcript offset")
+                return False
+    return True
 
 
 async def _close_aggregator(

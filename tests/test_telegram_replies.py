@@ -74,6 +74,32 @@ assistant answer
     assert screen_footer_from_capture(raw) == "assistant answer"
 
 
+def test_telegram_assistant_reply_raises_when_first_chunk_has_no_message_id(tmp_path):
+    class FakeBot:
+        async def send_message(self, chat_id, text, **kwargs):
+            return None
+
+    async def run():
+        frontend = TelegramFrontend.__new__(TelegramFrontend)
+        frontend.bot = FakeBot()
+        frontend.backend = CodexBackend()
+
+        async def tg_call(fn, max_retries=4):
+            return await fn()
+
+        frontend._tg_call = tg_call
+        await frontend.send_assistant_reply(
+            binding(tmp_path),
+            ReplyEnvelope(title="回复", body="必须确认送达"),
+        )
+
+    import asyncio
+    import pytest
+
+    with pytest.raises(RuntimeError, match="did not return a message id"):
+        asyncio.run(run())
+
+
 def test_telegram_assistant_reply_sends_long_output_as_multiple_messages(tmp_path):
     calls = []
 

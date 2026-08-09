@@ -69,6 +69,7 @@
 
 - 适配最新 Pi TUI extension 组合：同时解析原生 footer 与 `pi-statusline` powerline，恢复 provider/model/thinking/cwd/Git/context/token/cache/cost/JSONL 状态；IM footer 按同一语义恢复 `🔌/🤖/🧠/🔢/📦/💸/🪟/📁/🌿` 图标，不复制 TUI 的 powerline 色块；composer 提交确认也识别自定义 statusline，不会因 Todo overlay 位于编辑器上方而退回单次 Enter。
 - 接入 `rpiv-todo`：从当前 Pi JSONL branch 最后一条合法 `todo` toolResult 完整快照恢复任务，忽略 abandoned branch 和 deleted 项。只要仍有非 deleted task，Telegram/飞书的每条 Pi assistant/working 消息都固定附加与 TUI 对齐的完整 `Todos (completed/total)` 面板，保留任务顺序、`○/◐/✓`、ID、`activeForm` 与依赖；completed-only 也继续显示，clear/全部 deleted 后才隐藏。`/todos` 可原样透传，`/statusline` 按交互界面处理。
+- 修复最终 assistant 回复未送达 Telegram 时仍推进 JSONL offset：Telegram reply 现在要求每个分片都返回真实 `message_id` 并记录审计日志；任一分片没有 ID 会抛错到 tailer，当前 transcript 行保留 offset、下一轮自动重试，不再形成“日志有 assistant final、用户无消息、重启也不补发”的静默丢失。
 - 修复 Pi `/rename` pending 状态下的下一条文字仍走 Claude/Codex idle 门禁：若 Pi 正在 Working，该 handler 会等待 300 秒后 `TmuxBusyTimeout`，让用户误以为后续多条 Telegram 消息都没进来。rename 值现在与普通 Pi 文字相同，允许立即进入 steering queue；已固化用户实发的 `__pycache__/tmuxbot.cpython-310.` 回归场景。
 - 修复源码部署中 `bash bin/restart.sh` 只重启 systemd、却继续运行旧 `uv tool` wheel 的版本漂移：当 unit 的 `ExecStart` 是 `~/.local/bin/tmuxbot serve` 时，restart 现在先以 `--force --reinstall` 安装当前 checkout（含 full extras），再重启服务，避免代码已提交但生产 handler 仍执行旧 site-packages。
 - 修复 provider CLI 休眠后消息无法唤醒 Pi：shell pane 的历史滚屏残留 `Working...` 曾让 `tmux_safe_launch` 在启动命令粘贴前等待 300 秒并失败。shell launch 现在只按 foreground allowlist 执行，忽略旧 TUI scrollback；随后 Pi `ensure_running` 必须观察到真实 footer/status 才返回，未 ready、foreground 未知或启动时 foreground 改变都抛出显式错误，dispatch 不会继续把用户消息送进 shell。

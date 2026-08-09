@@ -460,7 +460,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
 - Claude/Codex 的 `paste-buffer -p` 前先等 TUI idle；paste 渲染后及每次 Enter 前再要求连续稳定 idle 0.5s，封住“初检 idle → 队列/重绘转 busy → Enter 被忽略”的竞态。Pi 是显式例外：官方 TUI 在 streaming/Working 时支持普通 Enter 将消息作为 steering queue 提交，所以 `ProviderCapabilities.accepts_input_while_busy=True`，入站文字/附件以及 `/rename` pending 后的名字值都会立即 paste + Enter，不等待 300s idle；此路径不能以“仍 busy”作为成功，必须观察 composer 清空/变化，避免假确认。provider CLI 从 shell 唤醒是另一条显式路径：只按 foreground allowlist 判断，不得让旧 TUI scrollback 的 `Working...` 阻止启动；启动后必须验证真实 provider footer/status 出现。未知 foreground、foreground revalidation 失败或 TUI 未 ready 必须抛错到 dispatch，不能静默返回后继续把用户消息粘进 shell。所有 provider 的原草稿仍在时才有限重试，避免漏交与重复提交。
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
-- TG 4096 限 UTF-16 单位
+- TG 4096 限 UTF-16 单位。最终 assistant 回复的每个分片必须取得 Bot API 返回的真实 `message_id` 才算送达；返回 `None`/抛错时 JSONL tailer 不提交当前行 offset，而是下一轮重试，并在成功时记录 message IDs。
 - `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)
 - `sendChatAction("typing")` 每 4s 刷一次维持 ~5s 显示
 - `/compact` 完成硬信号: `type=system, subtype=compact_boundary` + `compactMetadata.preTokens/postTokens`

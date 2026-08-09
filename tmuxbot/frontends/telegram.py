@@ -832,7 +832,9 @@ class TelegramFrontend(Frontend):
             is_disabled=not bool(envelope.metadata.get("link_preview", False))
         )
         first_msg = None
-        for chunk in split_for_tg(rendered.chat_html):
+        delivered_ids: list[int] = []
+        chunks = split_for_tg(rendered.chat_html)
+        for chunk in chunks:
             msg = await self._tg_call(
                 lambda c=chunk: self.bot.send_message(
                     int(b.chat_id),
@@ -841,8 +843,21 @@ class TelegramFrontend(Frontend):
                     link_preview_options=link_preview_options,
                 )
             )
+            message_id = getattr(msg, "message_id", None)
+            if not isinstance(message_id, int):
+                raise RuntimeError(
+                    f"Telegram assistant reply did not return a message id for {b.name}"
+                )
+            delivered_ids.append(message_id)
             if first_msg is None:
                 first_msg = msg
+
+        log.info(
+            "[%s] Telegram assistant reply delivered message_ids=%s chunks=%s",
+            b.name,
+            delivered_ids,
+            len(chunks),
+        )
 
         for attachment in attachments:
             caption = attachment.path.name
