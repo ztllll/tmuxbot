@@ -10,6 +10,8 @@ from tmuxbot.admin_cli import (
     AdminRuntime,
     create_feishu_topic,
     discover_feishu_topics,
+    create_telegram_topic,
+    delete_telegram_topic,
     parse_telegram_topic_link,
     run_admin_command,
 )
@@ -188,6 +190,18 @@ def test_telegram_topic_link_parses_private_forum_endpoint():
     }
 
 
+def test_telegram_topic_link_accepts_topic_url_without_message_id():
+    topic = parse_telegram_topic_link("https://t.me/c/3799747978/42337")
+
+    assert topic == {
+        "channel": "telegram",
+        "chat_id": -1003799747978,
+        "thread_id": 42337,
+        "message_id": None,
+        "message_link": "https://t.me/c/3799747978/42337",
+    }
+
+
 def test_telegram_topic_link_rejects_public_or_ambiguous_links(capsys, tmp_path):
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route()])
@@ -204,7 +218,7 @@ def test_telegram_topic_link_rejects_public_or_ambiguous_links(capsys, tmp_path)
     )
 
     assert exit_code == 2
-    assert "exact form" in capsys.readouterr().out
+    assert "private forum topic or message link" in capsys.readouterr().out
 
 
 def test_telegram_topic_cli_outputs_machine_readable_endpoint(tmp_path, capsys):
@@ -287,6 +301,195 @@ def test_feishu_topic_discovery_returns_exact_root_threads(monkeypatch, tmp_path
             "sender_id": "ou_boss",
         }
     ]
+
+
+def test_create_telegram_topic_returns_exact_endpoint(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("TG_CODEX_BOT_TOKEN=token\n")
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    def urlopen(request, **_kwargs):
+        requests.append(request)
+        return Response()
+
+    monkeypatch.setattr("tmuxbot.admin_cli.urllib.request.urlopen", urlopen)
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.json.load",
+        lambda _response: {
+            "ok": True,
+            "result": {"message_thread_id": 42337, "name": "CliproxyApi"},
+        },
+    )
+
+    topic = create_telegram_topic(
+        env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, "CliproxyApi"
+    )
+
+    assert topic == {
+        "title": "CliproxyApi",
+        "chat_id": -1003799747978,
+        "thread_id": 42337,
+        "root_message_id": None,
+    }
+    assert requests[0].full_url.endswith("/bottoken/createForumTopic")
+
+
+def test_delete_telegram_topic_uses_delete_forum_topic(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("TG_CODEX_BOT_TOKEN=token\n")
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.urllib.request.urlopen",
+        lambda request, **_kwargs: requests.append(request) or Response(),
+    )
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.json.load", lambda _response: {"ok": True, "result": True}
+    )
+
+    delete_telegram_topic(
+        env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, 42337
+    )
+
+    assert requests[0].full_url.endswith("/bottoken/deleteForumTopic")
+
+
+def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
+    monkeypatch, tmp_path, capsys
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime()
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_telegram_topic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("remote create")),
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "create-topic",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "project",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--chat-id",
+            "-1003799747978",
+            "--topic-title",
+            "CliproxyApi",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--create-target",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    assert bindings.read_bytes() == original
+    assert runtime.created == []
+    assert runtime.restarts == []
+    output = capsys.readouterr().out
+    assert '"operation": "create-topic"' in output
+    assert '"channel": "telegram"' in output
+    assert "plan only" in output
+
+
+def test_create_telegram_topic_apply_creates_endpoint_target_and_route(
+    monkeypatch, tmp_path
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    runtime = FakeRuntime()
+    deleted: list[tuple[Path, str, int, int]] = []
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_telegram_topic",
+        lambda *_args, **_kwargs: {
+            "title": "CliproxyApi",
+            "chat_id": -1003799747978,
+            "thread_id": 42337,
+            "root_message_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.delete_telegram_topic",
+        lambda env_file, credential, chat_id, thread_id: deleted.append(
+            (env_file, credential, chat_id, thread_id)
+        ),
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "create-topic",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "project",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--chat-id",
+            "-1003799747978",
+            "--topic-title",
+            "CliproxyApi",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--mention-required",
+            "false",
+            "--create-target",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    bound = RouteStore(bindings).inspect("project")
+    assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
+        -1003799747978,
+        42337,
+        None,
+    )
+    assert runtime.created == [("project:0.0", cwd)]
+    assert runtime.restarts == ["bridge.service"]
+    assert deleted == []
 
 
 def test_create_feishu_topic_returns_exact_endpoint(monkeypatch, tmp_path):
@@ -387,7 +590,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
     assert runtime.created == []
     assert runtime.restarts == []
     output = capsys.readouterr().out
-    assert '"operation": "create-feishu-topic"' in output
+    assert '"operation": "create-topic"' in output
     assert '"title": "Network branch"' in output
     assert "plan only" in output
 

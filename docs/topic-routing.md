@@ -99,14 +99,14 @@ tmuxbot admin install-contract --cwd PATH
 tmuxbot admin inventory [--json]
 tmuxbot admin telegram-topic --message-link URL [--json]
 tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
-tmuxbot admin create-feishu-topic --env-file PATH ... [--create-target] [--apply]
-# Feishu create/bind/move persist both thread_id and returned root_message_id.
+tmuxbot admin create-topic --env-file PATH --channel telegram|feishu ... [--create-target] [--apply]
+# Feishu create/bind/move persist thread_id + root_message_id; Telegram needs only chat_id + thread_id.
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]
 ```
 
-`create-feishu-topic`, `bind-topic`, and `move-topic` are plan-only by default. The create command exists specifically for the common Admin-DM request “create this named topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the Feishu API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created Feishu root message. Existing topics and tmux sessions are never destroyed by rollback.
+`create-topic`, `bind-topic`, and `move-topic` are plan-only by default. The create command exists for the common Admin-DM request “create this named Telegram/Feishu topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the channel API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created topic. Existing topics and tmux sessions are never destroyed by rollback. Telegram topic URLs may be `https://t.me/c/CHAT/THREAD` or include an optional message ID; Telegram never requires a durable root-message anchor.
 
 ## Route CLI
 

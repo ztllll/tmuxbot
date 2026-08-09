@@ -71,7 +71,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service inventory 
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   telegram-topic --message-link https://t.me/c/CHAT/THREAD/MESSAGE --json
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  create-feishu-topic ...    # 明确新建飞书话题时，一次规划 topic+tmux+route
+  create-topic ...           # 明确新建 TG/飞书话题时，一次规划 topic+tmux+route
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   bind-topic ...             # 绑定已有话题；默认仅输出 plan，核对后加 --apply
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \

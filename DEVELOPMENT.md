@@ -125,7 +125,7 @@ tmuxbot/                       ← 仓库根
 
 **架构原则**:frontend 先按 `(channel, credential, chat_id, thread_id)` 命中 route，再以 `frontend.backend_for(binding)` 选择 Claude/Codex/Pi adapter。credential 只划分 Bot/App 身份，不决定 CLI 类型。群根与未绑定 topic/thread 完全静默；新增 topic route 通过 YAML、`tmuxbot route bind` 或 Admin DM 显式创建，不由群内 `/init` 隐式开通。
 
-完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。Boss 在 Admin DM 中用自然语言创建/绑定 tmux 与 Telegram/飞书话题的模板和验收流程见 [`docs/admin-dm-operations.md`](docs/admin-dm-operations.md)。低层配置操作仍使用 `tmuxbot route list|inspect|validate|bind|unbind`；普通 Admin LLM 应优先使用 `tmuxbot admin contract|install-contract|inventory|telegram-topic|feishu-topics|create-feishu-topic|bind-topic|move-topic|verify`。用户明确要求创建飞书话题时，`create-feishu-topic` 用单一 plan/apply 事务接管 Feishu 根消息、thread ID、tmux target、route、bridge restart 与 rollback；已有话题继续使用 `bind-topic`。所有写命令默认 plan-only，`--apply` 才会执行副作用并 post-apply verify。直接编辑 YAML 仍作为离线恢复能力保留。
+完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。Boss 在 Admin DM 中用自然语言创建/绑定 tmux 与 Telegram/飞书话题的模板和验收流程见 [`docs/admin-dm-operations.md`](docs/admin-dm-operations.md)。低层配置操作仍使用 `tmuxbot route list|inspect|validate|bind|unbind`；普通 Admin LLM 应优先使用 `tmuxbot admin contract|install-contract|inventory|telegram-topic|feishu-topics|create-topic|bind-topic|move-topic|verify`。用户明确要求创建 Telegram/飞书话题时，`create-topic` 用单一 plan/apply 事务接管 channel API、thread ID、tmux target、route、bridge restart 与 rollback；已有话题继续使用 `bind-topic`。Telegram route 只需要 `chat_id + thread_id`，`https://t.me/c/CHAT/THREAD` 已足够，不能额外要求 message ID 或 `thread_root_message_id`。所有写命令默认 plan-only，`--apply` 才会执行副作用并 post-apply verify。直接编辑 YAML 仍作为离线恢复能力保留。
 
 ---
 

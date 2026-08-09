@@ -216,21 +216,98 @@ def parse_telegram_topic_link(value: str) -> dict[str, Any]:
     }:
         raise AdminOperationError("Telegram topic link must use https://t.me/c/...")
     parts = [urllib.parse.unquote(part) for part in parsed.path.split("/") if part]
-    if len(parts) != 4 or parts[0] != "c":
+    if len(parts) not in {3, 4} or parts[0] != "c":
         raise AdminOperationError(
-            "expected a private forum message link in the exact form "
-            "https://t.me/c/<internal-chat-id>/<thread-id>/<message-id>"
+            "expected a private forum topic or message link in the form "
+            "https://t.me/c/<internal-chat-id>/<thread-id>[/<message-id>]"
         )
-    internal_chat_id, thread_id, message_id = parts[1:]
-    if not all(part.isdigit() and int(part) > 0 for part in parts[1:]):
+    internal_chat_id, thread_id = parts[1:3]
+    message_id = parts[3] if len(parts) == 4 else None
+    identifiers = [internal_chat_id, thread_id]
+    if message_id is not None:
+        identifiers.append(message_id)
+    if not all(part.isdigit() and int(part) > 0 for part in identifiers):
         raise AdminOperationError("Telegram link chat/thread/message identifiers must be positive integers")
     return {
         "channel": "telegram",
         "chat_id": int(f"-100{internal_chat_id}"),
         "thread_id": int(thread_id),
-        "message_id": int(message_id),
+        "message_id": int(message_id) if message_id is not None else None,
         "message_link": value.strip(),
     }
+
+
+def _telegram_token(env_file: Path, credential: str) -> str:
+    values = dotenv_values(env_file)
+    token = values.get(credential) or os.getenv(credential)
+    if not token:
+        raise AdminOperationError(f"missing {credential} in {env_file}")
+    return str(token)
+
+
+def _telegram_request_json(
+    env_file: Path,
+    credential: str,
+    method: str,
+    body: Mapping[str, Any],
+) -> dict[str, Any]:
+    token = _telegram_token(env_file, credential)
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/{method}",
+        data=json.dumps(body, ensure_ascii=False).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except Exception as exc:
+        raise AdminOperationError(f"Telegram request failed: {exc}") from exc
+    if payload.get("ok") is not True:
+        raise AdminOperationError(
+            "Telegram request failed: "
+            f"code={payload.get('error_code')} description={payload.get('description')}"
+        )
+    return payload
+
+
+def create_telegram_topic(
+    env_file: Path,
+    credential: str,
+    chat_id: int,
+    title: str,
+) -> dict[str, Any]:
+    title = " ".join(title.split())
+    if not title:
+        raise AdminOperationError("Telegram topic title must not be empty")
+    payload = _telegram_request_json(
+        env_file,
+        credential,
+        "createForumTopic",
+        {"chat_id": chat_id, "name": title},
+    )
+    thread_id = (payload.get("result") or {}).get("message_thread_id")
+    if not isinstance(thread_id, int) or thread_id <= 0:
+        raise AdminOperationError("Telegram topic creation returned no thread ID")
+    return {
+        "title": title,
+        "chat_id": chat_id,
+        "thread_id": thread_id,
+        "root_message_id": None,
+    }
+
+
+def delete_telegram_topic(
+    env_file: Path,
+    credential: str,
+    chat_id: int,
+    thread_id: int,
+) -> None:
+    _telegram_request_json(
+        env_file,
+        credential,
+        "deleteForumTopic",
+        {"chat_id": chat_id, "message_thread_id": thread_id},
+    )
 
 
 def _feishu_credentials(env_file: Path, credential: str) -> tuple[str, str]:
@@ -579,9 +656,12 @@ Hard rules:
    with `bind-topic --create-target --apply`.
 8. Config changes are complete only after validated atomic write, supervised
    bridge restart, and verification. The Admin command owns those steps.
-9. If the user explicitly requests a new Feishu topic and supplies the exact
-   chat_id, use `create-feishu-topic`; do not reconstruct the Feishu API, tmux,
-   YAML, provider launch, or rollback sequence by hand.
+9. If the user explicitly requests a new Telegram or Feishu topic and supplies
+   the exact chat_id, use `create-topic`; do not reconstruct channel APIs, tmux,
+   YAML, provider launch, or rollback by hand.
+10. Telegram topic routes need only chat_id + thread_id. Accept either
+    https://t.me/c/CHAT/THREAD or a full message link; never demand a message ID
+    or thread_root_message_id for Telegram.
 
 Deployment:
 - bindings: {bindings_file}
@@ -590,17 +670,16 @@ Deployment:
 Required workflow:
 ```bash
 tmuxbot admin --file {bindings_file} --service {service} inventory --json
-# For Telegram private forums, parse an exact message link instead of guessing:
+# For Telegram private forums, a topic URL is enough; message ID is optional:
 tmuxbot admin --file {bindings_file} --service {service} telegram-topic \\
-  --message-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID/MESSAGE_ID --json
+  --message-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID --json
 # For Feishu, discover exact existing topics instead of guessing:
 tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
   --env-file {env_file} --credential FEISHU_CODEX --chat-id oc_xxx --json
-# Explicit new Feishu topic: plan the complete topic + target + route transaction,
-# then repeat the same command with --apply after reviewing all fixed values:
-tmuxbot admin --file {bindings_file} --service {service} create-feishu-topic \\
-  --env-file {env_file} --name ROUTE --credential FEISHU_CODEX \\
-  --chat-id oc_xxx --topic-title "Project topic" \\
+# Explicit new Telegram/Feishu topic: one plan covers topic + target + route:
+tmuxbot admin --file {bindings_file} --service {service} create-topic \\
+  --env-file {env_file} --name ROUTE --channel feishu \\
+  --credential FEISHU_CODEX --chat-id oc_xxx --topic-title "Project topic" \\
   --tmux-target project:0.0 --cwd /absolute/project --backend pi \\
   --mention-required false --create-target
 
@@ -687,29 +766,33 @@ def build_admin_parser() -> argparse.ArgumentParser:
     topics.add_argument("--chat-id", required=True)
     topics.add_argument("--limit", type=int, default=50)
     topics.add_argument("--json", action="store_true", dest="as_json")
-    create_feishu = subparsers.add_parser(
-        "create-feishu-topic",
-        help="plan or apply one Feishu topic + tmux target + route transaction",
+    create_topic = subparsers.add_parser(
+        "create-topic",
+        aliases=("create-feishu-topic",),
+        help="plan or apply one Telegram/Feishu topic + target + route transaction",
     )
-    create_feishu.add_argument("--env-file", type=Path, required=True)
-    create_feishu.add_argument("--name", required=True)
-    create_feishu.add_argument("--credential", required=True)
-    create_feishu.add_argument("--chat-id", required=True)
-    create_feishu.add_argument("--topic-title", required=True)
-    create_feishu.add_argument("--tmux-target", required=True)
-    create_feishu.add_argument("--cwd", required=True)
-    create_feishu.add_argument(
+    create_topic.add_argument("--env-file", type=Path, required=True)
+    create_topic.add_argument("--name", required=True)
+    create_topic.add_argument(
+        "--channel", choices=("telegram", "feishu"), default="feishu"
+    )
+    create_topic.add_argument("--credential", required=True)
+    create_topic.add_argument("--chat-id", required=True)
+    create_topic.add_argument("--topic-title", required=True)
+    create_topic.add_argument("--tmux-target", required=True)
+    create_topic.add_argument("--cwd", required=True)
+    create_topic.add_argument(
         "--backend", choices=("claude_code", "codex", "pi"), required=True
     )
-    create_feishu.add_argument("--mention-required", type=_parse_bool, default=False)
-    create_feishu.add_argument(
+    create_topic.add_argument("--mention-required", type=_parse_bool, default=False)
+    create_topic.add_argument(
         "--cli-idle-timeout",
         type=int,
         dest="cli_idle_timeout_seconds",
         help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
     )
-    create_feishu.add_argument("--create-target", action="store_true")
-    create_feishu.add_argument("--apply", action="store_true")
+    create_topic.add_argument("--create-target", action="store_true")
+    create_topic.add_argument("--apply", action="store_true")
     install = subparsers.add_parser(
         "install-contract", help="install/update managed AGENTS.md and CLAUDE.md blocks"
     )
@@ -797,13 +880,14 @@ def run_admin_command(
                 )
             )
             return 0
-        if args.admin_command == "create-feishu-topic":
+        if args.admin_command in {"create-topic", "create-feishu-topic"}:
+            channel = args.channel
             target = parse_tmux_target(args.tmux_target)
             cwd = _resolved_directory(args.cwd)
-            chat_id = _parse_identifier(args.chat_id, channel="feishu")
+            chat_id = _parse_identifier(args.chat_id, channel=channel)
             title = " ".join(args.topic_title.split())
             if not title:
-                raise AdminOperationError("Feishu topic title must not be empty")
+                raise AdminOperationError(f"{channel.title()} topic title must not be empty")
             if any(binding.name == args.name for binding in store.list()):
                 raise AdminOperationError(f"route name already exists: {args.name!r}")
             if any(binding.tmux_target == target.value for binding in store.list()):
@@ -812,15 +896,17 @@ def run_admin_command(
                 runtime, target, cwd, create_target=False
             )
             plan = {
-                "operation": "create-feishu-topic",
+                "operation": "create-topic",
                 "apply": args.apply,
                 "endpoint": {
-                    "channel": "feishu",
+                    "channel": channel,
                     "credential": args.credential,
                     "chat_id": chat_id,
                     "title": title,
-                    "thread_id": "<returned by Feishu on apply>",
-                    "thread_root_message_id": "<returned by Feishu on apply>",
+                    "thread_id": f"<returned by {channel.title()} on apply>",
+                    "thread_root_message_id": (
+                        "<returned by Feishu on apply>" if channel == "feishu" else None
+                    ),
                 },
                 "route": {
                     "name": args.name,
@@ -837,7 +923,7 @@ def run_admin_command(
                     "restore bindings",
                     "restart previous bridge",
                     "remove transaction-created tmux session",
-                    "delete transaction-created Feishu root message",
+                    f"delete transaction-created {channel.title()} topic",
                 ],
             }
             if not args.apply:
@@ -848,15 +934,20 @@ def run_admin_command(
                 raise AdminOperationError(
                     f"tmux target {target.value} does not exist; pass --create-target explicitly"
                 )
-            topic: dict[str, str] | None = None
+            topic: dict[str, Any] | None = None
             created_target = False
             try:
-                topic = create_feishu_topic(
-                    args.env_file.expanduser(), args.credential, str(chat_id), title
-                )
+                if channel == "telegram":
+                    topic = create_telegram_topic(
+                        args.env_file.expanduser(), args.credential, int(chat_id), title
+                    )
+                else:
+                    topic = create_feishu_topic(
+                        args.env_file.expanduser(), args.credential, str(chat_id), title
+                    )
                 item = {
                     "name": args.name,
-                    "channel": "feishu",
+                    "channel": channel,
                     "bot_token_env": args.credential,
                     "chat_id": chat_id,
                     "thread_id": topic["thread_id"],
@@ -888,11 +979,19 @@ def run_admin_command(
                         pass
                 if topic is not None:
                     try:
-                        delete_feishu_message(
-                            args.env_file.expanduser(),
-                            args.credential,
-                            topic["root_message_id"],
-                        )
+                        if channel == "telegram":
+                            delete_telegram_topic(
+                                args.env_file.expanduser(),
+                                args.credential,
+                                int(chat_id),
+                                int(topic["thread_id"]),
+                            )
+                        else:
+                            delete_feishu_message(
+                                args.env_file.expanduser(),
+                                args.credential,
+                                str(topic["root_message_id"]),
+                            )
                     except Exception:
                         pass
                 raise
