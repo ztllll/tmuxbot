@@ -3,7 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind
-from tmuxbot.jsonl import _dispatch_provider_events
+from tmuxbot.jsonl import _dispatch_provider_events, _initial_jsonl_offset
 from tmuxbot.state import Binding
 
 
@@ -18,6 +18,34 @@ def binding(tmp_path: Path) -> Binding:
         cwd=tmp_path,
         backend="pi",
     )
+
+
+def test_new_unpinned_route_reads_first_transcript_from_zero(tmp_path):
+    transcript = tmp_path / "first.jsonl"
+    transcript.write_text("assistant first reply\n", encoding="utf-8")
+    current = binding(tmp_path)
+
+    assert _initial_jsonl_offset(current, transcript, last_file=None) == 0
+
+
+def test_existing_pinned_route_bootstraps_at_end(tmp_path):
+    transcript = tmp_path / "existing.jsonl"
+    transcript.write_text("historical assistant reply\n", encoding="utf-8")
+    current = binding(tmp_path)
+    current.provider_session_id = "existing"
+    current.transcript_path = transcript
+
+    assert _initial_jsonl_offset(current, transcript, last_file=None) == transcript.stat().st_size
+
+
+def test_running_session_switch_reads_new_transcript_from_zero(tmp_path):
+    transcript = tmp_path / "new.jsonl"
+    transcript.write_text("first reply after new\n", encoding="utf-8")
+    current = binding(tmp_path)
+
+    assert _initial_jsonl_offset(
+        current, transcript, last_file=tmp_path / "old.jsonl"
+    ) == 0
 
 
 def test_provider_delivery_failure_is_reported_to_tailer(tmp_path, monkeypatch):

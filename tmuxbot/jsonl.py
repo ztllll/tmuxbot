@@ -39,6 +39,25 @@ AGGREGATOR_IDLE_SECONDS = 15   # 静默超此秒数 = turn 结束, watcher 自�
 JSONL_BACKLOG_LIMIT = 512 * 1024   # 512KB
 
 
+def _initial_jsonl_offset(
+    b: "Binding", transcript: Path, *, last_file: Path | None
+) -> int:
+    """Choose the first committed offset for one newly observed transcript.
+
+    A bridge restart with a pinned provider identity must skip historical output.
+    A running session switch and a freshly provisioned, still-unpinned route must
+    start at zero: Pi can create and complete its first turn before the 0.5s
+    tailer observes the new file, so treating that file as bootstrap history
+    silently drops the project's first assistant reply.
+    """
+    if last_file is not None:
+        return 0
+    pinned_path = Path(b.transcript_path) if b.transcript_path else None
+    if b.provider_session_id or pinned_path is not None:
+        return transcript.stat().st_size
+    return 0
+
+
 async def jsonl_poll_loop(
     b: "Binding", backend: "Backend", frontend: "Frontend",
     state: "State", offsets_file: Path,
@@ -83,12 +102,12 @@ async def jsonl_poll_loop(
                 if last_file is not None:
                     log.info(f"[{b.name}] jsonl switch: {last_file.name} → {jl.name}")
                 if key not in state.offsets:
-                    # 初次启动 (last_file is None) → 跳末尾, 防 bootstrap 时把历史积压
-                    # 一次性回吐撞 flood; 运行中切到新会话 (/clear /new, last_file 已有)
-                    # → 从 0 读全, 否则新会话首条回复在 tailer 切过来前已落盘 → 被跳过 →
-                    # Boss 收不到 /new 后第一条回复。新会话很小无 flood 风险,
-                    # JSONL_BACKLOG_LIMIT 仍兜底意外大文件。
-                    state.offsets[key] = 0 if last_file is not None else jl.stat().st_size
+                    # 已持久化 identity 的 bridge bootstrap 跳末尾，防历史回吐；运行中
+                    # session switch 和刚 provision、尚无 identity 的 route 从 0 读取。
+                    # 后者的首条 Pi turn 可能在 tailer 首次看见文件前已经完整落盘。
+                    state.offsets[key] = _initial_jsonl_offset(
+                        b, jl, last_file=last_file
+                    )
                     save_offsets(offsets_file, state.offsets, force=True)
                 last_file = jl
                 identity = backend.session_identity(b, jl)

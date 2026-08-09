@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- 修复新 provision 的 Pi route 第一条消息有时无回复：首个 transcript 可能在 0.5 秒 tailer 首次发现前已同时写入 user 和 assistant；旧 bootstrap 规则把 `last_file=None` 一律视为历史文件并将 offset 跳到 EOF。现在仅已有持久 provider identity 的 bridge bootstrap 跳末尾，尚未绑定 identity 的新 route 从 0 消费首个 transcript；已有 route 的防历史回吐保证不变。
 - 修复最终 assistant 回复未送达 Telegram 时仍推进 JSONL offset，消除“tailer 有 final 日志但用户无消息且重启不补发”的静默丢失。
 - 修复 Pi `/rename` pending 值在 Working 时错误等待 300 秒 idle。
 - 修复 provider 冷唤醒被旧 TUI scrollback 阻塞，以及 Pi TUI 未 ready 时仍继续投递用户 payload。
