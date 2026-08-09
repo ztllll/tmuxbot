@@ -70,6 +70,15 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   feishu-topics --env-file /path/to/.env \
   --credential FEISHU_CODEX --chat-id oc_xxx --json
+
+# 用户明确要求新建飞书话题时，一条事务计划覆盖话题、tmux 和 route
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  create-feishu-topic --env-file /path/to/.env \
+  --name demo-pi --credential FEISHU_CODEX --chat-id oc_xxx \
+  --topic-title "Demo 项目" --tmux-target demo-pi:0.0 \
+  --cwd /absolute/project/demo --backend pi \
+  --mention-required false --create-target
+# 核对 plan 后，原命令增加 --apply。
 ```
 
 标准事务流程固定为：
@@ -83,7 +92,22 @@ inventory / telegram-topic / feishu-topics
 → 由 Boss 在真实 DM/topic 发消息完成最终双向验收
 ```
 
-新建或绑定 topic：
+用户明确要求创建新的飞书话题时，优先使用一体化事务：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  create-feishu-topic --env-file /path/to/.env \
+  --name demo-pi --credential FEISHU_CODEX \
+  --chat-id oc_xxx --topic-title "Demo 项目" \
+  --tmux-target demo-pi:0.0 --cwd /absolute/project/demo \
+  --backend pi --mention-required false --create-target
+
+# plan 中的 chat/title/target/cwd/adapter 全部吻合后，再重复并加 --apply。
+```
+
+`--apply` 才会调用飞书创建根消息并取得平台返回的 `thread_id`，随后创建目标、写入 route、重启 bridge 和 verify。后续步骤失败时会恢复 YAML、清理本事务新建的 tmux session，并尝试删除本事务新建的飞书根消息。不要再让 Admin LLM 自行拼 Feishu SDK 脚本、手工启动 provider 或跨多条命令传递 thread ID。
+
+绑定已有 topic：
 
 ```bash
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
@@ -123,7 +147,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   verify existing-route --json
 ```
 
-飞书 topic 的 `--thread-root-message-id` 取自 `feishu-topics` 输出的 `root_message_id`。它是稳定出站锚点：bridge 重启后，即使用户直接在 tmux TUI 对话，回复仍可通过 `reply_in_thread=True` 返回精确 thread；缺失时 Admin 事务会在任何 tmux/YAML/systemd 副作用前拒绝。`--cli-idle-timeout` 是 provider TUI 连续明确 IDLE 的秒数；`0` 表示该 route 的 CLI 常驻，且该计时不读取 IM 最后输入时间。
+已有飞书 topic 的 `--thread-root-message-id` 取自 `feishu-topics` 输出的 `root_message_id`；新 topic 则由 `create-feishu-topic --apply` 自动取得并写入。它是稳定出站锚点：bridge 重启后，即使用户直接在 tmux TUI 对话，回复仍可通过 `reply_in_thread=True` 返回精确 thread；缺失时 Admin 事务会在任何 tmux/YAML/systemd 副作用前拒绝。`--cli-idle-timeout` 是 provider TUI 连续明确 IDLE 的秒数；`0` 表示该 route 的 CLI 常驻，且该计时不读取 IM 最后输入时间。
 
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 
@@ -139,7 +163,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 4. 使用的 adapter：`pi`、`claude_code` 或 `codex`；
 5. 绑定已有 tmux target，还是创建新的 session/window/pane；
 6. 群内是否需要 `@bot`。项目话题通常明确写“无需 @机器人”，对应 `mention_required: false`；
-7. 是否允许创建新 Telegram 话题。若要求绑定已有话题，应明确写“不要新建话题”。
+7. 是否允许创建新 Telegram/飞书话题。若要求绑定已有话题，应明确写“不要新建话题”；若明确要求创建飞书话题，应提供精确 `chat_id`，不需要先由用户手动创建再回传 thread ID。
 
 ## 4. 常用自然语言模板
 
@@ -200,7 +224,7 @@ cwd=/home/you/projects/new-project，启动 Pi，
 完成后汇报新 thread_id 并验证双向路由。
 ```
 
-只有在请求明确允许时才应调用 Telegram `createForumTopic`。绑定已有话题时不得因为缺少 thread ID 而擅自新建。
+只有在请求明确允许时才应创建 Telegram/飞书新话题。飞书应使用 `tmuxbot admin create-feishu-topic` 的 plan/apply 事务；绑定已有话题时不得因为缺少 thread ID 而擅自新建。
 
 ### 4.5 只提供 Telegram 消息链接
 

@@ -8,6 +8,7 @@ import yaml
 from tmuxbot.__main__ import build_parser
 from tmuxbot.admin_cli import (
     AdminRuntime,
+    create_feishu_topic,
     discover_feishu_topics,
     parse_telegram_topic_link,
     run_admin_command,
@@ -286,6 +287,238 @@ def test_feishu_topic_discovery_returns_exact_root_threads(monkeypatch, tmp_path
             "sender_id": "ou_boss",
         }
     ]
+
+
+def test_create_feishu_topic_returns_exact_endpoint(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("FEISHU_CODEX_APP_ID=app\nFEISHU_CODEX_APP_SECRET=secret\n")
+    responses = [
+        {"code": 0, "tenant_access_token": "token"},
+        {"code": 0, "data": {"message_id": "om_root"}},
+        {
+            "code": 0,
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_root",
+                        "root_id": None,
+                        "thread_id": "omt_topic",
+                        "create_time": "1",
+                        "sender": {"sender_type": "app", "id": "cli_app"},
+                        "body": {"content": json.dumps({"text": "Network branch"})},
+                    }
+                ]
+            },
+        },
+    ]
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.urllib.request.urlopen",
+        lambda *_args, **_kwargs: Response(responses.pop(0)),
+    )
+    monkeypatch.setattr("tmuxbot.admin_cli.json.load", lambda response: response.payload)
+
+    topic = create_feishu_topic(
+        env_file, "FEISHU_CODEX", "oc_group", "Network branch", poll_interval=0
+    )
+
+    assert topic == {
+        "title": "Network branch",
+        "chat_id": "oc_group",
+        "thread_id": "omt_topic",
+        "root_message_id": "om_root",
+    }
+
+
+def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
+    monkeypatch, tmp_path, capsys
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime()
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_feishu_topic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("remote create")),
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "create-feishu-topic",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "project",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_group",
+            "--topic-title",
+            "Network branch",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--create-target",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    assert bindings.read_bytes() == original
+    assert runtime.created == []
+    assert runtime.restarts == []
+    output = capsys.readouterr().out
+    assert '"operation": "create-feishu-topic"' in output
+    assert '"title": "Network branch"' in output
+    assert "plan only" in output
+
+
+def test_create_feishu_topic_apply_creates_endpoint_target_and_route(
+    monkeypatch, tmp_path
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    runtime = FakeRuntime()
+    deleted: list[tuple[Path, str, str]] = []
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_feishu_topic",
+        lambda *_args, **_kwargs: {
+            "title": "Network branch",
+            "chat_id": "oc_group",
+            "thread_id": "omt_topic",
+            "root_message_id": "om_root",
+        },
+    )
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.delete_feishu_message",
+        lambda env_file, credential, message_id: deleted.append(
+            (env_file, credential, message_id)
+        ),
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "create-feishu-topic",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "project",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_group",
+            "--topic-title",
+            "Network branch",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--mention-required",
+            "false",
+            "--create-target",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    bound = RouteStore(bindings).inspect("project")
+    assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
+        "oc_group",
+        "omt_topic",
+        "om_root",
+    )
+    assert bound.tmux_target == "project:0.0"
+    assert runtime.created == [("project:0.0", cwd)]
+    assert runtime.restarts == ["bridge.service"]
+    assert deleted == []
+
+
+def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
+    monkeypatch, tmp_path, capsys
+):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime(restart_error=True)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.create_feishu_topic",
+        lambda *_args, **_kwargs: {
+            "title": "Network branch",
+            "chat_id": "oc_group",
+            "thread_id": "omt_topic",
+            "root_message_id": "om_root",
+        },
+    )
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.delete_feishu_message",
+        lambda _env_file, _credential, message_id: deleted.append(message_id),
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "create-feishu-topic",
+            "--env-file",
+            str(tmp_path / ".env"),
+            "--name",
+            "project",
+            "--credential",
+            "FEISHU_CODEX",
+            "--chat-id",
+            "oc_group",
+            "--topic-title",
+            "Network branch",
+            "--tmux-target",
+            "project:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "pi",
+            "--create-target",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 2
+    assert bindings.read_bytes() == original
+    assert runtime.removed == ["project:0.0"]
+    assert deleted == ["om_root"]
+    assert "restart failed" in capsys.readouterr().out
 
 
 def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):

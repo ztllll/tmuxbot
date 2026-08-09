@@ -99,13 +99,14 @@ tmuxbot admin install-contract --cwd PATH
 tmuxbot admin inventory [--json]
 tmuxbot admin telegram-topic --message-link URL [--json]
 tmuxbot admin feishu-topics --env-file PATH --credential ENV --chat-id ID [--json]
-# Feishu bind-topic/move-topic persist both thread_id and returned root_message_id.
+tmuxbot admin create-feishu-topic --env-file PATH ... [--create-target] [--apply]
+# Feishu create/bind/move persist both thread_id and returned root_message_id.
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]
 ```
 
-`bind-topic` and `move-topic` are plan-only by default. `--apply` validates the complete candidate, atomically replaces YAML, restarts the explicitly named supervised bridge, and runs post-apply verification. Failure restores the old YAML and bridge; a newly created session is also removed. Existing tmux sessions are never destroyed by rollback.
+`create-feishu-topic`, `bind-topic`, and `move-topic` are plan-only by default. The create command exists specifically for the common Admin-DM request “create this named topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the Feishu API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created Feishu root message. Existing topics and tmux sessions are never destroyed by rollback.
 
 ## Route CLI
 

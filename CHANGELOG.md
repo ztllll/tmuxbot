@@ -13,7 +13,7 @@
 - 新增 Pi TUI backend：启动/恢复真实 Pi tmux TUI，解析 `~/.pi/agent/sessions` JSONL 的文本、思考、工具、模型、thinking level 和 usage；不使用 Pi RPC/SDK/print mode。
 - 新增 `tmuxbot route list|inspect|validate|bind|unbind`，写入前校验完整候选配置并原子替换 YAML。
 - 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex；新增 `docs/admin-dm-operations.md`，记录自然语言开通/绑定模板、确定性操作顺序、安全约束和真实 IM 验收清单。
-- 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。
+- 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。新增 `create-feishu-topic` 将“创建命名话题 + 创建 tmux + 绑定 route”收敛为一条 plan/apply 事务，不再要求 Boss 手工建话题或让 Admin AI 临时拼 Feishu SDK 脚本；失败时还会尝试删除本事务创建的根消息。
 - 新增 provider CLI-only 空闲休眠：仅在真实 TUI 连续明确 IDLE 时计时，排除草稿、picker/权限等待、命令事务、session handoff 和活动 TeamRun；达到阈值后以 Claude `/exit`、Codex/Pi `/quit` 安全返回 shell，保留 tmux、route 和 provider identity。支持全局 `TMUXBOT_CLI_IDLE_TIMEOUT` 与 route 级 `cli_idle_timeout_seconds`（`0` 常驻）。
 - 新增 Pi 自动压缩 IM lifecycle：从 TUI compacting 状态建立可编辑倒计时卡，以 session 最近压缩中位耗时估算 ETA，并以 JSONL `type=compaction` 作为完成硬信号。
 

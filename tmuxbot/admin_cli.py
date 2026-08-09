@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -232,13 +233,7 @@ def parse_telegram_topic_link(value: str) -> dict[str, Any]:
     }
 
 
-def discover_feishu_topics(
-    env_file: Path,
-    credential: str,
-    chat_id: str,
-    *,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
+def _feishu_credentials(env_file: Path, credential: str) -> tuple[str, str]:
     values = dotenv_values(env_file)
     app_id = values.get(f"{credential}_APP_ID") or os.getenv(f"{credential}_APP_ID")
     app_secret = values.get(f"{credential}_APP_SECRET") or os.getenv(
@@ -248,36 +243,48 @@ def discover_feishu_topics(
         raise AdminOperationError(
             f"missing {credential}_APP_ID/{credential}_APP_SECRET in {env_file}"
         )
+    return str(app_id), str(app_secret)
 
-    def request_json(
-        url: str,
-        *,
-        body: Mapping[str, Any] | None = None,
-        token: str | None = None,
-    ) -> dict[str, Any]:
-        data = json.dumps(body).encode() if body is not None else None
-        headers = {"Content-Type": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(url, data=data, headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.load(response)
-        except Exception as exc:
-            raise AdminOperationError(f"Feishu request failed: {exc}") from exc
-        if payload.get("code") not in {None, 0}:
-            raise AdminOperationError(
-                f"Feishu request failed: code={payload.get('code')} msg={payload.get('msg')}"
-            )
-        return payload
 
-    auth = request_json(
+def _feishu_request_json(
+    url: str,
+    *,
+    method: str | None = None,
+    body: Mapping[str, Any] | None = None,
+    token: str | None = None,
+) -> dict[str, Any]:
+    data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except Exception as exc:
+        raise AdminOperationError(f"Feishu request failed: {exc}") from exc
+    if payload.get("code") not in {None, 0}:
+        raise AdminOperationError(
+            f"Feishu request failed: code={payload.get('code')} msg={payload.get('msg')}"
+        )
+    return payload
+
+
+def _feishu_token(env_file: Path, credential: str) -> str:
+    app_id, app_secret = _feishu_credentials(env_file, credential)
+    auth = _feishu_request_json(
         "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
         body={"app_id": app_id, "app_secret": app_secret},
     )
     token = str(auth.get("tenant_access_token") or "")
     if not token:
         raise AdminOperationError("Feishu authentication returned no tenant token")
+    return token
+
+
+def _discover_feishu_topics_with_token(
+    token: str, chat_id: str, *, limit: int = 50
+) -> list[dict[str, Any]]:
     query = urllib.parse.urlencode(
         {
             "container_id_type": "chat",
@@ -286,7 +293,7 @@ def discover_feishu_topics(
             "page_size": max(1, min(limit, 50)),
         }
     )
-    payload = request_json(
+    payload = _feishu_request_json(
         f"https://open.feishu.cn/open-apis/im/v1/messages?{query}", token=token
     )
     topics: list[dict[str, Any]] = []
@@ -315,6 +322,73 @@ def discover_feishu_topics(
         )
         seen.add(thread_id)
     return topics
+
+
+def discover_feishu_topics(
+    env_file: Path,
+    credential: str,
+    chat_id: str,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    return _discover_feishu_topics_with_token(
+        _feishu_token(env_file, credential), chat_id, limit=limit
+    )
+
+
+def create_feishu_topic(
+    env_file: Path,
+    credential: str,
+    chat_id: str,
+    title: str,
+    *,
+    poll_attempts: int = 10,
+    poll_interval: float = 0.5,
+) -> dict[str, str]:
+    title = " ".join(title.split())
+    if not title:
+        raise AdminOperationError("Feishu topic title must not be empty")
+    token = _feishu_token(env_file, credential)
+    query = urllib.parse.urlencode({"receive_id_type": "chat_id"})
+    payload = _feishu_request_json(
+        f"https://open.feishu.cn/open-apis/im/v1/messages?{query}",
+        body={
+            "receive_id": chat_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": title}, ensure_ascii=False),
+        },
+        token=token,
+    )
+    root_message_id = str((payload.get("data") or {}).get("message_id") or "")
+    if not root_message_id:
+        raise AdminOperationError("Feishu topic creation returned no root message ID")
+    for attempt in range(max(1, poll_attempts)):
+        topics = _discover_feishu_topics_with_token(token, chat_id, limit=50)
+        for topic in topics:
+            if str(topic.get("root_message_id") or "") == root_message_id:
+                thread_id = str(topic.get("thread_id") or "")
+                if thread_id:
+                    return {
+                        "title": title,
+                        "chat_id": chat_id,
+                        "thread_id": thread_id,
+                        "root_message_id": root_message_id,
+                    }
+        if attempt + 1 < max(1, poll_attempts) and poll_interval > 0:
+            time.sleep(poll_interval)
+    raise AdminOperationError(
+        "Feishu created the root message but did not expose its thread_id in time; "
+        f"root_message_id={root_message_id}"
+    )
+
+
+def delete_feishu_message(env_file: Path, credential: str, message_id: str) -> None:
+    token = _feishu_token(env_file, credential)
+    _feishu_request_json(
+        f"https://open.feishu.cn/open-apis/im/v1/messages/{urllib.parse.quote(message_id)}",
+        method="DELETE",
+        token=token,
+    )
 
 
 def _parse_bool(value: str) -> bool:
@@ -505,6 +579,9 @@ Hard rules:
    with `bind-topic --create-target --apply`.
 8. Config changes are complete only after validated atomic write, supervised
    bridge restart, and verification. The Admin command owns those steps.
+9. If the user explicitly requests a new Feishu topic and supplies the exact
+   chat_id, use `create-feishu-topic`; do not reconstruct the Feishu API, tmux,
+   YAML, provider launch, or rollback sequence by hand.
 
 Deployment:
 - bindings: {bindings_file}
@@ -519,6 +596,13 @@ tmuxbot admin --file {bindings_file} --service {service} telegram-topic \\
 # For Feishu, discover exact existing topics instead of guessing:
 tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
   --env-file {env_file} --credential FEISHU_CODEX --chat-id oc_xxx --json
+# Explicit new Feishu topic: plan the complete topic + target + route transaction,
+# then repeat the same command with --apply after reviewing all fixed values:
+tmuxbot admin --file {bindings_file} --service {service} create-feishu-topic \\
+  --env-file {env_file} --name ROUTE --credential FEISHU_CODEX \\
+  --chat-id oc_xxx --topic-title "Project topic" \\
+  --tmux-target project:0.0 --cwd /absolute/project --backend pi \\
+  --mention-required false --create-target
 
 tmuxbot admin --file {bindings_file} --service {service} bind-topic \\
   --name ROUTE --channel feishu --credential FEISHU_CODEX \\
@@ -603,6 +687,29 @@ def build_admin_parser() -> argparse.ArgumentParser:
     topics.add_argument("--chat-id", required=True)
     topics.add_argument("--limit", type=int, default=50)
     topics.add_argument("--json", action="store_true", dest="as_json")
+    create_feishu = subparsers.add_parser(
+        "create-feishu-topic",
+        help="plan or apply one Feishu topic + tmux target + route transaction",
+    )
+    create_feishu.add_argument("--env-file", type=Path, required=True)
+    create_feishu.add_argument("--name", required=True)
+    create_feishu.add_argument("--credential", required=True)
+    create_feishu.add_argument("--chat-id", required=True)
+    create_feishu.add_argument("--topic-title", required=True)
+    create_feishu.add_argument("--tmux-target", required=True)
+    create_feishu.add_argument("--cwd", required=True)
+    create_feishu.add_argument(
+        "--backend", choices=("claude_code", "codex", "pi"), required=True
+    )
+    create_feishu.add_argument("--mention-required", type=_parse_bool, default=False)
+    create_feishu.add_argument(
+        "--cli-idle-timeout",
+        type=int,
+        dest="cli_idle_timeout_seconds",
+        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
+    )
+    create_feishu.add_argument("--create-target", action="store_true")
+    create_feishu.add_argument("--apply", action="store_true")
     install = subparsers.add_parser(
         "install-contract", help="install/update managed AGENTS.md and CLAUDE.md blocks"
     )
@@ -689,6 +796,108 @@ def run_admin_command(
                     indent=None if args.as_json else 2,
                 )
             )
+            return 0
+        if args.admin_command == "create-feishu-topic":
+            target = parse_tmux_target(args.tmux_target)
+            cwd = _resolved_directory(args.cwd)
+            chat_id = _parse_identifier(args.chat_id, channel="feishu")
+            title = " ".join(args.topic_title.split())
+            if not title:
+                raise AdminOperationError("Feishu topic title must not be empty")
+            if any(binding.name == args.name for binding in store.list()):
+                raise AdminOperationError(f"route name already exists: {args.name!r}")
+            if any(binding.tmux_target == target.value for binding in store.list()):
+                raise AdminOperationError(f"duplicate tmux target: {target.value}")
+            target_status = _preflight_target(
+                runtime, target, cwd, create_target=False
+            )
+            plan = {
+                "operation": "create-feishu-topic",
+                "apply": args.apply,
+                "endpoint": {
+                    "channel": "feishu",
+                    "credential": args.credential,
+                    "chat_id": chat_id,
+                    "title": title,
+                    "thread_id": "<returned by Feishu on apply>",
+                    "thread_root_message_id": "<returned by Feishu on apply>",
+                },
+                "route": {
+                    "name": args.name,
+                    "tmux_target": target.value,
+                    "cwd": str(cwd),
+                    "backend": args.backend,
+                    "mention_required": args.mention_required,
+                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
+                },
+                "tmux": target_status,
+                "create_target": args.create_target,
+                "service": args.service,
+                "rollback": [
+                    "restore bindings",
+                    "restart previous bridge",
+                    "remove transaction-created tmux session",
+                    "delete transaction-created Feishu root message",
+                ],
+            }
+            if not args.apply:
+                print(json.dumps(plan, ensure_ascii=False, indent=2))
+                print("plan only: repeat with --apply after verifying every value")
+                return 0
+            if target_status["state"] == "stopped" and not args.create_target:
+                raise AdminOperationError(
+                    f"tmux target {target.value} does not exist; pass --create-target explicitly"
+                )
+            topic: dict[str, str] | None = None
+            created_target = False
+            try:
+                topic = create_feishu_topic(
+                    args.env_file.expanduser(), args.credential, str(chat_id), title
+                )
+                item = {
+                    "name": args.name,
+                    "channel": "feishu",
+                    "bot_token_env": args.credential,
+                    "chat_id": chat_id,
+                    "thread_id": topic["thread_id"],
+                    "thread_root_message_id": topic["root_message_id"],
+                    "tmux_session": target.session,
+                    "tmux_window": target.window,
+                    "tmux_pane": target.pane,
+                    "cwd": str(cwd),
+                    "backend": args.backend,
+                    "mention_required": args.mention_required,
+                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
+                }
+                validate_bindings([*store.list(), binding_from_mapping(item)])
+                if args.create_target and target_status["state"] == "stopped":
+                    _preflight_target(runtime, target, cwd, create_target=True)
+                    created_target = True
+                _bound, verification = _apply_route_transaction(
+                    args.bindings_file,
+                    args.service,
+                    runtime,
+                    store,
+                    lambda: store.bind(item),
+                )
+            except Exception:
+                if created_target:
+                    try:
+                        runtime.remove_created_target(target)
+                    except Exception:
+                        pass
+                if topic is not None:
+                    try:
+                        delete_feishu_message(
+                            args.env_file.expanduser(),
+                            args.credential,
+                            topic["root_message_id"],
+                        )
+                    except Exception:
+                        pass
+                raise
+            verification["created_topic"] = topic
+            print(json.dumps(verification, ensure_ascii=False))
             return 0
         if args.admin_command == "install-contract":
             cwd = args.cwd.expanduser().resolve()
