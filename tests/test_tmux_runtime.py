@@ -151,7 +151,7 @@ def test_retries_enter_when_tui_keeps_the_pasted_draft():
     asyncio.run(runtime.send_text("pane", "请分析这张图片\n/tmp/example.png"))
 
     assert fake.submission_count == 1
-    assert fake.enter_count == 2
+    assert fake.enter_count == 1
     assert fake.draft == ""
 
 
@@ -199,7 +199,7 @@ def test_multiline_paste_uses_the_rendered_placeholder_as_draft_snapshot():
     asyncio.run(runtime.send_text("pane", "请分析这张图片\n\n@/tmp/example.png"))
 
     assert fake.submission_count == 1
-    assert fake.enter_count == 2
+    assert fake.enter_count == 1
 
 
 def test_waits_after_draft_render_before_first_enter():
@@ -223,7 +223,7 @@ def test_transient_empty_composer_does_not_false_confirm_submission():
     asyncio.run(runtime.send_text("pane", "图片消息"))
 
     assert fake.submission_count == 1
-    assert fake.enter_count == 2
+    assert fake.enter_count == 1
 
 
 def test_stable_unreadable_composer_after_enter_confirms_transition():

@@ -458,7 +458,7 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 参见 `CLAUDE.md` 第 2 节。摘要:
 
 - `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
-- `paste-buffer -p` 前先等 TUI idle；发送 Enter 后读取 Claude/Codex/Pi 活动输入框确认。仅当原草稿仍在且 CLI 未进入 busy 时有限重试，输入框清空、内容变化或 CLI 开始工作后立即停止，避免漏交与重复提交。
+- `paste-buffer -p` 前先等 TUI idle；paste 渲染后及每次 Enter 前再要求 TUI 连续稳定 idle 0.5s，封住“初检 idle → 队列/重绘转 busy → Enter 被忽略”的竞态。发送 Enter 后读取 Claude/Codex/Pi 活动输入框确认；输入框清空、内容变化或 CLI 开始工作后立即停止，原草稿仍在才进入下一轮稳定-idle 等待，避免漏交与重复提交。
 - claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
 - TG 4096 限 UTF-16 单位
 - `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)

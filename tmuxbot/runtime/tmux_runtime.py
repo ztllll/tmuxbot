@@ -34,6 +34,7 @@ class TmuxRuntime:
         paste_render_timeout: float = 2.0,
         submit_confirm_timeout: float = 1.0,
         submit_transition_stability: float = 0.3,
+        retry_idle_stability: float = 0.5,
         max_submit_attempts: int = 3,
     ) -> None:
         if post_paste_delay < 0:
@@ -48,6 +49,8 @@ class TmuxRuntime:
             raise ValueError("submit_confirm_timeout must be non-negative")
         if submit_transition_stability < 0:
             raise ValueError("submit_transition_stability must be non-negative")
+        if retry_idle_stability < 0:
+            raise ValueError("retry_idle_stability must be non-negative")
         if max_submit_attempts < 1:
             raise ValueError("max_submit_attempts must be at least 1")
         self._capture = capture_func
@@ -66,6 +69,7 @@ class TmuxRuntime:
         self.paste_render_timeout = paste_render_timeout
         self.submit_confirm_timeout = submit_confirm_timeout
         self.submit_transition_stability = submit_transition_stability
+        self.retry_idle_stability = retry_idle_stability
         self.max_submit_attempts = max_submit_attempts
         self._input_locks: dict[str, asyncio.Lock] = {}
 
@@ -101,7 +105,15 @@ class TmuxRuntime:
                     return
                 if self.post_render_delay:
                     await self._sleep(self.post_render_delay)
-                for _attempt in range(self.max_submit_attempts):
+                for attempt in range(self.max_submit_attempts):
+                    # The provider may become busy after the initial readiness
+                    # check but before Enter (for example a queued Pi tool/run).
+                    # Keep the rendered draft intact and wait; do not consume
+                    # bounded Enter attempts while the TUI cannot submit it.
+                    await self._wait_until_ready(
+                        target,
+                        stable_for=self.retry_idle_stability,
+                    )
                     self._send_key(target, "Enter")
                     transition = await self._wait_for_submission_transition(target, draft)
                     if transition:
@@ -129,12 +141,19 @@ class TmuxRuntime:
         )
         return True
 
-    async def _wait_until_ready(self, target: str) -> str:
+    async def _wait_until_ready(self, target: str, *, stable_for: float = 0.0) -> str:
         elapsed = 0.0
+        idle_elapsed = 0.0
         while True:
             pane = self._capture(target, self.capture_lines)
             if not self._is_busy(pane):
-                return pane
+                if idle_elapsed >= stable_for:
+                    return pane
+                await self._sleep(self.poll_interval)
+                elapsed += self.poll_interval
+                idle_elapsed += self.poll_interval
+                continue
+            idle_elapsed = 0.0
             if elapsed >= self.wait_timeout:
                 raise TmuxBusyTimeout(
                     f"tmux pane {target} stayed busy for {self.wait_timeout:.1f}s"

@@ -67,6 +67,7 @@
 
 ### Fixed
 
+- 修复飞书/TG 向忙碌 provider TUI 偶发投递失败：paste 后、每次 Enter 前都要求 TUI 连续稳定 idle 0.5s；若 Pi/Claude/Codex 在初次检查后因队列或重绘进入 working，保留 composer 草稿等待真正 idle，不再快速耗尽 3 次 Enter 并遗留未提交的文字或附件路径。
 - 修复 Telegram/飞书向 Pi 注入 `/new` 后错误提示“未确认完成”：Pi 会先在内存切换并显示 `✓ New session started`，直到新会话首条 assistant 回复才创建 JSONL。tmuxbot 现在以该 TUI marker 确认即时成功，并保留 session handoff，待首条回复落盘后再持久化新 identity。
 - 完成 Pi 原生命令审计：`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import` 按 Pi 交互界面处理，不再误用 Claude 命令表；`/resume`/`/fork` 选择完成后通过 Pi 原生 `/session` 精确同步 identity，`/clone` 自动认领新 transcript；`/compact` 必须观察到 Pi JSONL `compaction` entry 才报告成功，空会话不再假报“压缩已结束”。
 - `tmuxbot serve` 监督的 bridge child 在 Linux 上启用 parent-death signal；即使 Web/supervisor 主进程被 SIGKILL，孤儿 bridge 也会由 kernel 终止，systemd 重启后不会因旧 lock 残留形成双消费或反复 spawn 失败。
