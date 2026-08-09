@@ -211,6 +211,47 @@ def test_pi_normal_message_enables_busy_submission(monkeypatch):
     assert calls[0][1]["allow_busy_submission"] is True
 
 
+def test_pi_pending_rename_enables_busy_submission(monkeypatch):
+    b = _binding()
+    b.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+        @property
+        def capabilities(self):
+            return ProviderCapabilities(name=self.name, accepts_input_while_busy=True)
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    class Frontend:
+        async def send_html(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(),
+            PiBackend(),
+            b,
+            SimpleNamespace(pending_rename={b.name: __import__("time").time()}),
+            1,
+            None,
+            "__pycache__/tmuxbot.cpython-310.",
+        )
+    )
+
+    assert calls[0][1]["allow_busy_submission"] is True
+
+
 def test_tmuxstop_reports_a_real_tmux_failure(monkeypatch):
     calls = []
 
