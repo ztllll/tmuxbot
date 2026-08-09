@@ -525,6 +525,23 @@ def test_pi_command_options_only_capture_noninteractive_text_commands():
     )
 
 
+def test_pi_status_footer_restores_powerline_icon_semantics():
+    status = PiBackend().parse_terminal_status(
+        "░▒▓ 🔌 aisupertoken 🤖 gpt 5.6-sol 🧠 high "
+        "📁 tmuxbot 🌿 main 🪟 ctx 39.3%/360k "
+        "🔢 ↑6.5m ↓841k 📦 R337m CH99.9% 💸 $0.000 🕒 11:06\n"
+        "📄 JSONL 14.5 MB"
+    )
+
+    footer = PiBackend().format_status_footer(status)
+
+    assert footer == (
+        "🔌 aisupertoken · 🤖 gpt-5.6-sol · 🧠 high · "
+        "🔢 ↑6.5M ↓841k · 📦 R337M CH99.9% · 💸 $0.000 · "
+        "🪟 141k/360k (39.3%) · 📁 tmuxbot · 🌿 main · 📄 JSONL 14.5 MB"
+    )
+
+
 def test_pi_status_footer_preserves_all_pi_specific_metrics():
     status = PiBackend().parse_terminal_status(
         "/data/project/demo (feature/pi)\n"
@@ -535,12 +552,10 @@ def test_pi_status_footer_preserves_all_pi_specific_metrics():
     footer = PiBackend().format_status_footer(status)
 
     assert footer is not None
-    assert "gpt-5.6-luna • medium" in footer
-    assert "↑48k" in footer
-    assert "↓2.3k" in footer
-    assert "R98k" in footer
-    assert "CH92.0%" in footer
-    assert "26k/360k" in footer
-    assert "7.3%, auto" in footer
-    assert "feature/pi" in footer
-    assert "/data/project/demo" in footer
+    assert "🤖 gpt-5.6-luna" in footer
+    assert "🧠 medium" in footer
+    assert "🔢 ↑48k ↓2.3k" in footer
+    assert "📦 R98k CH92.0%" in footer
+    assert "🪟 26k/360k (7.3%, auto)" in footer
+    assert "🌿 feature/pi" in footer
+    assert "📁 /data/project/demo" in footer

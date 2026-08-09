@@ -660,31 +660,33 @@ class PiBackend(Backend):
         if status is None:
             return None
         parts: list[str] = []
-        model = status.model
-        if model:
-            model_text = model
-            if status.provider:
-                model_text = f"({status.provider}) {model_text}"
-            if status.effort:
-                model_text += f" • {status.effort}"
-            parts.append(model_text)
+        if status.provider:
+            parts.append(f"🔌 {status.provider}")
+        if status.model:
+            parts.append(f"🤖 {status.model}")
+        if status.effort:
+            parts.append(f"🧠 {status.effort}")
 
-        usage: list[str] = []
+        tokens: list[str] = []
         if status.input_tokens is not None:
-            usage.append(f"↑{_format_pi_tokens(status.input_tokens)}")
+            tokens.append(f"↑{_format_pi_tokens(status.input_tokens)}")
         if status.output_tokens is not None:
-            usage.append(f"↓{_format_pi_tokens(status.output_tokens)}")
+            tokens.append(f"↓{_format_pi_tokens(status.output_tokens)}")
+        if tokens:
+            parts.append(f"🔢 {' '.join(tokens)}")
+
+        cache: list[str] = []
         if status.cache_read_tokens is not None:
-            usage.append(f"R{_format_pi_tokens(status.cache_read_tokens)}")
+            cache.append(f"R{_format_pi_tokens(status.cache_read_tokens)}")
         if status.cache_write_tokens is not None:
-            usage.append(f"W{_format_pi_tokens(status.cache_write_tokens)}")
+            cache.append(f"W{_format_pi_tokens(status.cache_write_tokens)}")
         if status.cache_hit_rate is not None:
-            usage.append(f"CH{status.cache_hit_rate * 100:.1f}%")
+            cache.append(f"CH{status.cache_hit_rate * 100:.1f}%")
+        if cache:
+            parts.append(f"📦 {' '.join(cache)}")
         if status.cost_usd is not None or status.subscription:
             cost = status.cost_usd or 0.0
-            usage.append(f"${cost:.3f}{' (sub)' if status.subscription else ''}")
-        if usage:
-            parts.append(" ".join(usage))
+            parts.append(f"💸 ${cost:.3f}{' (sub)' if status.subscription else ''}")
 
         if status.context_limit is not None:
             context = "?"
@@ -698,15 +700,14 @@ class PiBackend(Backend):
                 details.append("auto")
             if details:
                 context += f" ({', '.join(details)})"
-            parts.append(context)
+            parts.append(f"🪟 {context}")
 
-        location = status.cwd
-        if location:
-            if status.git_branch:
-                location += f" ({status.git_branch})"
-            if status.session_name:
-                location += f" • {status.session_name}"
-            parts.append(location)
+        if status.cwd:
+            parts.append(f"📁 {status.cwd}")
+        if status.git_branch:
+            parts.append(f"🌿 {status.git_branch}")
+        if status.session_name:
+            parts.append(f"🏷 {status.session_name}")
         if status.extension_statuses:
             parts.append(" ".join(status.extension_statuses))
         if status.state != TerminalState.IDLE:
