@@ -52,7 +52,7 @@ tmuxbot/                       ← 仓库根
 │   │   ├── claude_code.py     ← ClaudeCodeBackend: parse_event / parse_* / find_active_jsonl
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
 │   │   ├── codex.py           ← CodexBackend
-│   │   └── pi.py              ← PiBackend: 原生 footer 全量解析 + 活动 JSONL metadata/usage 补全
+│   │   └── pi.py              ← PiBackend: 原生/自定义 statusline 解析 + JSONL metadata/usage/todo 补全
 │   └── frontends/
 │       ├── base.py            ← Frontend ABC 与回复发送契约
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + handlers
@@ -470,6 +470,8 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 - Pi `/new` 的 JSONL 是延迟持久化：TUI 先显示 `✓ New session started`，新文件要等首条 assistant 回复才落盘。命令确认使用 TUI marker，但 `pending_session_handoff_after` 必须一直保留到 tailer 认领新 JSONL，不能因即时看不到文件而清除。
 - Pi 命令分三类维护：文本 capture（`/session`）、JSONL 硬信号（`/new`、`/clone`、`/compact`）和 interactive picker（`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import`）。interactive session switch 的事务必须保留到用户按 Enter 完成选择，再调用 Pi 原生 `/session` 读取 File/ID 同步 route identity；不得 capture 后自动 Escape 关闭 picker。
 - Pi `/compact` 的完成硬信号是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。`tokensBefore` 是压缩前上下文；有 `retainedTail` 时从其中 usage 估算保留 token。没有新增 entry（例如 `Nothing to compact`）必须失败关闭，不能发送成功兜底。
+- Pi 可由 extension 替换原生 footer。当前 parser 同时支持原生 footer 与 `pi-statusline` powerline（provider/model/thinking/cwd/Git/context/tokens/cache/cost/extension status）；composer 识别也必须接受该 statusline，Todo overlay 出现在编辑器上方时不能误入草稿。
+- `rpiv-todo` 的权威状态不是独立文件，而是当前 Pi JSONL 分支上最后一条合法 `toolResult(toolName="todo")` 的 `message.details.tasks` 完整快照。`read_tasks()` 必须沿最后 leaf 的 `parentId` 链 replay、忽略 abandoned branch 与 `deleted` 项，再由共享 footer 渲染 `activeForm` 和 `blockedBy`。
 
 ---
 

@@ -43,6 +43,7 @@ _PI_FOOTER_RE = re.compile(
     r"(?:off|minimal|low|medium|high|xhigh|max|thinking off)\s*$",
     re.I,
 )
+_PI_STATUSLINE_RE = re.compile(r"🪟\s*ctx\s+", re.I)
 
 
 def _tmux(*args: str) -> subprocess.CompletedProcess:
@@ -161,7 +162,11 @@ def _active_input_text(pane: str) -> str | None:
         # Only accept this shape when a Pi footer follows the lower border, so
         # historical markdown separators are not mistaken for an active draft.
         footer = next(
-            (line for line in lines[separators[-1] + 1 :] if _PI_FOOTER_RE.search(line)),
+            (
+                line
+                for line in lines[separators[-1] + 1 :]
+                if _PI_FOOTER_RE.search(line) or _PI_STATUSLINE_RE.search(line)
+            ),
             None,
         )
         if footer is not None:

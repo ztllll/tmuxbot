@@ -61,6 +61,8 @@ def test_pi_builtin_command_matrix_uses_pi_specific_interactions():
     assert classify_command(backend, "/tree").kind == CommandKind.INTERACTIVE
     assert classify_command(backend, "/fork").kind == CommandKind.INTERACTIVE
     assert classify_command(backend, "/trust").kind == CommandKind.INTERACTIVE
+    assert classify_command(backend, "/todos").kind == CommandKind.PASSTHROUGH
+    assert classify_command(backend, "/statusline").kind == CommandKind.INTERACTIVE
     assert classify_command(backend, "/name").kind == CommandKind.PASSTHROUGH
     assert classify_command(backend, "/session").kind == CommandKind.PASSTHROUGH
     assert classify_command(backend, "/quit").kind == CommandKind.BLOCKED

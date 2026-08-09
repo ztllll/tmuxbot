@@ -315,6 +315,19 @@ def test_submission_retry_is_bounded():
 """,
             "",
         ),
+        (
+            """● Todos (1/3)
+├─ ◐ Implement adapter (implementing adapter)
+└─ ○ Validate deployment
+────────────────────────────────────────
+image caption
+@/tmp/tmuxbot-attachments/input.jpg
+────────────────────────────────────────
+░▒▓ 🔌 aisupertoken 🤖 gpt 5.6-sol 🧠 high 📁 tmuxbot 🌿 main 🪟 ctx 42.0%/360k
+📄 JSONL 14.0 MB
+""",
+            "image caption\n@/tmp/tmuxbot-attachments/input.jpg",
+        ),
     ],
 )
 def test_active_input_text_reads_claude_and_codex_composers(pane, expected):

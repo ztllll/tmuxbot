@@ -118,6 +118,7 @@ _PI_INTERACTIVE = {
     "/model": "切换模型, 无参数时打开模型 picker。",
     "/scoped-models": "配置当前会话的模型循环范围。",
     "/settings": "打开 Pi 设置界面。",
+    "/statusline": "打开 Pi 自定义状态栏设置界面。",
     "/resume": "恢复历史会话并切换当前 provider session。",
     "/tree": "浏览当前会话树并选择继续位置。",
     "/trust": "保存当前项目的信任决定。",

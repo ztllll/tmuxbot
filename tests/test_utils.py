@@ -26,6 +26,26 @@ def test_strip_handwritten_footer_removes_task_block():
     assert strip_handwritten_footer(text) == "real answer"
 
 
+def test_render_task_footer_includes_pi_active_form_and_dependencies():
+    footer = render_task_footer(
+        [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {
+                "id": 2,
+                "subject": "Implement",
+                "status": "in_progress",
+                "activeForm": "implementing adapter",
+                "blockedBy": [1],
+            },
+            {"id": 3, "subject": "Deploy", "status": "pending", "blockedBy": [2]},
+        ]
+    )
+
+    assert "◼ <b>#2 Implement</b> <i>(implementing adapter)</i> ⛓ #1" in footer
+    assert "◻ #3 Deploy ⛓ #2" in footer
+    assert "✓ <s>#1 Audit</s>" in footer
+
+
 def test_render_task_footer_hides_completed_history_when_no_task_is_active():
     assert render_task_footer([
         {"subject": "历史任务", "status": "completed"},

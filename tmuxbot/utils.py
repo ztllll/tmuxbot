@@ -45,12 +45,25 @@ def render_task_footer(todos: "list | None") -> str:
         "━━━ 任务 ━━━",
         f"{n} tasks ({len(done)} done, {len(in_prog)} in progress, {len(pending)} open)",
     ]
+    show_ids = any(t.get("blockedBy") for t in todos)
+
+    def _label(t) -> str:
+        subject = html.escape(str(t.get("subject") or t.get("content") or ""))
+        task_id = t.get("id")
+        return f"#{task_id} {subject}" if show_ids and task_id is not None else subject
+
+    def _deps(t) -> str:
+        blocked = t.get("blockedBy") or []
+        return f" ⛓ {','.join(f'#{item}' for item in blocked)}" if blocked else ""
+
     for t in in_prog:
-        lines.append(f"◼ <b>{html.escape(str(t.get('subject') or t.get('content') or ''))}</b>")
+        active = html.escape(str(t.get("activeForm") or "").strip())
+        active_text = f" <i>({active})</i>" if active else ""
+        lines.append(f"◼ <b>{_label(t)}</b>{active_text}{_deps(t)}")
     for t in pending:
-        lines.append(f"◻ {html.escape(str(t.get('subject') or t.get('content') or ''))}")
+        lines.append(f"◻ {_label(t)}{_deps(t)}")
     for t in done[:3]:
-        lines.append(f"✓ <s>{html.escape(str(t.get('subject') or t.get('content') or ''))}</s>")
+        lines.append(f"✓ <s>{_label(t)}</s>{_deps(t)}")
     if len(done) > 3:
         lines.append(f"… +{len(done) - 3} completed")
     return "\n".join(lines)

@@ -67,6 +67,35 @@ _PI_CACHE_HIT_RE = re.compile(r"(?:^|\s)CH(?P<value>\d+(?:\.\d+)?)%")
 _PI_COST_RE = re.compile(
     r"(?:^|\s)\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
 )
+_PI_STATUSLINE_RE = re.compile(r"🪟\s*ctx\s+", re.M)
+_PI_STATUSLINE_PROVIDER_RE = re.compile(r"🔌\s*(?P<provider>\S+)")
+_PI_STATUSLINE_MODEL_RE = re.compile(
+    r"🤖\s*(?P<model>.+?)(?=\s+🧠|\s+📁|\s+🌿|\s+💭|\s+⚙|\s+🪟|\s+🔢|\s+📦|\s+💸|\s+🕒|\s+🔁|\ue0b4|$)"
+)
+_PI_STATUSLINE_EFFORT_RE = re.compile(
+    r"🧠\s*(?P<effort>off|minimal|low|medium|high|xhigh|max)\b", re.I
+)
+_PI_STATUSLINE_CWD_RE = re.compile(
+    r"📁\s*(?P<cwd>.+?)(?=\s+🌿|\s+💭|\s+⚙|\s+🪟|\s+🔢|\s+📦|\s+💸|\s+🕒|\s+🔁|\ue0b4|$)"
+)
+_PI_STATUSLINE_BRANCH_RE = re.compile(
+    r"🌿\s*(?P<branch>.+?)(?=\s+💭|\s+⚙|\s+🪟|\s+🔢|\s+📦|\s+💸|\s+🕒|\s+🔁|\ue0b4|$)"
+)
+_PI_STATUSLINE_CONTEXT_RE = re.compile(
+    r"🪟\s*ctx\s*(?:(?P<percent>\d+(?:\.\d+)?)%|\?)\s*/\s*"
+    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)"
+)
+_PI_STATUSLINE_TOKENS_RE = re.compile(
+    r"🔢\s*(?:tok\s+0|↑(?P<input>\d+(?:\.\d+)?[kKmM]?)\s+"
+    r"↓(?P<output>\d+(?:\.\d+)?[kKmM]?))"
+)
+_PI_STATUSLINE_CACHE_RE = re.compile(
+    r"📦\s*(?P<cache>.+?)(?=\s+💸|\s+🕒|\s+🔁|\ue0b4|$)"
+)
+_PI_STATUSLINE_COST_RE = re.compile(
+    r"💸\s*\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
+)
+_PI_EXTENSION_STATUS_RE = re.compile(r"^(?:📄\s+JSONL\b|📄\s+session\b)", re.I)
 
 
 def _pi_bin() -> str:
@@ -196,6 +225,7 @@ def _format_tool(name: str, arguments: Any) -> str:
         "write": "✏️ 写入",
         "edit": "✂️ 编辑",
         "bash": "💻 执行",
+        "todo": "📋 任务",
     }
     label = labels.get(name.lower(), f"🛠 {name}")
     if not isinstance(arguments, dict):
@@ -254,6 +284,9 @@ class PiBackend(Backend):
         if not clean.strip():
             return None
         lines = [line.rstrip() for line in clean.splitlines()]
+        custom = self._parse_custom_statusline(lines, clean)
+        if custom is not None:
+            return custom
         working = _PI_WORKING_RE.search(clean)
         model_match = None
         stats_line = ""
@@ -335,6 +368,94 @@ class PiBackend(Backend):
             context_limit=context_limit,
             context_percent=context_percent,
             auto_compact=auto_compact,
+        )
+
+    def _parse_custom_statusline(
+        self, lines: list[str], clean: str
+    ) -> TerminalStatus | None:
+        index = next(
+            (
+                current
+                for current in range(len(lines) - 1, -1, -1)
+                if _PI_STATUSLINE_RE.search(lines[current])
+            ),
+            None,
+        )
+        if index is None:
+            return None
+        line = lines[index]
+        working = _PI_WORKING_RE.search(clean)
+        provider_match = _PI_STATUSLINE_PROVIDER_RE.search(line)
+        model_match = _PI_STATUSLINE_MODEL_RE.search(line)
+        effort_match = _PI_STATUSLINE_EFFORT_RE.search(line)
+        cwd_match = _PI_STATUSLINE_CWD_RE.search(line)
+        branch_match = _PI_STATUSLINE_BRANCH_RE.search(line)
+        context_match = _PI_STATUSLINE_CONTEXT_RE.search(line)
+        tokens_match = _PI_STATUSLINE_TOKENS_RE.search(line)
+        cache_match = _PI_STATUSLINE_CACHE_RE.search(line)
+        cost_match = _PI_STATUSLINE_COST_RE.search(line)
+
+        context_limit = context_used = None
+        context_percent = None
+        if context_match:
+            context_limit = _scaled_number(context_match.group("limit"))
+            if context_match.group("percent") is not None:
+                context_percent = float(context_match.group("percent"))
+                if context_limit:
+                    context_used = round(context_percent / 100 * context_limit)
+
+        cache_read = cache_write = None
+        cache_hit_rate = None
+        if cache_match:
+            cache_text = cache_match.group("cache")
+            read_match = re.search(r"(?:^|\s)R(\d+(?:\.\d+)?[kKmM]?)", cache_text)
+            write_match = re.search(r"(?:^|\s)W(\d+(?:\.\d+)?[kKmM]?)", cache_text)
+            hit_match = re.search(r"(?:^|\s)CH(\d+(?:\.\d+)?)%", cache_text)
+            cache_read = _scaled_number(read_match.group(1)) if read_match else None
+            cache_write = _scaled_number(write_match.group(1)) if write_match else None
+            cache_hit_rate = float(hit_match.group(1)) / 100 if hit_match else None
+
+        extension_statuses = tuple(
+            value
+            for value in (item.strip() for item in lines[index + 1 :])
+            if value and _PI_EXTENSION_STATUS_RE.search(value)
+        )
+        return TerminalStatus(
+            state=TerminalState.WORKING if working else TerminalState.IDLE,
+            label=working.group(0).strip() if working else "ready",
+            provider=provider_match.group("provider") if provider_match else None,
+            model=(
+                re.sub(r"^gpt\s+", "gpt-", model_match.group("model").strip())
+                if model_match
+                else None
+            ),
+            effort=effort_match.group("effort").lower() if effort_match else None,
+            cwd=cwd_match.group("cwd").strip() if cwd_match else None,
+            git_branch=(
+                branch_match.group("branch").strip()
+                if branch_match and branch_match.group("branch").strip() != "no-git"
+                else None
+            ),
+            input_tokens=(
+                _scaled_number(tokens_match.group("input"))
+                if tokens_match and tokens_match.group("input")
+                else 0 if tokens_match else None
+            ),
+            output_tokens=(
+                _scaled_number(tokens_match.group("output"))
+                if tokens_match and tokens_match.group("output")
+                else 0 if tokens_match else None
+            ),
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+            cache_hit_rate=cache_hit_rate,
+            cost_usd=float(cost_match.group("value")) if cost_match else None,
+            subscription=bool(cost_match.group("subscription")) if cost_match else None,
+            extension_statuses=extension_statuses,
+            context_used=context_used,
+            context_limit=context_limit,
+            context_percent=context_percent,
+            auto_compact=None,
         )
 
     def find_active_jsonl(self, b: "Binding") -> Path | None:
@@ -749,6 +870,60 @@ class PiBackend(Backend):
                 "trigger": "manual",
             }
         return None
+
+    def read_tasks(self, b: "Binding") -> list:
+        transcript = self.find_active_jsonl(b)
+        if transcript is None:
+            return []
+        latest: list[dict[str, Any]] | None = None
+        try:
+            raw_rows = transcript.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
+        except OSError:
+            return []
+        entries: list[dict[str, Any]] = []
+        for line in raw_rows:
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict) and row.get("type") != "session":
+                entries.append(row)
+        by_id = {
+            str(row["id"]): row
+            for row in entries
+            if isinstance(row.get("id"), str) and row.get("id")
+        }
+        branch: list[dict[str, Any]] = []
+        current = entries[-1] if entries else None
+        seen: set[str] = set()
+        while current is not None:
+            branch.append(current)
+            current_id = current.get("id")
+            if isinstance(current_id, str):
+                if current_id in seen:
+                    break
+                seen.add(current_id)
+            parent_id = current.get("parentId")
+            current = by_id.get(parent_id) if isinstance(parent_id, str) else None
+        branch.reverse()
+        for row in branch:
+            if row.get("type") != "message":
+                continue
+            message = row.get("message") or {}
+            if message.get("role") != "toolResult" or message.get("toolName") != "todo":
+                continue
+            details = message.get("details") or {}
+            tasks = details.get("tasks")
+            if isinstance(tasks, list) and isinstance(details.get("nextId"), int):
+                latest = [dict(task) for task in tasks if isinstance(task, dict)]
+        if latest is None:
+            return []
+        allowed = {"pending", "in_progress", "completed"}
+        result = [task for task in latest if task.get("status") in allowed]
+        result.sort(key=lambda task: int(task.get("id", 0) or 0))
+        return result
 
     def aggregate_usage(self, jsonl_path: Path, last_n: int = 200) -> dict | None:
         try:

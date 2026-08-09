@@ -291,6 +291,136 @@ def test_pi_runtime_metadata_cache_invalidates_when_transcript_grows(tmp_path, m
     assert second.provider == "aisupertoken"
 
 
+def test_pi_terminal_status_recognizes_custom_powerline_footer():
+    status = PiBackend().parse_terminal_status(
+        "⠙ Working...\n"
+        "● Todos (1/4)\n"
+        "├─ ✓ #1 Audit latest Pi TUI\n"
+        "├─ ◐ #2 Add Pi todo coverage (writing tests) ⛓ #1\n"
+        "────────────────────────────────────────\n"
+        "\n"
+        "────────────────────────────────────────\n"
+        "░▒▓ 🔌 aisupertoken 🤖 gpt 5.6-sol 🧠 high "
+        "📁 tmuxbot 🌿 main 💭 thinking 🪟 ctx 98.3%/360k "
+        "🔢 ↑6.1m ↓801k 📦 R324.1m CH99.8% 💸 $0.000 🕒 02:42\n"
+        "📄 JSONL 13.8 MB"
+    )
+
+    assert status is not None
+    assert status.state == TerminalState.WORKING
+    assert status.provider == "aisupertoken"
+    assert status.model == "gpt-5.6-sol"
+    assert status.effort == "high"
+    assert status.cwd == "tmuxbot"
+    assert status.git_branch == "main"
+    assert status.context_percent == 98.3
+    assert status.context_limit == 360_000
+    assert status.context_used == 353_880
+    assert status.input_tokens == 6_100_000
+    assert status.output_tokens == 801_000
+    assert status.cache_read_tokens == 324_100_000
+    assert status.cache_hit_rate == pytest.approx(0.998)
+    assert status.cost_usd == 0.0
+    assert status.extension_statuses == ("📄 JSONL 13.8 MB",)
+
+
+def test_pi_reads_latest_rpiv_todo_snapshot_from_jsonl(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    snapshots = [
+        [
+            {"id": 1, "subject": "Old", "status": "pending"},
+        ],
+        [
+            {"id": 1, "subject": "Audit", "status": "completed"},
+            {
+                "id": 2,
+                "subject": "Implement",
+                "status": "in_progress",
+                "activeForm": "implementing adapter",
+                "blockedBy": [1],
+                "owner": "pi",
+            },
+            {"id": 3, "subject": "Deploy", "status": "pending", "blockedBy": [2]},
+            {"id": 4, "subject": "Removed", "status": "deleted"},
+        ],
+    ]
+    with transcript.open("a", encoding="utf-8") as stream:
+        for tasks in snapshots:
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "toolResult",
+                            "toolName": "todo",
+                            "details": {"action": "update", "tasks": tasks, "nextId": 5},
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+    tasks = PiBackend().read_tasks(binding(cwd))
+
+    assert tasks == snapshots[-1][:-1]
+    assert tasks[1]["activeForm"] == "implementing adapter"
+    assert tasks[1]["blockedBy"] == [1]
+
+
+def test_pi_reads_todo_snapshot_only_from_current_jsonl_branch(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"type": "session", "version": 3, "id": "session-1", "cwd": str(cwd)},
+        {
+            "type": "message",
+            "id": "root",
+            "parentId": None,
+            "message": {
+                "role": "toolResult",
+                "toolName": "todo",
+                "details": {
+                    "tasks": [{"id": 1, "subject": "Root", "status": "pending"}],
+                    "nextId": 2,
+                },
+            },
+        },
+        {
+            "type": "message",
+            "id": "abandoned",
+            "parentId": "root",
+            "message": {
+                "role": "toolResult",
+                "toolName": "todo",
+                "details": {
+                    "tasks": [{"id": 1, "subject": "Wrong", "status": "completed"}],
+                    "nextId": 2,
+                },
+            },
+        },
+        {
+            "type": "message",
+            "id": "leaf",
+            "parentId": "root",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "current"}]},
+        },
+    ]
+    transcript.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    assert PiBackend().read_tasks(binding(cwd)) == [
+        {"id": 1, "subject": "Root", "status": "pending"}
+    ]
+
+
 def test_pi_terminal_status_recognizes_full_native_footer():
     status = PiBackend().parse_terminal_status(
         "⠧ Working...\n"
