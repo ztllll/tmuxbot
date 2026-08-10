@@ -32,6 +32,7 @@ from tmuxbot.command_adapter import (
     semantic_action_from_command,
     CommandKind,
 )
+from tmuxbot.core.events import TerminalState
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.tmux import tmux_capture, tmux_kill_session, tmux_send_key, tmux_send_text
 
@@ -217,6 +218,23 @@ async def dispatch_incoming_text(
     # ── capture 类 slash 命令: 注入 + background capture_and_push ──
     if cmd_for_feedback and cmd_for_feedback in backend.command_opts():
         opts = backend.command_opts()[cmd_for_feedback]
+        # Pi 普通文字可以在 Working 时进入 steering queue，但 /new、/compact 等
+        # 控制命令不能。不要让 IM update 无声等待共享层 300 秒；明确失败关闭，
+        # 也避免同一命令的多次点击各自长期占住 handler。
+        if backend.accepts_input_while_busy:
+            status = backend.parse_terminal_status(tmux_capture(b.tmux_target, 30))
+            if status is not None and status.state != TerminalState.IDLE:
+                label = status.label or status.state.value
+                await frontend.send_html(
+                    chat_id,
+                    thread_id,
+                    f"⏳ <b>{html.escape(cmd_for_feedback)} 未执行</b>\n"
+                    f"· Pi 当前仍在 <code>{html.escape(label)}</code>\n"
+                    "· 普通消息可进入 steering queue；控制命令必须等待空闲。"
+                    "如需立即切换，请先发送 <code>/esc</code>，确认停止后再发送 "
+                    f"<code>{html.escape(cmd_for_feedback)}</code>。",
+                )
+                return
         if opts.expect_new_session or opts.expect_session_handoff:
             # 仅允许本次通道命令之后创建/切换的 transcript 接管 identity；避免同 cwd
             # 的其他 tmux binding 被“最新文件”规则误认领。

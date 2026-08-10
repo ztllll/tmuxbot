@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from tmuxbot.backends.base import CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
+from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.dispatch import dispatch_incoming_text
 from tmuxbot.state import Binding
 
@@ -71,6 +72,57 @@ def test_channel_new_arms_session_handoff_before_tmux_injection(monkeypatch):
 
     assert binding.pending_session_handoff_after is not None
     assert sent[0][1] == "/new"
+
+
+def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
+    binding = _binding()
+    binding.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+        @property
+        def capabilities(self):
+            return ProviderCapabilities(name=self.name, accepts_input_while_busy=True)
+
+        def parse_terminal_status(self, _pane):
+            return TerminalStatus(state=TerminalState.WORKING, label="Working...")
+
+    class Frontend:
+        async def send_html(self, chat_id, thread_id, text):
+            calls.append(("reply", chat_id, thread_id, text))
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*_args, **_kwargs):
+        calls.append(("inject",))
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_capture", lambda *_args: "Working...")
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(),
+            PiBackend(),
+            binding,
+            SimpleNamespace(pending_rename={}),
+            1,
+            8024,
+            "/new@ztlgpt_bot",
+            bot_username="ztlgpt_bot",
+        )
+    )
+
+    assert not any(call[0] == "inject" for call in calls)
+    assert binding.pending_session_handoff_after is None
+    assert len(calls) == 1
+    assert "当前仍在 <code>Working" in calls[0][3]
+    assert "/esc" in calls[0][3]
+    assert "/new" in calls[0][3]
 
 
 def test_channel_clone_arms_session_handoff_before_tmux_injection(monkeypatch):
