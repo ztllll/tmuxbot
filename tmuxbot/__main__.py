@@ -27,6 +27,7 @@ from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.paths import RuntimePaths
+from tmuxbot.pi_extension import install_pi_handoff_extension
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
 from tmuxbot.utils import save_offsets
@@ -89,6 +90,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
     if _env_flag("TMUXBOT_CLAUDE_HOOKS"):
         install_claude_hooks()
         log.info("managed Claude hooks installed")
+    if any(binding.backend == "pi" for binding in S.bindings):
+        try:
+            extension = install_pi_handoff_extension()
+            log.info("managed Pi handoff extension installed: %s", extension)
+        except OSError:
+            log.exception("unable to install managed Pi handoff extension")
 
     # 装配 backend 实例池
     backends_pool = {

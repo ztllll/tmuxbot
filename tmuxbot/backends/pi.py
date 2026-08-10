@@ -27,6 +27,7 @@ from tmuxbot.core.events import (
     TerminalStatus,
 )
 from tmuxbot.core.sessions import SessionIdentity
+from tmuxbot.runtime.pi_handoff import read_handoff
 from tmuxbot.runtime.route_health import provider_session_file, provider_tree_is_safe
 from tmuxbot.tmux import (
     tmux_capture,
@@ -479,11 +480,19 @@ class PiBackend(Backend):
             return None
         target_cwd = str(b.cwd.expanduser().resolve())
 
-        # The live Pi process exposes the precise file it is writing.  This is
-        # the only safe source after an SSH-side /new: pinned YAML is the
-        # persisted recovery identity, while mtime can belong to another pane
-        # with the same cwd.  Ambiguous/stopped process trees fail closed and
-        # retain the existing pin instead of guessing.
+        # The managed Pi extension records a session switch atomically.  It is
+        # route-targeted rather than mtime-based, so another pane sharing this
+        # cwd cannot be adopted accidentally.  Validate the transcript header
+        # again here because the record itself is only a handoff hint.
+        handoff = read_handoff(b.tmux_target, b.cwd)
+        if handoff is not None:
+            header = _session_header(handoff.transcript_path)
+            if header and str(header.get("id") or "") == handoff.session_id:
+                return handoff.transcript_path
+
+        # Future Pi versions may export the exact current transcript on their
+        # process environment.  Treat it as a second authoritative hint, not
+        # as a fallback to newest-file guessing.
         live_path = provider_session_file(b.tmux_target, "pi")
         if live_path is not None:
             header = _session_header(live_path)

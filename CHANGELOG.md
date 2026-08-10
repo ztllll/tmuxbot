@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Pi routes now consume a provider-authored, target-scoped session handoff record after `/new`, `/resume`, or `/fork`, instead of relying on transcript mtime; stopped Pi siblings are detected and the affected pane is recovered before IM input is injected.
+
 ### Added
 
 - 新增 `tmuxbot admin adopt-pi-session` 受控恢复命令：仅在操作者直接于 Pi TUI 切换会话而导致 route 继续钉在旧 JSONL、Telegram/飞书回推中断时使用。命令要求精确 JSONL 路径，校验 `type=session` 的 session ID 与 route cwd，先输出 plan，`--apply` 后经原子 route 写入、supervised bridge restart 与 route/tmux/service verify 完成认领；绝不按 mtime 猜测或自动跨会话切换。
