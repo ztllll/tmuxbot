@@ -102,6 +102,15 @@ def tmux_pane_command(target: str) -> str:
     return r.stdout.strip()
 
 
+def tmux_pane_pid(target: str) -> int | None:
+    """Return the pane shell PID, or ``None`` when the target is unavailable."""
+    result = _tmux("display-message", "-t", target, "-p", "#{pane_pid}")
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
+
+
 def tmux_pane_process_commands(target: str) -> tuple[str, ...]:
     """Return command lines for a pane shell and all of its live descendants."""
     pane = _tmux("display-message", "-t", target, "-p", "#{pane_pid}")

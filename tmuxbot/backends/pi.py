@@ -27,6 +27,7 @@ from tmuxbot.core.events import (
     TerminalStatus,
 )
 from tmuxbot.core.sessions import SessionIdentity
+from tmuxbot.runtime.route_health import provider_session_file, provider_tree_is_safe
 from tmuxbot.tmux import (
     tmux_capture,
     tmux_has_session,
@@ -476,6 +477,22 @@ class PiBackend(Backend):
         if not directory.is_dir():
             return None
         target_cwd = str(b.cwd.expanduser().resolve())
+
+        # The live Pi process exposes the precise file it is writing.  This is
+        # the only safe source after an SSH-side /new: pinned YAML is the
+        # persisted recovery identity, while mtime can belong to another pane
+        # with the same cwd.  Ambiguous/stopped process trees fail closed and
+        # retain the existing pin instead of guessing.
+        live_path = provider_session_file(b.tmux_target, "pi")
+        if live_path is not None:
+            header = _session_header(live_path)
+            try:
+                live_cwd = str(Path(str((header or {}).get("cwd") or "")).expanduser().resolve())
+            except OSError:
+                live_cwd = ""
+            if header and live_cwd == target_cwd:
+                return live_path
+
         candidates: list[Path] = []
         handoff_candidates: list[Path] = []
         for path in directory.glob("*.jsonl"):
@@ -773,7 +790,17 @@ class PiBackend(Backend):
             await asyncio.sleep(0.5)
         command = tmux_pane_command(b.tmux_target)
         if self.is_running_command(command):
-            return
+            # A foreground executable alone is not proof that the pane can
+            # accept IM input.  A stopped sibling Pi can retain the terminal
+            # process group after an interrupted /new or extension failure.
+            # Refuse injection until an operator/recovery path replaces that
+            # ambiguous process tree.
+            if provider_tree_is_safe(b.tmux_target, "pi"):
+                return
+            raise RuntimeError(
+                f"Pi process tree in pane {b.tmux_target} contains a stopped or missing Pi; "
+                "refusing to inject input"
+            )
         if not self.can_start_from_command(command):
             raise RuntimeError(
                 f"refusing to start Pi in pane {b.tmux_target} "

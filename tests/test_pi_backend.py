@@ -60,6 +60,38 @@ def test_pi_cwd_encoding_matches_pi_session_manager():
     assert encode_pi_cwd(Path("/home/user/project:alpha")) == "--home-user-project-alpha--"
 
 
+def test_pi_prefers_exact_live_session_file_over_stale_route_pin(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    old = sessions_root / encode_pi_cwd(cwd) / "old.jsonl"
+    live = sessions_root / encode_pi_cwd(cwd) / "live.jsonl"
+    write_session(old, cwd, session_id="old")
+    write_session(live, cwd, session_id="live")
+    route = binding(cwd)
+    route.provider_session_id = "old"
+    route.transcript_path = old
+    monkeypatch.setattr(pi, "provider_session_file", lambda *_args: live)
+
+    assert PiBackend().find_active_jsonl(route) == live
+
+
+def test_pi_ignores_live_session_file_with_wrong_cwd(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    wanted = sessions_root / encode_pi_cwd(cwd) / "wanted.jsonl"
+    wrong = sessions_root / encode_pi_cwd(cwd) / "wrong.jsonl"
+    write_session(wanted, cwd, session_id="wanted")
+    write_session(wrong, tmp_path / "other", session_id="wrong")
+    route = binding(cwd)
+    route.provider_session_id = "wanted"
+    route.transcript_path = wanted
+    monkeypatch.setattr(pi, "provider_session_file", lambda *_args: wrong)
+
+    assert PiBackend().find_active_jsonl(route) == wanted
+
+
 def test_pi_finds_only_sessions_whose_header_matches_route_cwd(tmp_path, monkeypatch):
     sessions_root = tmp_path / "sessions"
     monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
@@ -567,6 +599,25 @@ def test_pi_terminal_status_accepts_non_reasoning_model_footer():
     assert status is not None
     assert status.model == "model-without-reasoning"
     assert status.effort is None
+
+
+def test_pi_ensure_running_rejects_stopped_provider_sibling(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    monkeypatch.setattr(pi, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(pi, "tmux_pane_command", lambda _target: "pi")
+    monkeypatch.setattr(pi, "provider_tree_is_safe", lambda *_args: False)
+
+    with pytest.raises(RuntimeError, match="contains a stopped or missing Pi"):
+        asyncio.run(PiBackend().ensure_running(route))
+
+
+def test_pi_ensure_running_accepts_live_provider_tree_without_proc_session_file(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    monkeypatch.setattr(pi, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(pi, "tmux_pane_command", lambda _target: "pi")
+    monkeypatch.setattr(pi, "provider_tree_is_safe", lambda *_args: True)
+
+    asyncio.run(PiBackend().ensure_running(route))
 
 
 def test_pi_ensure_running_rejects_an_unknown_foreground_command(tmp_path, monkeypatch):
