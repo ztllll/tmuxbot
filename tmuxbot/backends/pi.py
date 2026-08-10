@@ -100,12 +100,6 @@ _PI_STATUSLINE_CACHE_RE = re.compile(
 _PI_STATUSLINE_COST_RE = re.compile(
     r"💸\s*\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
 )
-# Extensions share one physical footer line.  Keep every recognized Pi-owned
-# status token even when another extension places text before it (for example
-# ``🔌 滴答: 项目 • 📄 JSONL 3.5 MB``).
-_PI_EXTENSION_STATUS_RE = re.compile(
-    r"📄\s+(?:JSONL(?:\s+\d+(?:\.\d+)?\s*[KMGT]?B)?|session\b)", re.I
-)
 
 
 def _pi_bin() -> str:
@@ -435,11 +429,10 @@ class PiBackend(Backend):
             cache_write = _scaled_number(write_match.group(1)) if write_match else None
             cache_hit_rate = float(hit_match.group(1)) / 100 if hit_match else None
 
-        extension_statuses = tuple(
-            match.group(0).strip()
-            for item in lines[index + 1 :]
-            for match in _PI_EXTENSION_STATUS_RE.finditer(item)
-        )
+        # Pi renders extension-owned status below its powerline footer.  These
+        # lines belong to the TUI status bar as a whole, not just to Pi's JSONL
+        # indicator; preserve them verbatim so IM mirrors every extension.
+        extension_statuses = tuple(item.strip() for item in lines[index + 1 :] if item.strip())
         return TerminalStatus(
             state=TerminalState.WORKING if working else TerminalState.IDLE,
             label=working.group(0).strip() if working else "ready",

@@ -369,14 +369,14 @@ def test_pi_terminal_status_ignores_historical_working_text_below_idle_powerline
     assert status.extension_statuses == ("📄 JSONL 19.6 MB",)
 
 
-def test_pi_terminal_status_keeps_jsonl_status_when_dida_prepends_shared_footer_line():
+def test_pi_terminal_status_preserves_full_shared_extension_status_line():
     status = PiBackend().parse_terminal_status(
         "░▒▓ 🤖 gpt 5.6-sol\ue0b4 🌿 no-git\ue0b4 💭 thinking 🪟 ctx 74.4%/360k\ue0b4\n"
         "🔌 滴答: 任务 • 📄 JSONL 3.5 MB\n"
     )
 
     assert status is not None
-    assert status.extension_statuses == ("📄 JSONL 3.5 MB",)
+    assert status.extension_statuses == ("🔌 滴答: 任务 • 📄 JSONL 3.5 MB",)
 
 
 def test_pi_terminal_status_recognizes_custom_powerline_footer():
