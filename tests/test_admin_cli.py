@@ -1317,6 +1317,104 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
     assert runtime.restarts == ["bridge.service", "bridge.service"]
 
 
+def test_adopt_pi_session_plans_then_applies_verified_identity(tmp_path, capsys):
+    cwd = tmp_path / "alpha"
+    cwd.mkdir()
+    session = tmp_path / "new-pi-session.jsonl"
+    session.write_text(
+        json.dumps(
+            {
+                "type": "session",
+                "id": "pi-session-new",
+                "cwd": str(cwd),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(cwd))])
+    runtime = FakeRuntime(
+        {
+            "alpha:0.0": {
+                "state": "running",
+                "target": "alpha:0.0",
+                "cwd": str(cwd),
+                "command": "pi",
+                "dead": False,
+            }
+        }
+    )
+    argv = [
+        "--file",
+        str(bindings),
+        "--service",
+        "bridge.service",
+        "adopt-pi-session",
+        "alpha",
+        "--session-file",
+        str(session),
+    ]
+
+    assert run_admin_command(argv, runtime=runtime) == 0
+    planned = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
+    assert planned["before"]["provider_session_id"] == "session-old"
+    assert planned["after"] == {
+        "provider_session_id": "pi-session-new",
+        "transcript_path": str(session),
+    }
+    assert runtime.restarts == []
+
+    assert run_admin_command([*argv, "--apply"], runtime=runtime) == 0
+    adopted = RouteStore(bindings).inspect("alpha")
+    assert adopted.provider_session_id == "pi-session-new"
+    assert adopted.transcript_path == session
+    assert runtime.restarts == ["bridge.service"]
+
+
+def test_adopt_pi_session_rejects_a_different_cwd(tmp_path, capsys):
+    cwd = tmp_path / "alpha"
+    cwd.mkdir()
+    session = tmp_path / "wrong.jsonl"
+    session.write_text(
+        json.dumps(
+            {"type": "session", "id": "pi-session-wrong", "cwd": str(tmp_path)}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(cwd))])
+    runtime = FakeRuntime(
+        {
+            "alpha:0.0": {
+                "state": "running",
+                "target": "alpha:0.0",
+                "cwd": str(cwd),
+                "command": "pi",
+                "dead": False,
+            }
+        }
+    )
+
+    assert (
+        run_admin_command(
+            [
+                "--file",
+                str(bindings),
+                "adopt-pi-session",
+                "alpha",
+                "--session-file",
+                str(session),
+            ],
+            runtime=runtime,
+        )
+        == 2
+    )
+    assert "Pi session cwd mismatch" in capsys.readouterr().out
+    assert runtime.restarts == []
+
+
 def test_verify_json_reports_route_tmux_and_service(tmp_path, capsys):
     cwd = tmp_path / "alpha"
     cwd.mkdir()

@@ -598,6 +598,47 @@ def _apply_route_transaction(
         raise
 
 
+def _pi_session_identity(path: Path, cwd: Path) -> tuple[str, Path]:
+    """Validate an exact Pi transcript supplied for a controlled route recovery."""
+    transcript = path.expanduser().resolve()
+    if not transcript.is_file():
+        raise AdminOperationError(f"Pi session file does not exist: {transcript}")
+    try:
+        with transcript.open("r", encoding="utf-8", errors="replace") as stream:
+            header = None
+            for _ in range(32):
+                line = stream.readline()
+                if not line:
+                    break
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict) and row.get("type") == "session":
+                    header = row
+                    break
+    except OSError as exc:
+        raise AdminOperationError(
+            f"unable to read Pi session header from {transcript}: {exc}"
+        ) from exc
+    if header is None:
+        raise AdminOperationError(f"Pi session file has no session header: {transcript}")
+    session_id = str(header.get("id") or "").strip()
+    if not session_id:
+        raise AdminOperationError(f"Pi session file has no session id: {transcript}")
+    try:
+        actual_cwd = Path(str(header.get("cwd") or "")).expanduser().resolve()
+    except OSError as exc:
+        raise AdminOperationError(
+            f"Pi session file has an invalid cwd: {transcript}"
+        ) from exc
+    if actual_cwd != cwd.expanduser().resolve():
+        raise AdminOperationError(
+            f"Pi session cwd mismatch: {actual_cwd} != {cwd.expanduser().resolve()}"
+        )
+    return session_id, transcript
+
+
 def verify_route(
     store: RouteStore,
     name: str,
@@ -659,7 +700,10 @@ Hard rules:
 9. `provision-project` is the normal high-level interface for Telegram and
    Feishu, whether the topic already exists or must be created. `create-topic`,
    `bind-topic`, and discovery commands are low-level recovery/diagnostic tools.
-10. Telegram topic routes need only chat_id + thread_id. Accept either
+10. If Pi was switched outside the channel command flow and replies stop, use
+   `adopt-pi-session` with the exact new JSONL path: run its plan, then `--apply`.
+   It verifies the session header and exact cwd; never guess or select by mtime.
+11. Telegram topic routes need only chat_id + thread_id. Accept either
     https://t.me/c/CHAT/THREAD or a full message link; never demand a message ID
     or thread_root_message_id for Telegram.
 
@@ -707,6 +751,9 @@ tmuxbot admin --file {bindings_file} --service {service} move-topic ROUTE \\
   --thread-root-message-id om_xxx
 # Inspect the plan, then repeat with --apply.
 
+# Recovery after a direct Pi TUI session switch: inspect the plan, then add --apply.
+tmuxbot admin --file {bindings_file} --service {service} adopt-pi-session ROUTE \\
+  --session-file /absolute/pi-session.jsonl
 tmuxbot admin --file {bindings_file} --service {service} verify ROUTE --json
 ```
 
@@ -866,6 +913,13 @@ def build_admin_parser() -> argparse.ArgumentParser:
     move.add_argument("--thread-root-message-id")
     move.add_argument("--apply", action="store_true")
 
+    adopt_pi = subparsers.add_parser(
+        "adopt-pi-session",
+        help="plan or adopt one exact Pi session file after an out-of-band Pi session switch",
+    )
+    adopt_pi.add_argument("name")
+    adopt_pi.add_argument("--session-file", type=Path, required=True)
+    adopt_pi.add_argument("--apply", action="store_true")
     verify = subparsers.add_parser("verify", help="verify route, tmux target, and bridge")
     verify.add_argument("name")
     verify.add_argument("--json", action="store_true", dest="as_json")
@@ -1315,6 +1369,67 @@ def run_admin_command(
                 store,
                 lambda: store.replace(args.name, replacement_item),
             )
+            print(json.dumps(verification, ensure_ascii=False))
+            return 0
+        if args.admin_command == "adopt-pi-session":
+            existing = store.inspect(args.name)
+            if existing.backend != "pi":
+                raise AdminOperationError(
+                    f"route {args.name!r} uses {existing.backend!r}, not Pi"
+                )
+            target = parse_tmux_target(existing.tmux_target)
+            target_status = _preflight_target(
+                runtime, target, existing.cwd, create_target=False
+            )
+            if (
+                target_status["state"] != "running"
+                or target_status.get("command") != "pi"
+            ):
+                raise AdminOperationError(
+                    f"Pi target is not running at {existing.tmux_target}"
+                )
+            session_id, transcript = _pi_session_identity(
+                args.session_file, existing.cwd
+            )
+            replacement_item = binding_to_mapping(existing)
+            replacement_item["provider_session_id"] = session_id
+            replacement_item["transcript_path"] = str(transcript)
+            replacement = binding_from_mapping(replacement_item)
+            candidate = [
+                replacement if binding.name == args.name else binding
+                for binding in store.list()
+            ]
+            validate_bindings(candidate)
+            plan = {
+                "operation": "adopt-pi-session",
+                "apply": args.apply,
+                "route": args.name,
+                "tmux": target_status,
+                "before": {
+                    "provider_session_id": existing.provider_session_id,
+                    "transcript_path": (
+                        str(existing.transcript_path)
+                        if existing.transcript_path else None
+                    ),
+                },
+                "after": {
+                    "provider_session_id": session_id,
+                    "transcript_path": str(transcript),
+                },
+                "service": args.service,
+            }
+            if not args.apply:
+                print(json.dumps(plan, ensure_ascii=False, indent=2))
+                print("plan only: repeat with --apply after verifying every value")
+                return 0
+            _adopted, verification = _apply_route_transaction(
+                args.bindings_file,
+                args.service,
+                runtime,
+                store,
+                lambda: store.replace(args.name, replacement_item),
+            )
+            verification["session_adoption"] = plan["after"]
             print(json.dumps(verification, ensure_ascii=False))
             return 0
         if args.admin_command == "verify":
