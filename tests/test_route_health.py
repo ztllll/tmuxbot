@@ -2,6 +2,19 @@ from tmuxbot.runtime import route_health
 from tmuxbot.runtime.route_health import PaneProcess, provider_session_file, provider_tree_is_safe
 
 
+def test_pane_processes_includes_provider_when_it_replaces_pane_shell(monkeypatch):
+    monkeypatch.setattr(route_health, "tmux_pane_pid", lambda _target: 123)
+
+    class Result:
+        stdout = "123 1 Sl+ pi --approve\n"
+
+    monkeypatch.setattr(route_health.subprocess, "run", lambda *_args, **_kwargs: Result())
+
+    assert route_health.pane_processes("project:0.0") == (
+        PaneProcess(pid=123, parent_pid=1, state="Sl+", command="pi --approve"),
+    )
+
+
 def test_provider_session_file_returns_unique_live_process_environment(monkeypatch, tmp_path):
     transcript = tmp_path / "live.jsonl"
     transcript.write_text("{}\n")

@@ -46,6 +46,7 @@ def pane_processes(target: str) -> tuple[PaneProcess, ...]:
         ["ps", "-eo", "pid=,ppid=,stat=,args="], capture_output=True, text=True
     )
     children: dict[int, list[PaneProcess]] = {}
+    processes: dict[int, PaneProcess] = {}
     for line in result.stdout.splitlines():
         fields = line.strip().split(maxsplit=3)
         if len(fields) != 4:
@@ -54,11 +55,16 @@ def pane_processes(target: str) -> tuple[PaneProcess, ...]:
             pid, parent_pid = int(fields[0]), int(fields[1])
         except ValueError:
             continue
-        children.setdefault(parent_pid, []).append(
-            PaneProcess(pid=pid, parent_pid=parent_pid, state=fields[2], command=fields[3])
-        )
+        process = PaneProcess(pid=pid, parent_pid=parent_pid, state=fields[2], command=fields[3])
+        processes[pid] = process
+        children.setdefault(parent_pid, []).append(process)
 
+    # ``respawn-pane ... exec pi`` makes Pi the pane root rather than a shell
+    # descendant.  Include it so health is invariant to the launch wrapper.
     result_processes: list[PaneProcess] = []
+    root = processes.get(root_pid)
+    if root is not None:
+        result_processes.append(root)
     pending = [root_pid]
     while pending:
         parent_pid = pending.pop()

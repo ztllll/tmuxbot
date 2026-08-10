@@ -34,6 +34,7 @@ from tmuxbot.tmux import (
     tmux_new_session,
     tmux_native_exit,
     tmux_pane_command,
+    tmux_respawn_pane,
     tmux_safe_launch,
     tmux_send_text,
 )
@@ -834,6 +835,18 @@ class PiBackend(Backend):
                 ):
                     return
         raise RuntimeError(f"Pi TUI did not become ready in pane {b.tmux_target}")
+
+    async def recover_unhealthy_pane(self, b: "Binding") -> bool:
+        """Discard only an unsafe Pi process tree, then resume its pinned session."""
+        if tmux_pane_command(b.tmux_target) == "pi" and provider_tree_is_safe(
+            b.tmux_target, "pi"
+        ):
+            return False
+        if not tmux_respawn_pane(b.tmux_target, b.cwd):
+            return False
+        await asyncio.sleep(0.25)
+        await self.ensure_running(b)
+        return True
 
     async def hibernate(self, b: "Binding") -> bool:
         return await tmux_native_exit(

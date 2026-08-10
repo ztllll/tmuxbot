@@ -66,7 +66,20 @@ async def ensure_binding_running(
 
     async with lock:
         started = time.monotonic()
-        await backend.ensure_running(b)
+        try:
+            await backend.ensure_running(b)
+        except Exception as first_error:
+            recover = getattr(backend, "recover_unhealthy_pane", None)
+            if not callable(recover):
+                raise
+            try:
+                recovered = await recover(b)
+            except Exception:
+                log.exception("[%s] unhealthy-pane recovery failed", b.name)
+                raise first_error
+            if not recovered:
+                raise
+            log.warning("[%s] recovered unsafe provider pane for %s", b.name, reason)
         elapsed = time.monotonic() - started
         if elapsed >= 1.0:
             log.info(

@@ -63,6 +63,16 @@ def tmux_new_session(s: str, cwd) -> None:
     _tmux("new-session", "-d", "-s", s, "-c", str(cwd))
 
 
+def tmux_respawn_pane(target: str, cwd) -> bool:
+    """Replace one unhealthy pane process tree with its configured shell.
+
+    Callers must establish that the provider process tree is unsafe before
+    invoking this destructive recovery operation; it never targets a session
+    and cannot affect another route pane.
+    """
+    return _tmux("respawn-pane", "-k", "-t", target, "-c", str(cwd)).returncode == 0
+
+
 def tmux_error_is_no_server(value: str | bytes) -> bool:
     """Match only tmux's standard no-server diagnostic, with no extra errors."""
     text = value.decode(errors="replace") if isinstance(value, bytes) else value

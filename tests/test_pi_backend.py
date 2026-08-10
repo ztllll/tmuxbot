@@ -650,6 +650,29 @@ def test_pi_ensure_running_fails_closed_when_tui_never_becomes_ready(tmp_path, m
         asyncio.run(PiBackend().ensure_running(route))
 
 
+def test_pi_recover_unhealthy_pane_respawns_and_resumes_pin(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    route.provider_session_id = "pinned-session"
+    respawns = []
+    monkeypatch.setattr(pi, "tmux_pane_command", lambda _target: "pi")
+    monkeypatch.setattr(pi, "provider_tree_is_safe", lambda *_args: False)
+    monkeypatch.setattr(
+        pi, "tmux_respawn_pane", lambda target, cwd: respawns.append((target, cwd)) or True
+    )
+
+    async def no_sleep(_seconds):
+        return None
+
+    async def ensured(_self, _binding):
+        return None
+
+    monkeypatch.setattr(pi.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(PiBackend, "ensure_running", ensured)
+
+    assert asyncio.run(PiBackend().recover_unhealthy_pane(route)) is True
+    assert respawns == [(route.tmux_target, route.cwd)]
+
+
 def test_pi_reconcile_session_identity_parses_wrapped_native_session_screen(
     tmp_path, monkeypatch
 ):

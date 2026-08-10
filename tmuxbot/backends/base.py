@@ -219,6 +219,14 @@ class Backend(ABC):
     async def ensure_running(self, b: "Binding") -> None:
         """如果 binding 对应的 tmux pane 没在跑这个 backend, 拉起来"""
 
+    async def recover_unhealthy_pane(self, b: "Binding") -> bool:
+        """Replace a provider process tree known to be unsafe for IM input.
+
+        The lifecycle caller invokes this only after ``ensure_running`` fails;
+        defaulting to False keeps recovery opt-in per provider.
+        """
+        return False
+
     async def hibernate(self, b: "Binding") -> bool:
         """Ask an idle provider TUI to exit while preserving tmux and route state.
 

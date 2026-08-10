@@ -103,6 +103,32 @@ def test_ensure_binding_running_waits_for_existing_lock_when_requested():
     asyncio.run(run())
 
 
+def test_ensure_binding_running_recovers_only_after_provider_health_failure():
+    class RecoveringBackend:
+        def __init__(self) -> None:
+            self.ensure_calls = 0
+            self.recovery_calls = 0
+
+        async def ensure_running(self, _binding):
+            self.ensure_calls += 1
+            if self.ensure_calls == 1:
+                raise RuntimeError("stopped provider sibling")
+
+        async def recover_unhealthy_pane(self, _binding):
+            self.recovery_calls += 1
+            await self.ensure_running(_binding)
+            return True
+
+    backend = RecoveringBackend()
+    state = SimpleNamespace(ensure_locks={})
+
+    assert asyncio.run(
+        ensure_binding_running(backend, binding(), state, reason="incoming", wait=True)
+    ) is True
+    assert backend.ensure_calls == 2
+    assert backend.recovery_calls == 1
+
+
 def test_ensure_binding_running_preserves_bound_provider_identity(tmp_path):
     old = tmp_path / "old.jsonl"
     old.write_text("old")
