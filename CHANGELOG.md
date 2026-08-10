@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- 修复 Pi busy 检测扫描整段 tmux scrollback、误将历史聊天正文中的 `Working...` 识别为实时状态，导致空闲时 `/new` 等控制命令被错误拒绝或输入队列等待 300 秒：现在只接受 Pi 原生动态 braille spinner (`⠋`–`⠏`) 开头的活动行；parser 和 tmux 投递等待路径共用该约束，保留真实忙碌、压缩与重试状态识别。
 - 修复 Pi 在 `Working` 时从 Telegram/飞书发送 `/new`、`/compact` 等控制命令只显示已读、随后无声等待 300 秒并抛 `TmuxBusyTimeout`：普通消息仍立即进入 steering queue；必须 idle 的控制命令现在立即在原 endpoint 回复“未执行”，提示先 `/esc` 再重试，不再长期占住 IM update，也不会因重复点击形成多个悬挂 handler。
 - 修复新 provision 的 Pi route 第一条消息有时无回复：首个 transcript 可能在 0.5 秒 tailer 首次发现前已同时写入 user 和 assistant；旧 bootstrap 规则把 `last_file=None` 一律视为历史文件并将 offset 跳到 EOF。现在仅已有持久 provider identity 的 bridge bootstrap 跳末尾，尚未绑定 identity 的新 route 从 0 消费首个 transcript；已有 route 的防历史回吐保证不变。
 - 修复最终 assistant 回复未送达 Telegram 时仍推进 JSONL offset，消除“tailer 有 final 日志但用户无消息且重启不补发”的静默丢失。

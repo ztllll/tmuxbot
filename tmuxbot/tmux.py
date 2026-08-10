@@ -28,8 +28,11 @@ _TUI_BUSY_RE = re.compile(
     _TUI_BUSY_VERBS + r"[…\.]*\s*[^\n]{0,30}?\(\s*\d+(?:m\s+\d+)?s",  # 必须 ( 开头时间
     re.I,
 )
+# Pi's live loader is rendered with one of these braille spinner frames.
+# Do not match bare ``Working...``: terminal history can contain that text.
 _PI_BUSY_RE = re.compile(
-    r"^\s*\S*\s*(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
+    r"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+"
+    r"(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
     re.I | re.M,
 )
 _COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")

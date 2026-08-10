@@ -44,8 +44,12 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 PI_SESSIONS_DIR = Path.home() / ".pi" / "agent" / "sessions"
+# Pi's live status indicator always starts with its animated braille spinner.
+# Requiring it prevents an assistant/user transcript line containing e.g.
+# ``Working...`` from being mistaken for current TUI activity.
 _PI_WORKING_RE = re.compile(
-    r"^\s*\S*\s*(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
+    r"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+"
+    r"(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
     re.I | re.M,
 )
 _PI_MODEL_RE = re.compile(

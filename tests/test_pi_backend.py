@@ -351,6 +351,24 @@ def test_pi_runtime_metadata_cache_invalidates_when_transcript_grows(tmp_path, m
     assert second.provider == "aisupertoken"
 
 
+def test_pi_terminal_status_ignores_historical_working_text_below_idle_powerline_footer():
+    status = PiBackend().parse_terminal_status(
+        "I previously wrote about Working... in the transcript body\n"
+        "and even repeated TmuxBusyTimeout diagnostics above the footer.\n"
+        "todo → Reproduce false Pi Working detection\n"
+        "◐ in progress\n"
+        "░▒▓ 🔌 aisupertoken 🤖 gpt 5.6-sol 🧠 high "
+        "📁 tmuxbot 🌿 main ⚙ bash×2 🪟 ctx 42.9%/360k "
+        "🔢 ↑9.6m ↓1.1m 📦 R477.8m CH99.6% 💸 $109.35 🕒 02:41\n"
+        "📄 JSONL 19.6 MB\n"
+    )
+
+    assert status is not None
+    assert status.state == TerminalState.IDLE
+    assert status.label == "ready"
+    assert status.extension_statuses == ("📄 JSONL 19.6 MB",)
+
+
 def test_pi_terminal_status_recognizes_custom_powerline_footer():
     status = PiBackend().parse_terminal_status(
         "⠙ Working...\n"

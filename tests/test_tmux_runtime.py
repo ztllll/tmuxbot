@@ -131,6 +131,14 @@ def submission_runtime_for(
     )
 
 
+def test_pi_busy_detector_requires_a_live_spinner_status_line():
+    assert not _is_tui_busy(
+        "assistant transcript: Working... must not block a later command\n"
+        "░▒▓ 🔌 provider 🤖 model 🧠 high ⚙ bash×2 🪟 ctx 8.0%/360k"
+    )
+    assert _is_tui_busy("⠼ Working...\n░▒▓ 🔌 provider 🤖 model 🧠 high")
+
+
 def test_paste_settles_before_enter():
     fake = FakeTmux()
 
