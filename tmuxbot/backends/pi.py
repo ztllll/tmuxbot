@@ -100,7 +100,12 @@ _PI_STATUSLINE_CACHE_RE = re.compile(
 _PI_STATUSLINE_COST_RE = re.compile(
     r"💸\s*\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
 )
-_PI_EXTENSION_STATUS_RE = re.compile(r"^(?:📄\s+JSONL\b|📄\s+session\b)", re.I)
+# Extensions share one physical footer line.  Keep every recognized Pi-owned
+# status token even when another extension places text before it (for example
+# ``🔌 滴答: 项目 • 📄 JSONL 3.5 MB``).
+_PI_EXTENSION_STATUS_RE = re.compile(
+    r"📄\s+(?:JSONL(?:\s+\d+(?:\.\d+)?\s*[KMGT]?B)?|session\b)", re.I
+)
 
 
 def _pi_bin() -> str:
@@ -431,9 +436,9 @@ class PiBackend(Backend):
             cache_hit_rate = float(hit_match.group(1)) / 100 if hit_match else None
 
         extension_statuses = tuple(
-            value
-            for value in (item.strip() for item in lines[index + 1 :])
-            if value and _PI_EXTENSION_STATUS_RE.search(value)
+            match.group(0).strip()
+            for item in lines[index + 1 :]
+            for match in _PI_EXTENSION_STATUS_RE.finditer(item)
         )
         return TerminalStatus(
             state=TerminalState.WORKING if working else TerminalState.IDLE,
