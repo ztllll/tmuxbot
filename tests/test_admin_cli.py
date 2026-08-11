@@ -171,6 +171,8 @@ def test_admin_contract_install_is_idempotent_and_preserves_existing_text(tmp_pa
     assert first.startswith("existing\n")
     assert first.count("tmuxbot-admin-contract:start") == 1
     assert "Never guess a topic/thread ID" in first
+    assert "do not claim this interface cannot send files" in first
+    assert "[download](</absolute/path/report.pdf>)" in first
     assert f"--env-file {tmp_path / '.env'}" in first
     assert (admin_cwd / "CLAUDE.md").read_text(encoding="utf-8").count(
         "tmuxbot-admin-contract:start"

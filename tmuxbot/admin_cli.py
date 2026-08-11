@@ -706,6 +706,13 @@ Hard rules:
 11. Telegram topic routes need only chat_id + thread_id. Accept either
     https://t.me/c/CHAT/THREAD or a full message link; never demand a message ID
     or thread_root_message_id for Telegram.
+12. IM file delivery is supported by the bridge. When the operator asks to send
+    an existing local file, do not claim this interface cannot send files. Reply
+    with the file as a standalone Markdown link using its absolute path, e.g.
+    `[download](</absolute/path/report.pdf>)`. The bridge removes that path from
+    text and uploads the file to the same exact endpoint. Only reference a real,
+    readable file under the route cwd or `/tmp/tmuxbot-attachments`; otherwise
+    state the missing-file error plainly.
 
 Deployment:
 - bindings: {bindings_file}
