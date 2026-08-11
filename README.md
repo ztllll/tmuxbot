@@ -135,7 +135,7 @@ Claude/Codex/Pi TUI 连续明确处于 `IDLE` 60 分钟，且 composer 为空、
 命令事务、session handoff 或活动 TeamRun 时，才使用 provider 原生退出命令回到 shell；
 不读取“最后一条 IM 消息”的时间。tmux、cwd、route 和 provider identity 保留，下一条精确
 route 消息恢复最近会话。全局用 `TMUXBOT_CLI_IDLE_TIMEOUT=3600`，route 可配置
-`cli_idle_timeout_seconds`，其中 `0` 表示 CLI 常驻。**Pi 默认不继承全局空闲休眠**：Pi 同时承载扩展、轮询器和其他会话资源，默认常驻；只有 route 显式设置正数 `cli_idle_timeout_seconds` 才允许休眠 Pi。Claude/Codex 继续继承全局超时。Telegram、飞书和 Web 控制面板都提供带确认的
+`cli_idle_timeout_seconds`，其中 `0` 表示 CLI 常驻。Telegram、飞书和 Web 控制面板都提供带确认的
 “关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
 回滚和验收步骤见 [`docs/single-service-operations.md`](docs/single-service-operations.md)。
 
