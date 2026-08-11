@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from tmuxbot.command_adapter import (
@@ -10,6 +11,7 @@ from tmuxbot.command_adapter import (
     parse_slash_text,
     semantic_action_from_command,
     semantic_actions_from_body,
+    probe_passthrough_result,
 )
 
 
@@ -75,6 +77,36 @@ def test_tui_action_commands():
     assert action_from_command("/key", "space") == "space"
     assert semantic_action_from_command("/approve-plan") == "approve-plan"
     assert classify_command(FakeBackend(), "/approve-plan").kind == CommandKind.LOCAL
+
+
+def test_passthrough_probe_always_reports_a_tui_receipt(monkeypatch):
+    sent = []
+
+    class Frontend:
+        async def send_html(self, chat_id, thread_id, text):
+            sent.append((chat_id, thread_id, text))
+
+    binding = SimpleNamespace(name="pi-route", tmux_target="pi-route:0.0")
+    monkeypatch.setattr(
+        "tmuxbot.command_adapter.tmux_capture",
+        lambda *_args: "Reloaded extensions\n›",
+    )
+
+    asyncio.run(
+        probe_passthrough_result(
+            Frontend(),
+            binding,
+            123,
+            None,
+            "/reload",
+            "before",
+            delay=0,
+        )
+    )
+
+    assert len(sent) == 1
+    assert "/reload 已执行，TUI 回执如下" in sent[0][2]
+    assert "Reloaded extensions" in sent[0][2]
 
 
 def test_binding_token_round_trip():

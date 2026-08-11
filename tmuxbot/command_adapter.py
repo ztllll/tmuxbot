@@ -522,9 +522,8 @@ async def handle_passthrough_command(
     await frontend.send_html(
         chat_id,
         thread_id,
-        f"↪️ <b>已透传未知命令</b> <code>{html.escape(spec.command)}</code>\n"
-        "· 若 TUI 弹出选择/确认, 可用 <code>/refresh</code> 查看, "
-        "再用 <code>/up /down /left /right /tab /space /enter</code> 操作。",
+        f"↪️ <b>已透传 Pi 命令</b> <code>{html.escape(spec.command)}</code>\n"
+        "· 正在读取 TUI 回执；随后会回传屏幕变化或明确说明未观察到可见变化。",
     )
     state.fire(
         probe_passthrough_result(
@@ -555,19 +554,28 @@ async def probe_passthrough_result(
         raw = tmux_capture(b.tmux_target, 90)
         out = strip_decorations(raw)
         if _UNKNOWN_FAILURE_RE.search(out):
-            await frontend.send_html(
-                chat_id,
-                thread_id,
-                f"⚠️ <b>{html.escape(command)} 可能被 TUI 拒绝</b>\n"
-                f"<pre>{html.escape(_tail(out, 18))}</pre>",
-            )
-            return
-        if str(hash(raw)) == before_hash:
+            title = f"⚠️ <b>{html.escape(command)} 可能被 TUI 拒绝</b>"
+        elif str(hash(raw)) == before_hash:
+            title = f"⏳ <b>{html.escape(command)} 已提交，未观察到可见屏幕变化</b>"
             log.info(
                 "[%s] passthrough command produced no visible pane delta: %s",
                 b.name,
                 command,
             )
+        else:
+            title = f"✅ <b>{html.escape(command)} 已执行，TUI 回执如下</b>"
+        await frontend.send_html(
+            chat_id,
+            thread_id,
+            "\n".join(
+                [
+                    title,
+                    "· 若 TUI 弹出选择/确认，可用 <code>/refresh</code> 查看，"
+                    "再用 <code>/up /down /left /right /tab /space /enter</code> 操作。",
+                    f"<pre>{html.escape(_tail(out, 18))}</pre>",
+                ]
+            ),
+        )
     finally:
         if state is not None:
             state.command_transactions.pop(b.name, None)
