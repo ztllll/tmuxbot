@@ -424,6 +424,8 @@ composer 草稿、picker/权限界面、命令事务、rename、session handoff�
 `pane_current_command` 回到 allowlisted shell 才算成功；不发 SIGKILL，不重建缺失 tmux，
 不触碰未知前台。route 可用 `cli_idle_timeout_seconds` 覆盖全局；`0` 表示 CLI 常驻。
 
+Pi 是特殊的 provider 生命周期类别：除了交互 TUI，它还承载 Pi Extensions 的会话级 timer、poller 和资源。因而 Pi route 在 `cli_idle_timeout_seconds` 未设置时默认常驻，不继承全局 3600 秒；只有显式设置正数才 opt in 到休眠。Claude/Codex 未设置时仍继承全局超时。
+
 ---
 
 ## 7. 当前命令清单

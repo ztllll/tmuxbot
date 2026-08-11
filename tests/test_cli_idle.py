@@ -24,7 +24,7 @@ def binding(name="alpha"):
 
 
 class Backend:
-    name = "pi"
+    name = "codex"
 
     def __init__(self):
         self.hibernate_calls = []

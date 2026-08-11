@@ -143,8 +143,15 @@ async def reconcile_cli_idle_once(
                 continue
             seen.add(binding.name)
             backend = frontend.backend_for(binding)
+            # Pi is also an extension/timer host, not only an interactive CLI.
+            # Inheriting the global idle timeout would terminate session-scoped
+            # background work (pollers, reminders, extension resources). Keep Pi
+            # resident by default; a route may still opt in with an explicit
+            # positive cli_idle_timeout_seconds value.
             binding_timeout = (
-                idle_timeout
+                0.0
+                if backend.name == "pi" and binding.cli_idle_timeout_seconds is None
+                else idle_timeout
                 if binding.cli_idle_timeout_seconds is None
                 else float(binding.cli_idle_timeout_seconds)
             )

@@ -21,6 +21,7 @@
 - 新增可配置的严格 Boss Admin DM route，默认 cwd 为运行账户 `Path.home()`，CLI 可选 Pi/Claude/Codex；新增 `docs/admin-dm-operations.md`，记录自然语言开通/绑定模板、确定性操作顺序、安全约束和真实 IM 验收清单。
 - 新增统一 Admin Operations Contract 与 `tmuxbot admin` 事务接口：幂等安装 `AGENTS.md`/`CLAUDE.md` 受管指令，发现 routes/tmux、解析 Telegram 私有 forum 消息链接并发现飞书 topics，plan-only 创建或迁移 topic route，并在任何 target 创建前完成候选校验，在 `--apply` 中完成事务 target 创建、原子写入、supervised restart、post-apply verify 与失败回滚，使不同能力的 Admin LLM 使用同一可靠管理框架。新增高层 `provision-project` 深模块，把“绑定已有 topic”与“创建新 Telegram/飞书 topic”统一为同一固定 plan/apply 接口：调用者只提供一个 topic intent、route name、cwd 和 backend，tmux 默认 `NAME:0.0` 并由事务自动创建或 exact-cwd 复用；模块内部负责 endpoint 解析/创建、候选校验、route 原子写入、bridge restart、verify 和 rollback。低层 `create-topic`/`bind-topic` 继续作为恢复接口，不再要求 Admin AI 自己编排链路。Telegram 私有 forum 的三段式 `https://t.me/c/CHAT/THREAD` 现在可直接解析，message ID 可选，且不再错误要求 Telegram `thread_root_message_id`。
 - 新增 provider CLI-only 空闲休眠：仅在真实 TUI 连续明确 IDLE 时计时，排除草稿、picker/权限等待、命令事务、session handoff 和活动 TeamRun；达到阈值后以 Claude `/exit`、Codex/Pi `/quit` 安全返回 shell，保留 tmux、route 和 provider identity。支持全局 `TMUXBOT_CLI_IDLE_TIMEOUT` 与 route 级 `cli_idle_timeout_seconds`（`0` 常驻）。
+- 调整 Pi 空闲策略：未显式配置 route 超时时，Pi 默认常驻而不继承全局 CLI 休眠时间，避免终止 Pi Extensions 的定时轮询和会话级资源；仍可通过正数 `cli_idle_timeout_seconds` 显式允许某条 Pi route 休眠。Claude/Codex 行为不变。
 - 新增 Pi 自动压缩 IM lifecycle：从 TUI compacting 状态建立可编辑倒计时卡，以 session 最近压缩中位耗时估算 ETA，并以 JSONL `type=compaction` 作为完成硬信号。
 
 ### Changed
