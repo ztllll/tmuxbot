@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 function recordPath(target: string): string {
   const stateDir = process.env.TMUXBOT_STATE_DIR || join(process.env.HOME || "", ".local", "state", "tmuxbot");
   const safe = [...target].map((char) => /[A-Za-z0-9._-]/.test(char) ? char : "_").join("");
-  return join(stateDir, "pi-session-handoffs", `${safe}.json`);
+  const digest = createHash("sha256").update(target, "utf8").digest("hex").slice(0, 16);
+  return join(stateDir, "pi-session-handoffs", `${safe}-${digest}.json`);
 }
 
 export default function tmuxbotSessionHandoff(pi: ExtensionAPI): void {

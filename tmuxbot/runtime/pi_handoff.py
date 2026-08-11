@@ -8,6 +8,7 @@ The tiny Pi extension installed with tmuxbot writes one atomic record on each
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -30,10 +31,28 @@ def handoff_directory() -> Path:
 
 
 def handoff_record_path(tmux_target: str) -> Path:
-    # tmux target contains only a small controlled alphabet in normal use, but
-    # keep a filesystem-safe deterministic filename independent of user route
-    # names and never permit a target to introduce a path separator.
-    safe = "".join(char if char.isalnum() or char in "._-" else "_" for char in tmux_target)
+    """Return the cross-language, collision-resistant record path for one pane.
+
+    This exact ASCII slug plus SHA-256 suffix is implemented by the provider
+    extension too.  Python's ``str.isalnum`` accepts Chinese characters whereas
+    JavaScript's original ASCII regex does not; using the same ASCII-only rule
+    and a target digest makes a direct `/new` route handoff reliable for every
+    tmux session name, including Chinese names.
+    """
+    safe = "".join(
+        char if char.isascii() and (char.isalnum() or char in "._-") else "_"
+        for char in tmux_target
+    )
+    digest = hashlib.sha256(tmux_target.encode("utf-8")).hexdigest()[:16]
+    return handoff_directory() / f"{safe}-{digest}.json"
+
+
+def _legacy_handoff_record_path(tmux_target: str) -> Path:
+    """Pre-digest record name, retained solely to migrate loaded old extensions."""
+    safe = "".join(
+        char if char.isascii() and (char.isalnum() or char in "._-") else "_"
+        for char in tmux_target
+    )
     return handoff_directory() / f"{safe}.json"
 
 
@@ -42,15 +61,26 @@ def read_handoff(tmux_target: str, cwd: Path) -> PiHandoff | None:
 
     The record is a hint, not authority: caller still validates the transcript
     header.  Malformed, foreign-target, relative, symlink, or wrong-cwd records
-    fail closed and leave the route's durable identity untouched.
+    fail closed and leave the route's durable identity untouched.  The legacy
+    filename is read during migration because a pre-reload Pi extension remains
+    loaded until its next `/reload` or session restart.
     """
-    path = handoff_record_path(tmux_target)
-    try:
-        if path.is_symlink():
-            return None
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
+    paths = (handoff_record_path(tmux_target), _legacy_handoff_record_path(tmux_target))
+    for path in dict.fromkeys(paths):
+        try:
+            if path.is_symlink():
+                continue
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        handoff = _validated_handoff(raw, tmux_target, cwd)
+        if handoff is not None:
+            return handoff
+    return None
+
+
+def _validated_handoff(raw: object, tmux_target: str, cwd: Path) -> PiHandoff | None:
+    """Validate a decoded handoff payload without trusting its file location."""
     if not isinstance(raw, dict) or raw.get("tmuxTarget") != tmux_target:
         return None
     session_id = raw.get("sessionId")

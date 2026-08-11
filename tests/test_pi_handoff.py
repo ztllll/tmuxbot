@@ -45,6 +45,41 @@ def write_handoff(target: str, cwd: Path, session_id: str, transcript: Path) -> 
     )
 
 
+def test_handoff_record_path_is_ascii_and_collision_resistant(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMUXBOT_STATE_DIR", str(tmp_path / "state"))
+
+    chinese = handoff_record_path("pi-网络同传系统项目:0.0")
+    colliding = handoff_record_path("pi-另一套同传系统项目:0.0")
+
+    assert chinese.name.isascii()
+    assert chinese != colliding
+    assert chinese.suffix == ".json"
+
+
+def test_read_handoff_reads_legacy_filename_while_extension_reload_is_pending(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMUXBOT_STATE_DIR", str(tmp_path / "state"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    transcript = tmp_path / "sessions" / "new.jsonl"
+    write_session(transcript, cwd, "new")
+    legacy = handoff_record_path("project:0.0").with_name("project_0.0.json")
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "tmuxTarget": "project:0.0",
+                "cwd": str(cwd),
+                "sessionId": "new",
+                "transcriptPath": str(transcript),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_handoff("project:0.0", cwd) is not None
+
+
 def test_read_handoff_requires_exact_target_and_cwd(tmp_path, monkeypatch):
     monkeypatch.setenv("TMUXBOT_STATE_DIR", str(tmp_path / "state"))
     cwd = tmp_path / "project"
