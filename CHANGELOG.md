@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- 修复 Telegram 专用 slash handler 与 TUI 控制回调绕过共享 lifecycle gate，导致休眠/已关闭的 route 必须先发送普通文本才能唤醒；`/status`、`/screen`、`/info`、`/esc`、`/cc`、`/eof`、`/restart` 以及 TUI 控制操作现均先精确恢复目标 pane。对已关闭 route 的 `/restart` 仅启动 provider，不再向新 TUI 误发 `Ctrl-C`/`Ctrl-D`。
 - Pi routes now consume a provider-authored, target-scoped session handoff record after `/new`, `/resume`, or `/fork`, instead of relying on transcript mtime; stopped Pi siblings are detected and the affected pane is recovered before IM input is injected.
 
 ### Added

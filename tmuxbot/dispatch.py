@@ -34,7 +34,14 @@ from tmuxbot.command_adapter import (
 )
 from tmuxbot.core.events import TerminalState
 from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.tmux import tmux_capture, tmux_kill_session, tmux_send_key, tmux_send_text
+from tmuxbot.tmux import (
+    tmux_capture,
+    tmux_has_session,
+    tmux_kill_session,
+    tmux_pane_command,
+    tmux_send_key,
+    tmux_send_text,
+)
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -85,6 +92,10 @@ async def dispatch_incoming_text(
         await frontend.send_html(chat_id, thread_id, notice)
         return
 
+    had_live_provider = (
+        tmux_has_session(b.tmux_session)
+        and backend.is_running_command(tmux_pane_command(b.tmux_target))
+    )
     await ensure_binding_running(backend, b, state, reason="incoming", wait=True)
 
     # ── /rename pending 态: 下一条文本作为名字 ──
@@ -207,6 +218,14 @@ async def dispatch_incoming_text(
 
     # ── /restart: C-c + C-d + ensure_running ──
     if cmd_for_feedback == "/restart":
+        # ensure_binding_running above may have just recreated this route.  In
+        # that case there is no old provider process to restart; C-c/C-d would
+        # instead kill the fresh TUI or feed its shell.
+        if not had_live_provider:
+            await frontend.send_html(
+                chat_id, thread_id, f"🔄 已启动 {html.escape(backend.name)}"
+            )
+            return
         tmux_send_key(b.tmux_target, "C-c")
         await asyncio.sleep(0.5)
         tmux_send_key(b.tmux_target, "C-d")

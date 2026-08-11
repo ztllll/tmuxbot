@@ -73,7 +73,7 @@ from tmuxbot.control_panel import (
 from tmuxbot.frontends.base import BackendResolutionError, Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
-from tmuxbot.tmux import tmux_capture, tmux_send_key
+from tmuxbot.tmux import tmux_capture, tmux_has_session, tmux_pane_command, tmux_send_key
 from tmuxbot.utils import render_table, utf16_len
 
 if TYPE_CHECKING:
@@ -473,7 +473,6 @@ class TelegramFrontend(Frontend):
         self, b: "Binding", chat_id: int | str, thread_id: int | None
     ) -> None:
         from tmuxbot.commands import inject_slash_and_capture
-        from tmuxbot.tmux import tmux_has_session, tmux_pane_command
 
         backend = self.backend_for(b)
         alive = tmux_has_session(b.tmux_session)
@@ -1188,6 +1187,23 @@ class TelegramFrontend(Frontend):
                 f"type=<code>{m.chat.type}</code>"
             )
 
+        async def _wake_route_for_command(b: "Binding", reason: str) -> bool:
+            """Wake a route before a dedicated Telegram command touches its pane.
+
+            aiogram's dedicated ``Command`` handlers run before the generic
+            text dispatcher.  Returning whether the provider was already live
+            lets destructive key commands avoid acting on a newly resumed TUI.
+            """
+            backend = F_.backend_for(b)
+            was_running = (
+                tmux_has_session(b.tmux_session)
+                and tmux_pane_command(b.tmux_target) in backend.running_command_names
+            )
+            await ensure_binding_running(
+                backend, b, S, reason=f"telegram-{reason}", wait=True
+            )
+            return was_running
+
         # ─── /status (跟 backend 紧耦合, 走 inject_slash_and_capture) ─────────
         @dp.message(Command("status"))
         async def cmd_status(m: Message):
@@ -1196,6 +1212,7 @@ class TelegramFrontend(Frontend):
             b = F_.find_binding(*source_key(m))
             # ACL 已保证 b 非 None (未配置 source 在 _acl_ok 就已拒)
             assert b is not None
+            await _wake_route_for_command(b, "status")
             notice = await m.reply("⏳ 抓综合状态…(注入 /context + /usage,可能短暂中断生成)")
             await F_.send_status_summary(b, m.chat.id, thread_id_of(m))
             try:
@@ -1219,6 +1236,10 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
+            was_running = await _wake_route_for_command(b, key)
+            if not was_running:
+                await m.reply(f"🔄 已启动 {F_.backend_for(b).name}")
+                return
             tmux_send_key(b.tmux_target, key)
             await m.reply(label)
 
@@ -1240,6 +1261,7 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
+            await _wake_route_for_command(b, "screen")
             out = tmux_capture(b.tmux_target, 60)
             await F_.send_pre(m.chat.id, thread_id_of(m), out)
 
@@ -1249,6 +1271,7 @@ class TelegramFrontend(Frontend):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
+            await _wake_route_for_command(b, "info")
             backend = F_.backend_for(b)
             jl = backend.find_active_jsonl(b)
             if not jl:
@@ -1290,6 +1313,12 @@ class TelegramFrontend(Frontend):
             if not b:
                 return
             backend = F_.backend_for(b)
+            # A hibernated route has no provider to restart.  Starting its
+            # pinned TUI is the correct restart-equivalent; never send C-c/C-d
+            # into a freshly created session or a shell.
+            if not await _wake_route_for_command(b, "restart"):
+                await m.reply(f"🔄 已启动 {backend.name}")
+                return
             tmux_send_key(b.tmux_target, "C-c")
             await asyncio.sleep(0.5)
             tmux_send_key(b.tmux_target, "C-d")
@@ -1645,28 +1674,36 @@ class TelegramFrontend(Frontend):
             if cq.message is None:
                 await cq.answer("⚠️ 消息不存在")
                 return
-            if is_semantic:
-                await handle_semantic_action(
-                    F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
-                )
-            elif action == "status":
-                await F_.send_light_status_summary(
-                    b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
-                )
-            elif action == "confirm_ctrl_c":
+            if action == "confirm_ctrl_c":
                 await F_.send_interrupt_confirmation(
                     b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
                 )
             else:
-                await handle_tui_action(
-                    F_,
-                    b,
-                    cq.message.chat.id,
-                    getattr(cq.message, "message_thread_id", None),
-                    action,
-                    backend=F_.backend_for(b),
-                    state=S,
-                )
+                was_running = await _wake_route_for_command(b, f"panel-{action}")
+                if not was_running:
+                    await F_.send_html(
+                        cq.message.chat.id,
+                        getattr(cq.message, "message_thread_id", None),
+                        f"🔄 已启动 {F_.backend_for(b).name}",
+                    )
+                elif is_semantic:
+                    await handle_semantic_action(
+                        F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                    )
+                elif action == "status":
+                    await F_.send_light_status_summary(
+                        b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None)
+                    )
+                else:
+                    await handle_tui_action(
+                        F_,
+                        b,
+                        cq.message.chat.id,
+                        getattr(cq.message, "message_thread_id", None),
+                        action,
+                        backend=F_.backend_for(b),
+                        state=S,
+                    )
             await cq.answer("✓")
 
         # ─── 成员变更: 非白名单群自动 leave / 已绑定群被移除→拆除会话 ───

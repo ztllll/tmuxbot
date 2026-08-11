@@ -197,6 +197,68 @@ def test_stop_closes_tmux_without_starting_it_first(monkeypatch):
     assert any("下一条消息" in call[3] for call in calls if call[0] == "reply")
 
 
+def test_slash_command_after_stop_starts_runtime_before_injection(monkeypatch):
+    b = _binding()
+    calls = []
+
+    class Backend(_Backend):
+        def command_opts(self):
+            return {"/compact": CmdOpts()}
+
+    async def ready(*_args, **_kwargs):
+        calls.append("ensure")
+        return True
+
+    async def send_text(*args, **_kwargs):
+        calls.append(("inject", args[1]))
+
+    def fire(coro):
+        coro.close()
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            SimpleNamespace(),
+            Backend(),
+            b,
+            SimpleNamespace(pending_rename={}, fire=fire),
+            1,
+            None,
+            "/compact",
+        )
+    )
+
+    assert calls == ["ensure", ("inject", "/compact")]
+
+
+def test_restart_after_stop_only_starts_runtime(monkeypatch):
+    b = _binding()
+    calls = []
+
+    async def ready(*_args, **_kwargs):
+        calls.append("ensure")
+        return True
+
+    class Frontend:
+        async def send_html(self, *_args):
+            calls.append("reply")
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_has_session", lambda _session: False)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_key", lambda *_args: calls.append("key"))
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(), _Backend(), b, SimpleNamespace(pending_rename={}),
+            1, None, "/restart",
+        )
+    )
+
+    assert calls == ["ensure", "reply"]
+
+
 def test_message_after_stop_starts_runtime_before_injection(monkeypatch):
     b = _binding()
     calls = []
