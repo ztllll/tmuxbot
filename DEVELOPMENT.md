@@ -401,28 +401,21 @@ state、lock 和数据库；它不是多 credential 的默认部署方式。
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
 > Codex 在受管会话重启后会应用当前 `~/.codex/config.toml` 的模型默认值；原生 `/model` 仍可用于当前运行会话的临时选择。
 
-默认 `TMUXBOT_LIFECYCLE_ENABLED=0`：bridge 启动和后台巡检不会创建缺失的 tmux。
-人工 `tmux kill-session -t <name>` 或 IM `/tmuxstop` 后，会话保持关闭；下一条消息进入共享
-dispatch 时才调用 `ensure_running` 恢复。若部署明确需要常驻自愈，设置
-`TMUXBOT_LIFECYCLE_ENABLED=1`，或使用 `tmuxbot install-service --now --self-heal`。
-watchdog 默认每 30 秒按 binding 调用 provider `ensure_running`，恢复完整 tmux target、cwd
-和持久 provider session identity；同 binding 与消息入口共享锁，不会并发重复拉起。
-Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
+默认 `TMUXBOT_LIFECYCLE_ENABLED=1`、`TMUXBOT_LIFECYCLE_INTERVAL=3600`：bridge 每小时
+只巡检已存在的 tmux pane。人工 `tmux kill-session -t <name>` 或 IM `/tmuxstop` 后，会话保持
+关闭；巡检不会新建它，下一条消息进入共享 dispatch 时才调用 `ensure_running` 恢复。巡检与消息
+入口共享锁，不会并发重复拉起。Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 
-### cli_idle — 只休眠 provider，不用 IM 时间判断
+### lifecycle health audit — 每小时只巡检，不休眠 provider
 
-`cli_idle.py` 是独立于旧 lifecycle watchdog 的深模块。默认
-`TMUXBOT_CLI_IDLE_ENABLED=1`、`TMUXBOT_CLI_IDLE_TIMEOUT=3600`，每 30 秒只读观察 live
-pane。状态至少区分 `WORKING / IDLE / DRAFT / INTERACTION / WAITING / SHELL / ABSENT /
-UNKNOWN`：只有连续、明确的 `IDLE` 才累计时钟；provider working/compacting/retrying、
-composer 草稿、picker/权限界面、命令事务、rename、session handoff、活动 TeamRun 和未知
-前台都会清空时钟。它完全不读取 `State.last_active`（该字段仅用于 typing UI）。
+`lifecycle.py` 默认每 3600 秒巡检一次**已存在**的 route pane。巡检与入站消息共用
+`State.ensure_locks[binding.name]`，调用 adapter 的 `ensure_running()` 重新验证前台 provider
+与进程树；仅当 provider 明确不健康时才调用其受控恢复 seam。它不读取 `State.last_active`，
+不向 Claude/Codex/Pi 发送退出命令，不按空闲时间回收任何 TUI，也不创建缺失 tmux target。
 
-达到阈值后，reaper 与入站消息共用 `State.ensure_locks[binding.name]`，在锁内二次观察，
-再调用 adapter 的 `hibernate(binding)`：Claude `/exit`，Codex/Pi `/quit`。只有
-`pane_current_command` 回到 allowlisted shell 才算成功；不发 SIGKILL，不重建缺失 tmux，
-不触碰未知前台。route 可用 `cli_idle_timeout_seconds` 覆盖全局；`0` 表示 CLI 常驻。
+人工 `/tmuxstop` 或 `tmux kill-session` 后，缺失 session 会被健康巡检跳过；下一条精确 route
+消息仍是唯一的按需恢复入口。这样定时任务和长任务持续保留，同时保有低频异常 pane 自愈能力。
 
 ---
 

@@ -514,7 +514,6 @@ def _route_item(args: argparse.Namespace, target: TmuxTarget, cwd: Path) -> dict
         "cwd": str(cwd),
         "backend": args.backend,
         "mention_required": args.mention_required,
-        "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
     }
 
 
@@ -851,12 +850,6 @@ def build_admin_parser() -> argparse.ArgumentParser:
         "--backend", choices=("claude_code", "codex", "pi"), required=True
     )
     create_topic.add_argument("--mention-required", type=_parse_bool, default=False)
-    create_topic.add_argument(
-        "--cli-idle-timeout",
-        type=int,
-        dest="cli_idle_timeout_seconds",
-        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
-    )
     create_topic.add_argument("--create-target", action="store_true")
     create_topic.add_argument("--apply", action="store_true")
     provision = subparsers.add_parser(
@@ -878,12 +871,6 @@ def build_admin_parser() -> argparse.ArgumentParser:
         "--backend", choices=("claude_code", "codex", "pi"), required=True
     )
     provision.add_argument("--mention-required", type=_parse_bool, default=False)
-    provision.add_argument(
-        "--cli-idle-timeout",
-        type=int,
-        dest="cli_idle_timeout_seconds",
-        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
-    )
     provision.add_argument("--apply", action="store_true")
     install = subparsers.add_parser(
         "install-contract", help="install/update managed AGENTS.md and CLAUDE.md blocks"
@@ -901,12 +888,6 @@ def build_admin_parser() -> argparse.ArgumentParser:
     bind.add_argument("--cwd", required=True)
     bind.add_argument("--backend", choices=("claude_code", "codex", "pi"), required=True)
     bind.add_argument("--mention-required", type=_parse_bool, default=False)
-    bind.add_argument(
-        "--cli-idle-timeout",
-        type=int,
-        dest="cli_idle_timeout_seconds",
-        help="seconds of continuous provider IDLE before CLI exit; 0 keeps it resident",
-    )
     bind.add_argument("--create-target", action="store_true")
     bind.add_argument("--apply", action="store_true")
 
@@ -1013,7 +994,6 @@ def run_admin_command(
                     "cwd": str(cwd),
                     "backend": args.backend,
                     "mention_required": args.mention_required,
-                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
                 },
                 "tmux": target_status,
                 "create_target": args.create_target,
@@ -1057,7 +1037,6 @@ def run_admin_command(
                     "cwd": str(cwd),
                     "backend": args.backend,
                     "mention_required": args.mention_required,
-                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
                 }
                 validate_bindings([*store.list(), binding_from_mapping(item)])
                 if args.create_target and target_status["state"] == "stopped":
@@ -1164,7 +1143,6 @@ def run_admin_command(
                 "cwd": str(cwd),
                 "backend": args.backend,
                 "mention_required": args.mention_required,
-                "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
             }
             if topic_mode == "existing":
                 validate_bindings([*store.list(), binding_from_mapping(item_base)])
@@ -1186,7 +1164,6 @@ def run_admin_command(
                     "cwd": str(cwd),
                     "backend": args.backend,
                     "mention_required": args.mention_required,
-                    "cli_idle_timeout_seconds": args.cli_idle_timeout_seconds,
                 },
                 "tmux": target_status,
                 "target_action": (

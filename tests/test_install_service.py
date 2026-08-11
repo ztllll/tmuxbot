@@ -16,6 +16,7 @@ def test_install_service_writes_single_self_healing_user_unit(tmp_path: Path) ->
     assert "ExecStart=/opt/tmuxbot/bin/tmuxbot serve" in content
     assert "EnvironmentFile=-" in content
     assert "Environment=TMUXBOT_LIFECYCLE_ENABLED=1" in content
+    assert "Environment=TMUXBOT_LIFECYCLE_INTERVAL=3600" in content
     assert "StartLimitIntervalSec=0" in content
     assert "Restart=always" in content
     assert "KillMode=process" in content

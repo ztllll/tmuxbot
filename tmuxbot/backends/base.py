@@ -227,15 +227,6 @@ class Backend(ABC):
         """
         return False
 
-    async def hibernate(self, b: "Binding") -> bool:
-        """Ask an idle provider TUI to exit while preserving tmux and route state.
-
-        Implementations must use the provider's native exit command and return
-        True only after the pane foreground is verified to be an allowed shell.
-        The base implementation is fail-closed.
-        """
-        return False
-
     async def reconcile_session_identity(self, b: "Binding") -> bool:
         """Refresh provider identity after an interactive TUI session switch.
 

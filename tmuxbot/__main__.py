@@ -18,7 +18,6 @@ from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
 from tmuxbot.backends.pi import PiBackend
 from tmuxbot.channel_health import channel_health_audit_loop
-from tmuxbot.cli_idle import cli_idle_loop
 from tmuxbot import __version__
 from tmuxbot.config import load_config
 from tmuxbot.frontends.telegram import TelegramFrontend
@@ -246,7 +245,6 @@ async def main(paths: RuntimePaths | None = None) -> None:
     from tmuxbot.teamrun.channel_projection import projection_loop
     S.fire(projection_loop(control_plane, frontends))
     S.fire(lifecycle_watch_loop(frontends, S))
-    S.fire(cli_idle_loop(frontends, S, control_plane))
     log.info(
         f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"
     )
@@ -323,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     service_parser.add_argument(
         "--self-heal",
         action="store_true",
-        help="periodically recreate missing tmux/provider TUI sessions",
+        help="deprecated compatibility flag; health audit is always non-destructive",
     )
     route_parser = subparsers.add_parser(
         "route", help="inspect and atomically edit IM-to-tmux routes"

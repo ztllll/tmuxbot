@@ -104,12 +104,6 @@ def test_accepts_multiple_backends_on_one_telegram_credential():
     )
 
 
-def test_rejects_negative_cli_idle_timeout():
-    assert_invalid(
-        [binding(cli_idle_timeout_seconds=-1)],
-        "cli_idle_timeout_seconds must be >= 0",
-    )
-
 
 def test_rejects_bad_channel_and_backend():
     assert_invalid(

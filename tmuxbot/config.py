@@ -100,7 +100,6 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
                     "cwd": str(binding.cwd),
                     "backend": binding.backend,
                     "mention_required": binding.mention_required,
-                    "cli_idle_timeout_seconds": binding.cli_idle_timeout_seconds,
                     "admin": True,
                     "thread_root_message_id": binding.thread_root_message_id,
                 }
@@ -209,11 +208,6 @@ def load_config(
                     bot_token_env=b.get("bot_token_env", "TG_BOT_TOKEN"),
                     channel=b.get("channel", "telegram"),
                     mention_required=b.get("mention_required"),
-                    cli_idle_timeout_seconds=(
-                        int(b["cli_idle_timeout_seconds"])
-                        if b.get("cli_idle_timeout_seconds") is not None
-                        else None
-                    ),
                     admin=bool(b.get("admin", False)),
                     thread_root_message_id=(
                         str(b.get("thread_root_message_id"))

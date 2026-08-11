@@ -130,13 +130,10 @@ Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一�
 tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要常驻自愈时，可显式设置
 `TMUXBOT_LIFECYCLE_ENABLED=1`，或用 `tmuxbot install-service --now --self-heal`
 写入 unit。watchdog 默认每 30 秒核对 route target，缺失时按持久 provider identity
-重建 tmux/CLI；它不会执行 `tmux kill-server`。独立的 CLI 空闲休眠默认启用：只有真实
-Claude/Codex/Pi TUI 连续明确处于 `IDLE` 60 分钟，且 composer 为空、无 picker/权限等待、
-命令事务、session handoff 或活动 TeamRun 时，才使用 provider 原生退出命令回到 shell；
-不读取“最后一条 IM 消息”的时间。tmux、cwd、route 和 provider identity 保留，下一条精确
-route 消息恢复最近会话。全局用 `TMUXBOT_CLI_IDLE_TIMEOUT=3600`，route 可配置
-`cli_idle_timeout_seconds`，其中 `0` 表示 CLI 常驻。Telegram、飞书和 Web 控制面板都提供带确认的
-“关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
+重建 tmux/CLI；它不会执行 `tmux kill-server`。默认每 60 分钟仅巡检**已存在**的 route pane：
+验证 provider 前台进程与健康状态，必要时仅恢复该 route 的异常 provider 进程树。它不会按空闲
+时间退出 Claude/Codex/Pi，也不会重建被人工关闭的 tmux；缺失 target 仍等下一条精确 route 消息
+按需恢复。Telegram、飞书和 Web 控制面板都提供带确认的“关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
 回滚和验收步骤见 [`docs/single-service-operations.md`](docs/single-service-operations.md)。
 
 ### Web control plane

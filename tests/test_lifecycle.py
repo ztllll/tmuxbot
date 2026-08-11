@@ -2,7 +2,12 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from tmuxbot.lifecycle import ensure_binding_running, lifecycle_enabled, lifecycle_watch_loop
+from tmuxbot.lifecycle import (
+    DEFAULT_LIFECYCLE_INTERVAL,
+    ensure_binding_running,
+    lifecycle_enabled,
+    lifecycle_watch_loop,
+)
 from tmuxbot.state import Binding
 
 
@@ -30,16 +35,16 @@ def binding(name="alpha"):
     )
 
 
-def test_lifecycle_watchdog_is_opt_in(monkeypatch):
+def test_lifecycle_health_audit_is_enabled_by_default(monkeypatch):
     monkeypatch.delenv("TMUXBOT_LIFECYCLE_ENABLED", raising=False)
-    assert lifecycle_enabled() is False
-
-    monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
     assert lifecycle_enabled() is True
 
+    monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "0")
+    assert lifecycle_enabled() is False
 
-def test_disabled_watchdog_leaves_missing_bindings_dormant(monkeypatch):
-    monkeypatch.delenv("TMUXBOT_LIFECYCLE_ENABLED", raising=False)
+
+def test_disabled_health_audit_leaves_missing_bindings_dormant(monkeypatch):
+    monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "0")
     backend = FakeBackend()
     frontend = SimpleNamespace(backend=backend, bindings=[binding()])
 
@@ -52,6 +57,61 @@ def test_disabled_watchdog_leaves_missing_bindings_dormant(monkeypatch):
     )
 
     assert backend.calls == 0
+
+
+def test_health_audit_defaults_to_one_hour_and_skips_manually_closed_tmux_sessions(monkeypatch):
+    async def run():
+        monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
+        monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: False)
+        backend = FakeBackend()
+        frontend = SimpleNamespace(
+            bindings=[binding()], backend_for=lambda _binding: backend
+        )
+        task = asyncio.create_task(
+            lifecycle_watch_loop([frontend], SimpleNamespace(ensure_locks={}), startup_delay=0)
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert DEFAULT_LIFECYCLE_INTERVAL == 3600.0
+        assert backend.calls == 0
+
+    asyncio.run(run())
+
+
+def test_health_audit_checks_existing_tmux_sessions(monkeypatch):
+    class QuickBackend:
+        def __init__(self):
+            self.calls = 0
+
+        async def ensure_running(self, _binding):
+            self.calls += 1
+
+    async def run():
+        monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
+        monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: True)
+        backend = QuickBackend()
+        frontend = SimpleNamespace(
+            bindings=[binding()], backend_for=lambda _binding: backend
+        )
+        task = asyncio.create_task(
+            lifecycle_watch_loop([frontend], SimpleNamespace(ensure_locks={}), startup_delay=0)
+        )
+        for _ in range(10):
+            if backend.calls:
+                break
+            await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert backend.calls == 1
+
+    asyncio.run(run())
 
 
 def test_ensure_binding_running_skips_background_when_lock_is_busy():

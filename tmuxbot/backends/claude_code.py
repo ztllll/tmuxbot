@@ -35,7 +35,6 @@ from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import (
     tmux_capture,
     tmux_has_session,
-    tmux_native_exit,
     tmux_new_session,
     tmux_pane_command,
     tmux_safe_launch,
@@ -1022,14 +1021,6 @@ class ClaudeCodeBackend(Backend):
         )
         if relaunched:
             await asyncio.sleep(2.0)
-
-    async def hibernate(self, b: "Binding") -> bool:
-        return await tmux_native_exit(
-            b.tmux_target,
-            "/exit",
-            expected_commands=self.running_command_names,
-            allowed_shells=self.shell_command_names,
-        )
 
     def command_opts(self) -> dict[str, CmdOpts]:
         return {

@@ -1313,7 +1313,7 @@ class TelegramFrontend(Frontend):
             if not b:
                 return
             backend = F_.backend_for(b)
-            # A hibernated route has no provider to restart.  Starting its
+            # A manually closed route has no provider to restart. Starting its
             # pinned TUI is the correct restart-equivalent; never send C-c/C-d
             # into a freshly created session or a shell.
             if not await _wake_route_for_command(b, "restart"):

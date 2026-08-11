@@ -15,8 +15,6 @@
 #   backend       claude_code / codex / pi
 #   bot_token_env credential namespace; routes sharing it use one bot/app
 #   mention_required explicit group/topic mention policy (recommended for Telegram)
-#   cli_idle_timeout_seconds continuous provider-TUI IDLE before CLI-only exit;
-#                            null inherits env default, 0 keeps this route resident
 
 bindings:
   # Telegram DM -> Claude Code
@@ -43,7 +41,6 @@ bindings:
     cwd: /home/youruser/projects/project-review
     backend: pi
     mention_required: false
-    cli_idle_timeout_seconds: 3600
 
   - name: project-implementation
     channel: telegram

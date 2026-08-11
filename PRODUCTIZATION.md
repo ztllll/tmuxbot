@@ -50,9 +50,9 @@ maintenance line on top of that baseline and additionally includes:
 - Pi-native session handoff, command classification, statusline/usage projection,
   persistent current-branch Todo panels, Working-state steering input, and JSONL
   hard-signal confirmation for `/new`, `/clone`, `/resume`, and compaction;
-- provider CLI idle hibernation and fail-closed cold wake: stale TUI scrollback
-  cannot block a shell launch, but the first payload is not delivered until the
-  resumed Pi TUI exposes a real ready/working footer;
+- non-destructive hourly route health audit and fail-closed cold wake: stale TUI
+  scrollback cannot block a shell launch, while manually closed sessions remain
+  dormant and provider TUIs are never idle-exited;
 - editable Pi auto-compaction lifecycle cards with session-history ETA, completion
   metadata, provider-error visibility, and explicit warning when compaction exits
   without a JSONL completion marker;

@@ -139,8 +139,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   --tmux-target demo-pi:0.0 \
   --cwd /absolute/project/demo \
   --backend pi \
-  --mention-required false \
-  --cli-idle-timeout 3600
+  --mention-required false
 
 # 核对 plan 后再加 --apply；目标不存在时还必须显式加 --create-target。
 ```
@@ -165,7 +164,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
   verify existing-route --json
 ```
 
-已有飞书 topic 的 `--thread-root-message-id` 取自 `feishu-topics` 输出的 `root_message_id`；新 topic 则由 `create-topic --channel feishu --apply` 自动取得并写入。它是稳定出站锚点：bridge 重启后，即使用户直接在 tmux TUI 对话，回复仍可通过 `reply_in_thread=True` 返回精确 thread；缺失时 Admin 事务会在任何 tmux/YAML/systemd 副作用前拒绝。`--cli-idle-timeout` 是 provider TUI 连续明确 IDLE 的秒数；`0` 表示该 route 的 CLI 常驻，且该计时不读取 IM 最后输入时间。
+已有飞书 topic 的 `--thread-root-message-id` 取自 `feishu-topics` 输出的 `root_message_id`；新 topic 则由 `create-topic --channel feishu --apply` 自动取得并写入。它是稳定出站锚点：bridge 重启后，即使用户直接在 tmux TUI 对话，回复仍可通过 `reply_in_thread=True` 返回精确 thread；缺失时 Admin 事务会在任何 tmux/YAML/systemd 副作用前拒绝。provider TUI 不按空闲时间退出；服务默认每小时仅巡检已存在 pane 的健康状态。
 
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 

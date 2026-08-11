@@ -30,9 +30,9 @@ def install_service(
     os.chmod(unit_dir, 0o700)
     unit_path = unit_dir / "tmuxbot.service"
     env_file = resolved_home / ".config/tmuxbot/.env"
-    lifecycle_environment = (
-        "Environment=TMUXBOT_LIFECYCLE_ENABLED=1\n" if self_heal else ""
-    )
+    # Health audits are always non-destructive: they inspect only existing panes,
+    # never recreate a manually closed session, and never idle-exit a provider.
+    lifecycle_environment = "Environment=TMUXBOT_LIFECYCLE_ENABLED=1\nEnvironment=TMUXBOT_LIFECYCLE_INTERVAL=3600\n"
     content = f"""[Unit]
 Description=tmuxbot WebUI and tmux bridge supervisor
 After=network-online.target
@@ -42,8 +42,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Existing tmux panes outlive deploys. With lifecycle enabled, missing panes and
-# provider TUIs are recreated from their persisted route/session identities.
+# Existing tmux panes outlive deploys. The hourly lifecycle audit checks only
+# existing panes; manually closed sessions remain dormant until route input.
 KillMode=process
 EnvironmentFile=-{env_file}
 Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid

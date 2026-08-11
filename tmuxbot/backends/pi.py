@@ -33,7 +33,6 @@ from tmuxbot.tmux import (
     tmux_capture,
     tmux_has_session,
     tmux_new_session,
-    tmux_native_exit,
     tmux_pane_command,
     tmux_respawn_pane,
     tmux_safe_launch,
@@ -856,14 +855,6 @@ class PiBackend(Backend):
         await asyncio.sleep(0.25)
         await self.ensure_running(b)
         return True
-
-    async def hibernate(self, b: "Binding") -> bool:
-        return await tmux_native_exit(
-            b.tmux_target,
-            "/quit",
-            expected_commands=self.running_command_names,
-            allowed_shells=self.shell_command_names,
-        )
 
     async def reconcile_session_identity(self, b: "Binding") -> bool:
         """Read Pi's native `/session` screen after an interactive switch."""

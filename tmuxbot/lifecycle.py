@@ -1,7 +1,7 @@
 """tmux/CLI 生命周期巡检。
 
-消息入口会按需调用 backend.ensure_running()。后台 watchdog 是显式 opt-in：
-默认尊重人工关闭的 tmux，仅在下一条消息到达时重建；需要常驻自愈时才启用巡检。
+消息入口会按需调用 backend.ensure_running()。后台健康巡检每小时检查已存在
+的 route pane；人工关闭的 tmux 不会被它重建，只在下一条消息到达时按需恢复。
 """
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-DEFAULT_LIFECYCLE_INTERVAL = 30.0
+DEFAULT_LIFECYCLE_INTERVAL = 3600.0
 DEFAULT_STARTUP_DELAY = 3.0
 
 
 def lifecycle_enabled() -> bool:
-    raw = os.getenv("TMUXBOT_LIFECYCLE_ENABLED", "0").strip().lower()
+    raw = os.getenv("TMUXBOT_LIFECYCLE_ENABLED", "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -95,9 +95,10 @@ async def lifecycle_watch_loop(
     interval: float | None = None,
     startup_delay: float = DEFAULT_STARTUP_DELAY,
 ) -> None:
-    """按 frontend/binding 周期性恢复 tmux session 和 CLI。
+    """低频巡检已存在的 route pane，并在 provider 异常时受控恢复。
 
-    frontend 持有 credential 对应的 bindings，并按 route 解析 provider adapter。
+    巡检绝不新建缺失的 tmux session，仍尊重 `/tmuxstop` 和人工关闭；已存在
+    pane 内的 shell、崩溃或不安全 provider 进程树会交给 adapter 重新验证/恢复。
     """
     if not lifecycle_enabled():
         log.info("lifecycle watchdog disabled by TMUXBOT_LIFECYCLE_ENABLED")
@@ -110,13 +111,18 @@ async def lifecycle_watch_loop(
 
     while True:
         checked = 0
+        from tmuxbot.tmux import tmux_has_session
+
         for fe in list(frontends):
             for b in list(getattr(fe, "bindings", [])):
+                if not tmux_has_session(b.tmux_session):
+                    log.debug("[%s] lifecycle health skipped: tmux session absent", b.name)
+                    continue
                 checked += 1
                 try:
                     backend = fe.backend_for(b)
                     await ensure_binding_running(
-                        backend, b, state, reason="watchdog", wait=False
+                        backend, b, state, reason="health-audit", wait=False
                     )
                 except asyncio.CancelledError:
                     raise
