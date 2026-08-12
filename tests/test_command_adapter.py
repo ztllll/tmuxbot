@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
+from tmuxbot.picker import extract_picker_block
 from tmuxbot.command_adapter import (
     CommandKind,
     action_from_command,
@@ -138,6 +139,21 @@ def test_binding_token_round_trip():
 
     assert binding_by_token(bindings, token).name == "beta"
     assert binding_by_token(bindings, "missing") is None
+
+
+def test_pi_plan_mode_picker_footer_is_detected_for_remote_control():
+    raw = (
+        "Plan mode\n"
+        "→ Start Plan mode\n"
+        "  Choose tools, then start…\n"
+        "↑/↓ navigate • enter select • esc close\n"
+    )
+
+    block = extract_picker_block(raw)
+
+    assert block is not None
+    assert "Start Plan mode" in block
+    assert "enter select" in block
 
 
 def test_detects_plan_approval_state():

@@ -23,7 +23,11 @@ log = logging.getLogger("tmuxbot")
 
 # picker 底栏: 3 个关键词必须同一行 (避免命中代码注释/历史对话残留)
 PICKER_BOTTOMBAR_RE = re.compile(
-    r"Enter\s+to\s+select[^\n]{1,120}(?:↑/↓|to\s+navigate)[^\n]{1,120}Esc\s+to\s+cancel",
+    r"(?:"
+    r"Enter\s+to\s+select[^\n]{1,120}(?:↑/↓|to\s+navigate)[^\n]{1,120}Esc\s+to\s+cancel"
+    r"|"
+    r"↑/↓\s+navigate[^\n]{1,120}enter\s+select[^\n]{1,120}esc\s+(?:close|cancel|back)"
+    r")",
     re.I,
 )
 
