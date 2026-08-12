@@ -80,7 +80,12 @@ def _render_pi_task_footer(todos: list) -> str:
         task.get("status") in {"pending", "in_progress"} for task in visible
     )
     show_ids = any(task.get("blockedBy") for task in visible)
-    lines = [f"{'●' if has_active else '○'} <b>Todos ({completed}/{len(visible)})</b>"]
+    work_title = html.escape(str(getattr(todos, "work_title", "") or "").strip())
+    heading = f"{work_title} · " if work_title else ""
+    lines = [
+        f"{'●' if has_active else '○'} "
+        f"<b>{heading}Todos ({completed}/{len(visible)})</b>"
+    ]
     for index, task in enumerate(visible):
         status = task.get("status")
         glyph = {"pending": "○", "in_progress": "◐", "completed": "✓"}.get(

@@ -53,6 +53,21 @@ def test_render_task_footer_hides_completed_history_when_no_task_is_active():
     ]) == ""
 
 
+def test_render_pi_task_footer_includes_work_title_like_tui():
+    class Snapshot(list):
+        work_title = "实现 Pi 多信号疑似失活巡检"
+
+    footer = render_task_footer(
+        Snapshot([{"id": 1, "subject": "实现 Pi 多信号疑似失活巡检", "status": "pending"}]),
+        style="pi",
+    )
+
+    assert footer == (
+        "● <b>实现 Pi 多信号疑似失活巡检 · Todos (0/1)</b>\n"
+        "└─ ○ 实现 Pi 多信号疑似失活巡检"
+    )
+
+
 def test_render_pi_task_footer_matches_tui_and_keeps_completed_only_snapshot():
     footer = render_task_footer(
         [

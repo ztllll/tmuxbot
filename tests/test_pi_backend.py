@@ -443,6 +443,114 @@ def test_pi_terminal_status_recognizes_custom_powerline_footer():
     assert status.extension_statuses == ("📄 JSONL 13.8 MB",)
 
 
+def test_pi_reads_dida_work_title_for_im_footer(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "work-switch",
+                    "parentId": "session-row",
+                    "message": {
+                        "role": "toolResult",
+                        "toolName": "todo_work",
+                        "details": {
+                            "works": [
+                                {
+                                    "id": "work-1",
+                                    "title": "顶层工作标题",
+                                    "selected": True,
+                                }
+                            ],
+                            "selectedWorkId": "work-1",
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+        stream.write(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "todo-result",
+                    "parentId": "work-switch",
+                    "message": {
+                        "role": "toolResult",
+                        "toolName": "todo",
+                        "details": {
+                            "tasks": [{"id": 1, "subject": "执行步骤", "status": "pending"}],
+                            "nextId": 2,
+                            "didaWorkTaskId": "work-1",
+                        },
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    tasks = PiBackend().read_tasks(binding(cwd))
+
+    assert tasks.work_title == "顶层工作标题"
+    assert tasks == [{"id": 1, "subject": "执行步骤", "status": "pending"}]
+
+
+def test_pi_reads_pi_created_work_title_from_first_todo_create(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    rows = [
+        {
+            "type": "message",
+            "id": "create-first",
+            "message": {
+                "role": "toolResult",
+                "toolName": "todo",
+                "details": {
+                    "action": "create",
+                    "params": {"subject": "Pi 自建顶层标题"},
+                    "tasks": [{"id": 1, "subject": "Pi 自建顶层标题", "status": "pending"}],
+                    "nextId": 2,
+                    "didaWorkTaskId": "work-created",
+                },
+            },
+        },
+        {
+            "type": "message",
+            "id": "create-second",
+            "parentId": "create-first",
+            "message": {
+                "role": "toolResult",
+                "toolName": "todo",
+                "details": {
+                    "action": "create",
+                    "params": {"subject": "第二个 Checklist"},
+                    "tasks": [
+                        {"id": 1, "subject": "Pi 自建顶层标题", "status": "pending"},
+                        {"id": 2, "subject": "第二个 Checklist", "status": "pending"},
+                    ],
+                    "nextId": 3,
+                    "didaWorkTaskId": "work-created",
+                },
+            },
+        },
+    ]
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write("".join(json.dumps(row) + "\n" for row in rows))
+
+    tasks = PiBackend().read_tasks(binding(cwd))
+
+    assert tasks.work_title == "Pi 自建顶层标题"
+    assert len(tasks) == 2
+
+
 def test_pi_reads_latest_rpiv_todo_snapshot_from_jsonl(tmp_path, monkeypatch):
     sessions_root = tmp_path / "sessions"
     monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)

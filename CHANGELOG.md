@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- 修复 Pi TUI Todo overlay 与 IM footer 投影不一致：`PiBackend.read_tasks()` 过去只恢复 Checklist，丢弃 `todo_work` 中 Dida 顶层标题或 Pi 自建 work 的首次 `todo create` 标题，导致 TUI 显示“工作标题 · Todos (x/y)”而 Telegram/飞书只显示裸汇总。现在使用 list-compatible `TaskSnapshot.work_title` 携带精确顶层标题，IM heading 与 TUI 对齐；无标题的旧 rpiv-todo snapshot 保持兼容。
 - 修复 provider-authored Pi handoff record 对含中文 tmux target 的跨语言文件名不一致：TypeScript 扩展按 ASCII 将中文替换为 `_`，旧 Python reader 却保留 Unicode，终端直接 `/new` 后新 session record 因而永远未被 tailer 读取、route 停在旧 JSONL。现使用共享 ASCII slug + target SHA-256 后缀防碰撞，并兼容读取旧扩展文件名直至现存 Pi `/reload`。
 - 下线全局及 route 级 provider CLI 空闲休眠：删除 `cli_idle` reaper、`TMUXBOT_CLI_IDLE_*`、`cli_idle_timeout_seconds` 和 provider 原生 idle-exit；默认改为每 60 分钟仅巡检已存在的 route pane，检测异常 provider 进程树后只恢复该精确 pane。人工关闭的缺失 tmux 不会被巡检重建，仍由下一条精确 route 消息按需唤醒，避免打断定时任务和长任务。
 - 修复 Telegram 专用 slash handler 与 TUI 控制回调绕过共享 lifecycle gate，导致休眠/已关闭的 route 必须先发送普通文本才能唤醒；`/status`、`/screen`、`/info`、`/esc`、`/cc`、`/eof`、`/restart` 以及 TUI 控制操作现均先精确恢复目标 pane。对已关闭 route 的 `/restart` 仅启动 provider，不再向新 TUI 误发 `Ctrl-C`/`Ctrl-D`。

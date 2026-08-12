@@ -29,6 +29,14 @@ if TYPE_CHECKING:
     from tmuxbot.state import Binding
 
 
+class TaskSnapshot(list):
+    """List-compatible provider task snapshot with optional top-level work title."""
+
+    def __init__(self, tasks=(), *, work_title: str | None = None) -> None:
+        super().__init__(tasks)
+        self.work_title = work_title
+
+
 @dataclass
 class CmdOpts:
     """slash 命令兜底参数: 解析器 + 轮询窗口 + 早退信号 + 兜底文案"""
@@ -247,7 +255,7 @@ class Backend(ABC):
 
     def read_tasks(self, b: "Binding") -> list:
         """读取该 backend 的当前任务列表, 给任务 footer 渲染用 (默认无任务源)。"""
-        return []
+        return TaskSnapshot()
 
     def status_extra(self, b: "Binding") -> str:
         """给 /status 补「跟上游接口无关、两端通用」的综合信息 (jsonl 来源:

@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tmuxbot.backends.base import Backend, CmdOpts
+from tmuxbot.backends.base import Backend, CmdOpts, TaskSnapshot
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import (
     ProviderEvent,
@@ -963,6 +963,8 @@ class PiBackend(Backend):
         if transcript is None:
             return []
         latest: list[dict[str, Any]] | None = None
+        selected_work_id: str | None = None
+        work_titles: dict[str, str] = {}
         try:
             raw_rows = transcript.read_text(
                 encoding="utf-8", errors="replace"
@@ -999,18 +1001,48 @@ class PiBackend(Backend):
             if row.get("type") != "message":
                 continue
             message = row.get("message") or {}
-            if message.get("role") != "toolResult" or message.get("toolName") != "todo":
+            if message.get("role") != "toolResult":
                 continue
             details = message.get("details") or {}
+            if message.get("toolName") == "todo_work":
+                works = details.get("works")
+                if isinstance(works, list):
+                    for work in works:
+                        if not isinstance(work, dict):
+                            continue
+                        work_id = work.get("id")
+                        title = work.get("title")
+                        if isinstance(work_id, str) and isinstance(title, str) and title:
+                            work_titles[work_id] = title
+                chosen = details.get("selectedWorkId")
+                if isinstance(chosen, str) and chosen:
+                    selected_work_id = chosen
+                continue
+            if message.get("toolName") != "todo":
+                continue
             tasks = details.get("tasks")
             if isinstance(tasks, list) and isinstance(details.get("nextId"), int):
                 latest = [dict(task) for task in tasks if isinstance(task, dict)]
+                work_id = details.get("didaWorkTaskId")
+                if isinstance(work_id, str) and work_id:
+                    selected_work_id = work_id
+                    params = details.get("params")
+                    created_subject = (
+                        params.get("subject") if isinstance(params, dict) else None
+                    )
+                    if (
+                        details.get("action") == "create"
+                        and work_id not in work_titles
+                        and isinstance(created_subject, str)
+                        and created_subject
+                    ):
+                        work_titles[work_id] = created_subject
         if latest is None:
             return []
         allowed = {"pending", "in_progress", "completed"}
         result = [task for task in latest if task.get("status") in allowed]
         result.sort(key=lambda task: int(task.get("id", 0) or 0))
-        return result
+        return TaskSnapshot(result, work_title=work_titles.get(selected_work_id or ""))
 
     def estimated_compaction_seconds(self, b: "Binding") -> int:
         transcript = self.find_active_jsonl(b)
