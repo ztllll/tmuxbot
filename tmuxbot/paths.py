@@ -24,6 +24,7 @@ class RuntimePaths:
     lock_file: Path
     hook_spool_file: Path
     channel_health_file: Path
+    pi_terminal_health_file: Path
 
     @classmethod
     def discover(
@@ -71,6 +72,8 @@ class RuntimePaths:
             or state_dir / "claude-hooks.jsonl",
             channel_health_file=_path(environ, "TMUXBOT_CHANNEL_HEALTH")
             or state_dir / "channel-health.json",
+            pi_terminal_health_file=_path(environ, "TMUXBOT_PI_TERMINAL_HEALTH_FILE")
+            or state_dir / "pi-terminal-health.json",
         )
 
     def ensure_private_directories(self) -> None:

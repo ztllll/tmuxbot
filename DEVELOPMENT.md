@@ -407,6 +407,13 @@ state、lock 和数据库；它不是多 credential 的默认部署方式。
 入口共享锁，不会并发重复拉起。Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 
+Pi 另有独立的 `TMUXBOT_PI_TERMINAL_HEALTH_ENABLED=1` 多信号疑似失活巡检，默认
+`TMUXBOT_PI_TERMINAL_HEALTH_INTERVAL=600`。它不重启、不中断任何 Pi：只有同一精确
+session 连续 3 个周期显示真实 Pi working spinner、JSONL 大小及稳定屏幕均无进展，并且没有
+retry、自动压缩、session handoff 或活跃子工具时，才向该 route 原 IM endpoint 去重提示人工
+使用 `/screen` 检查。正常 idle/working、自愈和不确定状态一律静默；持久 fingerprint 使 bridge
+重启后不会重复通知。
+
 ### lifecycle health audit — 每小时只巡检，不休眠 provider
 
 `lifecycle.py` 默认每 3600 秒巡检一次**已存在**的 route pane。巡检与入站消息共用

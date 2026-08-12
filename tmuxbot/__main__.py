@@ -26,6 +26,7 @@ from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.paths import RuntimePaths
+from tmuxbot.runtime.pi_terminal_health import pi_terminal_health_audit_loop
 from tmuxbot.pi_extension import install_pi_handoff_extension
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
@@ -245,6 +246,8 @@ async def main(paths: RuntimePaths | None = None) -> None:
     from tmuxbot.teamrun.channel_projection import projection_loop
     S.fire(projection_loop(control_plane, frontends))
     S.fire(lifecycle_watch_loop(frontends, S))
+    if any(binding.backend == "pi" for binding in S.bindings):
+        S.fire(pi_terminal_health_audit_loop(frontends, S, paths.pi_terminal_health_file))
     log.info(
         f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"
     )
