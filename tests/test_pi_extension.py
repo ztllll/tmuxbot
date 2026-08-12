@@ -1,4 +1,7 @@
+import shutil
 import zipfile
+
+import pytest
 
 from tmuxbot import pi_extension
 
@@ -6,8 +9,11 @@ from tmuxbot import pi_extension
 def test_wheel_contains_managed_pi_handoff_extension(tmp_path):
     import subprocess
 
+    uv_bin = shutil.which("uv")
+    if uv_bin is None:
+        pytest.skip("uv executable is required for wheel content test")
     subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        [uv_bin, "build", "--wheel", "--out-dir", str(tmp_path)],
         check=True,
         capture_output=True,
         text=True,
