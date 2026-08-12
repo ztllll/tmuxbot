@@ -40,6 +40,11 @@ Pi 上游也记录过“请求异常后 Working 无限显示”的历史缺陷�
 
 这说明结构化 error + settled 是正确的主信号；“spinner 很久不动”不是可靠证据。对于没有 error record 的静默卡死，本设计不告警，而是保留日志/人工 `/screen` 诊断入口。
 
+## 实施状态
+
+- `2b273ea` 已实现第二层多信号疑似失活巡检并部署到本机与 hbhy。
+- 后续同一实现批次加入第一层 provider-authored `terminal_error` sidecar；Pi retry 中的 transcript error 延后到 `agent_settled` 后再决定是否通知。
+
 ## 推荐架构
 
 新增一个深模块 `tmuxbot/runtime/pi_terminal_health.py`，对 caller 只暴露一个接口：

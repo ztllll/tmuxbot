@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tmuxbot.core.events import TerminalState
+from tmuxbot.runtime.pi_session_health import read_session_health
 from tmuxbot.runtime.route_health import provider_tree_is_safe
 from tmuxbot.tmux import tmux_capture, tmux_has_session
 from tmuxbot.utils import strip_decorations
@@ -160,6 +161,42 @@ def _identity_is_precise(backend: object, binding: object, transcript: Path) -> 
     return identity.session_id == session_id and Path(identity.transcript_path) == transcript
 
 
+def _transcript_still_ends_in_error(transcript: Path, expected_message: str) -> bool:
+    """Confirm no later user/successful assistant entry superseded the sidecar."""
+    try:
+        rows = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in reversed(rows[-256:]):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = row.get("message") if isinstance(row, dict) else None
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "user":
+            return False
+        if role != "assistant":
+            continue
+        return (
+            message.get("stopReason") == "error"
+            and str(message.get("errorMessage") or "")[:500] == expected_message
+        )
+    return False
+
+
+def _terminal_error_notice(binding: object, message: str) -> str:
+    return (
+        "❌ <b>Pi 已停止自动恢复，需要人工处理</b>\n"
+        f"· route: <code>{html.escape(binding.name)}</code> · "
+        f"target: <code>{html.escape(binding.tmux_target)}</code>\n"
+        f"· 最后错误：{html.escape(message[:500])}\n"
+        "· Pi 已结束 retry、compaction 和 follow-up；请用 <code>/screen</code> 查看 TUI。"
+    )
+
+
 def _notice(binding: object) -> str:
     return (
         "⚠️ <b>Pi 疑似失活，请人工查看</b>\n"
@@ -185,6 +222,45 @@ async def audit_pi_terminals_once(
                 _reset(registry, binding.name)
                 continue
             checked += 1
+            session_health = read_session_health(binding.tmux_target, binding.cwd)
+            if (
+                session_health is not None
+                and session_health.state == "terminal_error"
+                and session_health.session_id == binding.provider_session_id
+                and Path(binding.transcript_path or "") == session_health.transcript_path
+                and provider_tree_is_safe(binding.tmux_target, "pi")
+                and _transcript_still_ends_in_error(
+                    session_health.transcript_path,
+                    session_health.error_message or "",
+                )
+            ):
+                error_key = hashlib.sha256(
+                    (
+                        f"terminal-error\0{session_health.session_id}\0"
+                        f"{session_health.response_id or session_health.error_message}\0"
+                        f"{session_health.transcript_path}"
+                    ).encode("utf-8", "surrogateescape")
+                ).hexdigest()
+                record = registry.get(binding.name)
+                if record is None or record.get("terminal_error_key") != error_key:
+                    try:
+                        await frontend.send_html(
+                            binding.chat_id,
+                            binding.thread_id,
+                            _terminal_error_notice(binding, session_health.error_message or "Pi provider request failed"),
+                        )
+                    except Exception:
+                        log.exception("[%s] Pi terminal-error notification failed", binding.name)
+                    else:
+                        registry[binding.name] = {
+                            "fingerprint": record.get("fingerprint", "") if record else "",
+                            "session_id": session_health.session_id,
+                            "stalled_samples": 0,
+                            "notified": False,
+                            "terminal_error_key": error_key,
+                        }
+                        notified += 1
+                continue
             if (
                 _has_pending_session_handoff(state, binding)
                 or _is_compacting(state, binding)

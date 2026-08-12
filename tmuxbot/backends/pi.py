@@ -607,17 +607,10 @@ class PiBackend(Backend):
                 )
         native_id = row.get("id") or message.get("responseId")
         events: list[ProviderEvent] = []
-        if message.get("stopReason") == "error":
-            error_message = str(message.get("errorMessage") or "Pi provider request failed")
-            events.append(
-                self.provider_event(
-                    row,
-                    ProviderEventKind.PROVIDER_ERROR,
-                    f"⚠️ <b>Pi 请求失败</b>\n· {html.escape(error_message)}",
-                    provider_session_id=provider_session_id,
-                    native_id=f"{native_id}:error" if native_id else None,
-                )
-            )
+        # A persisted error is not necessarily terminal: Pi may still retry,
+        # compact, or drain queued follow-ups. The managed extension publishes
+        # `terminal_error` only after `agent_settled`; the periodic audit then
+        # sends one exact-endpoint notification without false retry alarms.
         if tools:
             events.append(
                 self.provider_event(

@@ -15,7 +15,7 @@
 
 ### Added
 
-- 新增 Pi 专属多信号疑似失活巡检：默认每 10 分钟只读观察已存在的精确 Pi pane。仅当已精确绑定的同一 session 连续 3 个审计周期保持 Pi 原生工作状态、JSONL size 和稳定屏幕内容均无进展、且未处于 retry、压缩、session handoff 或活跃子工具时，才向原 IM endpoint 去重提示“疑似失活，请人工查看”。不会自动中断/重启 Pi，也不会把正常空闲、工作、重试、手动关闭 tmux 或不确定状态当作错误；通知 fingerprint 持久化，bridge 重启不重复推送。
+- 新增 Pi 专属双层异常巡检：受管 extension 将 assistant provider error 先标为 `recovering`，只有 Pi 发出 `agent_settled`、确认 retry/compaction/follow-up 全部结束后才写 `terminal_error` sidecar，由 bridge 校验精确 target/cwd/session/transcript 后通知一次；不再把 transcript 中重试过程的单条 error 立即推给 IM。第二层默认每 10 分钟只读观察已存在的精确 Pi pane，仅当已精确绑定的同一 session 连续 3 个审计周期保持 Pi 原生工作状态、JSONL size 和稳定屏幕内容均无进展、且未处于 retry、压缩、session handoff 或活跃子工具时，才向原 endpoint 去重提示“疑似失活，请人工查看”。两层均不会自动中断/重启 Pi；notification fingerprint 持久化，bridge 重启不重复推送。
 - 新增 `tmuxbot admin adopt-pi-session` 受控恢复命令：仅在操作者直接于 Pi TUI 切换会话而导致 route 继续钉在旧 JSONL、Telegram/飞书回推中断时使用。命令要求精确 JSONL 路径，校验 `type=session` 的 session ID 与 route cwd，先输出 plan，`--apply` 后经原子 route 写入、supervised bridge restart 与 route/tmux/service verify 完成认领；绝不按 mtime 猜测或自动跨会话切换。
 - systemd 安装增加 `tmuxbot install-service --now --self-heal`：单一 user service 提供开机自启动、`Restart=always` 进程恢复和周期 tmux/provider TUI 会话自愈。
 - 新增精确 topic/thread route：同一 Telegram Bot 或飞书 App 可按 `(chat_id, thread_id)` 将不同话题绑定到不同 tmux pane，并按 route 选择 Claude Code、Codex 或 Pi adapter。
