@@ -149,6 +149,24 @@ async def dispatch_incoming_text(
         if spec.kind == CommandKind.BLOCKED:
             return await frontend.send_html(chat_id, thread_id, spec.notice)
 
+        if (
+            backend.name == "pi"
+            and parsed.command == "/plan"
+            and backend.accepts_input_while_busy
+        ):
+            status = backend.parse_terminal_status(tmux_capture(b.tmux_target, 30))
+            if status is not None and status.state != TerminalState.IDLE:
+                label = status.label or status.state.value
+                await frontend.send_html(
+                    chat_id,
+                    thread_id,
+                    "⏳ <b>/plan 未执行</b>\n"
+                    f"· Pi 当前仍在 <code>{html.escape(label)}</code>\n"
+                    "· Plan Mode 会切换工具与会话状态，不能在工作中排队。"
+                    "请等待空闲，或先发送 <code>/esc</code>，确认停止后再试。",
+                )
+                return
+
         if spec.kind == CommandKind.INTERACTIVE:
             await handle_interactive_command(
                 frontend, backend, b, state, chat_id, thread_id, spec, raw_text

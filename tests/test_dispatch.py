@@ -125,6 +125,56 @@ def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
     assert "/new" in calls[0][3]
 
 
+def test_pi_plan_command_while_working_fails_immediately_without_injection(monkeypatch):
+    binding = _binding()
+    binding.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+        @property
+        def capabilities(self):
+            return ProviderCapabilities(name=self.name, accepts_input_while_busy=True)
+
+        def parse_terminal_status(self, _pane):
+            return TerminalStatus(state=TerminalState.WORKING, label="Retrying (1/5)...")
+
+    class Frontend:
+        async def send_html(self, chat_id, thread_id, text):
+            calls.append(("reply", chat_id, thread_id, text))
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*_args, **_kwargs):
+        calls.append(("inject",))
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_capture", lambda *_args: "Retrying")
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_capture", lambda *_args: "Retrying")
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(),
+            PiBackend(),
+            binding,
+            SimpleNamespace(pending_rename={}),
+            1,
+            8024,
+            "/plan finalize",
+        )
+    )
+
+    assert not any(call[0] == "inject" for call in calls)
+    assert len(calls) == 1
+    assert "/plan 未执行" in calls[0][3]
+    assert "Retrying" in calls[0][3]
+    assert "/esc" in calls[0][3]
+
+
 def test_channel_clone_arms_session_handoff_before_tmux_injection(monkeypatch):
     binding = _binding()
     sent = []
