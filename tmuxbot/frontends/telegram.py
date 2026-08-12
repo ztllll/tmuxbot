@@ -73,6 +73,7 @@ from tmuxbot.control_panel import (
 from tmuxbot.frontends.base import BackendResolutionError, Frontend
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
+from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 from tmuxbot.tmux import tmux_capture, tmux_has_session, tmux_pane_command, tmux_send_key
 from tmuxbot.utils import render_table, utf16_len
 
@@ -1600,6 +1601,12 @@ class TelegramFrontend(Frontend):
             b = next((bb for bb in F_.bindings if bb.name == b_name), None)
             if not b or b is not source_binding:
                 await cq.answer("⚠️ binding 未找到"); return
+            if b.backend == "pi":
+                await cq.answer("Pi 交互请通过 SSH 处理", show_alert=True)
+                await F_.send_html(
+                    b.chat_id, b.thread_id, pi_ssh_interaction_notice(b)
+                )
+                return
 
             pre_block = extract_picker_block(tmux_capture(b.tmux_target, 80))
             if pre_block is None:
@@ -1678,6 +1685,15 @@ class TelegramFrontend(Frontend):
                 return
             if cq.message is None:
                 await cq.answer("⚠️ 消息不存在")
+                return
+            if b.backend == "pi" and action in {
+                "up", "down", "left", "right", "enter", "esc",
+                "confirm_ctrl_c", "ctrl_c", "model_session",
+            }:
+                await cq.answer("Pi 交互请通过 SSH 处理", show_alert=True)
+                await F_.send_html(
+                    b.chat_id, b.thread_id, pi_ssh_interaction_notice(b)
+                )
                 return
             if action == "confirm_ctrl_c":
                 await F_.send_interrupt_confirmation(

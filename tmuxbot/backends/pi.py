@@ -246,8 +246,8 @@ def _session_header(path: Path) -> dict[str, Any] | None:
 
 def _format_plan_mode_question(arguments: Any) -> str:
     if not isinstance(arguments, dict) or not isinstance(arguments.get("questions"), list):
-        return "❓ <b>Plan Mode 等待选择</b>\n· 使用 <code>/screen</code> 查看问题。"
-    parts = ["❓ <b>Plan Mode 等待选择</b>"]
+        return "❓ <b>Plan Mode 正在请求用户决策</b>\n· 正在等待 TUI 交互状态确认。"
+    parts = ["❓ <b>Plan Mode 正在请求用户决策</b>"]
     for question in arguments["questions"][:3]:
         if not isinstance(question, dict):
             continue
@@ -266,8 +266,8 @@ def _format_plan_mode_question(arguments: Any) -> str:
                     text += f" — {description}"
                 parts.append(html.escape(text))
     parts.append(
-        "· 使用 <code>/up /down /enter</code> 在原生 TUI 选择；"
-        "自由输入请先用 <code>/screen</code> 查看提示。"
+        "· tmuxbot 不会代替选择或通过 IM 发送按键；"
+        "确认 TUI 已进入交互等待后，会另行提示 SSH 处理。"
     )
     return "\n".join(parts)
 

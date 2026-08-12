@@ -67,6 +67,7 @@ from tmuxbot.frontends.feishu_cards import html_to_feishu_markdown
 from tmuxbot.frontends.feishu_streaming import FeishuStreamingSession, StreamingPrefixError
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
+from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -1345,6 +1346,14 @@ class FeishuFrontend(Frontend):
         } | panel_actions
         if action not in allowed_actions:
             return _card_action_response("error", "未知操作")
+        if b.backend == "pi" and action in {
+            "refresh", "esc", "confirm_ctrl_c", "ctrl_c", "up", "down",
+            "left", "right", "enter", "model_session",
+        }:
+            self._schedule_static_notice(
+                b, chat_id, pi_ssh_interaction_notice(b)
+            )
+            return _card_action_response("warning", "Pi 交互请通过 SSH 处理")
         if action in {"mention_on", "mention_off", "mention_default"}:
             value = {
                 "mention_on": False,
@@ -1407,6 +1416,23 @@ class FeishuFrontend(Frontend):
 
         self._schedule_card_action(b, chat_id, action)
         return _card_action_response("success", "操作已提交")
+
+    def _schedule_static_notice(self, b: "Binding", chat_id: str, text: str) -> None:
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            log.warning("feishu static notice dropped: main loop unavailable")
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self.send_html(chat_id, b.thread_id, text), loop
+        )
+
+        def done(result) -> None:
+            try:
+                result.result()
+            except Exception:
+                log.exception("feishu static notice failed")
+
+        future.add_done_callback(done)
 
     def _schedule_card_action(self, b: "Binding", chat_id: str, action: str) -> None:
         loop = self._main_loop

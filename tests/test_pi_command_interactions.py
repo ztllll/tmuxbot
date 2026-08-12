@@ -93,7 +93,8 @@ def test_pi_resume_transaction_stays_open_until_selection(monkeypatch):
     )
 
     assert item.name in state.command_transactions
-    assert frontend.cards
+    assert frontend.cards == []
+    assert "当前屏幕尚未出现可确认" in frontend.html[-1][2]
 
 
 def test_pi_resume_enter_reconciles_and_closes_transaction(monkeypatch):

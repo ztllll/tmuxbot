@@ -70,6 +70,24 @@ def test_feishu_card_action_validates_and_schedules_tmux_action(tmp_path):
     assert scheduled == [(b, "oc_alpha", "refresh")]
 
 
+def test_feishu_old_pi_card_action_is_rejected_and_sends_ssh_notice(tmp_path):
+    b = binding(tmp_path)
+    b.backend = "pi"
+    instance, scheduled = frontend(b)
+    notices = []
+    instance._schedule_static_notice = (
+        lambda route, chat_id, text: notices.append((route, chat_id, text))
+    )
+
+    response = instance._on_card_action(event(b, "down"))
+
+    assert response.toast.type == "warning"
+    assert "SSH" in response.toast.content
+    assert scheduled == []
+    assert notices[0][0:2] == (b, "oc_alpha")
+    assert b.tmux_target in notices[0][2]
+
+
 def test_feishu_card_action_rejects_unauthorized_or_wrong_chat(tmp_path):
     b = binding(tmp_path)
     instance, scheduled = frontend(b)

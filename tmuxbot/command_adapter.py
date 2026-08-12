@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from tmuxbot.picker import detect_pi_interaction
+from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
 from tmuxbot.utils import strip_decorations
 
@@ -498,13 +500,28 @@ async def handle_interactive_command(
     )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
     await asyncio.sleep(1.0)
-    body = build_interaction_body(
-        b,
-        title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
-        note=spec.notice,
-        lines=spec.lines,
-    )
-    await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
+    if backend.name == "pi":
+        screen = tmux_capture(b.tmux_target, spec.lines)
+        interaction = detect_pi_interaction(screen)
+        if interaction is not None:
+            body = pi_ssh_interaction_notice(
+                b, interaction_label=interaction.label
+            )
+        else:
+            body = (
+                f"↪️ <b>{html.escape(spec.command)} 已提交到 Pi</b>\n"
+                "· 当前屏幕尚未出现可确认的交互控制栏；"
+                "若稍后出现菜单、选择、输入或确认界面，tmuxbot 会另行通知 SSH 处理。"
+            )
+        await frontend.send_html(chat_id, thread_id, body)
+    else:
+        body = build_interaction_body(
+            b,
+            title=f"🎛 <b>{html.escape(spec.command)}</b> 已注入",
+            note=spec.notice,
+            lines=spec.lines,
+        )
+        await frontend.send_interaction_card(chat_id, thread_id, body, b.name)
     if spec.command not in backend.interactive_session_handoff_commands():
         state.command_transactions.pop(b.name, None)
 

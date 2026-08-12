@@ -180,7 +180,7 @@ journalctl --user -u tmuxbot -f
 - **Telegram 状态标识**:Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
 - **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
-- **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏；`pi-plan-mode` 的 active/ready/saved/implementing 状态与中文 widget 同步到 IM 页面底部，完整计划使用可编辑计划卡回推
+- **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏；`pi-plan-mode` 的 active/ready/saved/implementing 状态与中文 widget 同步到 IM 页面底部，完整计划使用可编辑计划卡回推；Pi 菜单、选择、输入和确认界面仅在底部控制提示紧邻实时 footer 时通知原 endpoint，IM 不模拟任何交互按键，用户按提示 SSH attach 到精确 tmux pane 处理
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)

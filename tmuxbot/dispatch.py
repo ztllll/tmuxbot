@@ -34,6 +34,7 @@ from tmuxbot.command_adapter import (
 )
 from tmuxbot.core.events import TerminalState
 from tmuxbot.lifecycle import ensure_binding_running
+from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 from tmuxbot.tmux import (
     tmux_capture,
     tmux_has_session,
@@ -129,6 +130,15 @@ async def dispatch_incoming_text(
         spec = classify_command(backend, parsed.command, parsed.args)
 
         action = action_from_command(parsed.command, parsed.args)
+        if action and backend.name == "pi":
+            await frontend.send_html(
+                chat_id,
+                thread_id,
+                "⚠️ <b>Pi 交互按键未执行</b>\n"
+                "· tmuxbot 不接受通过 IM 操作 Pi 的选择器。\n"
+                + pi_ssh_interaction_notice(b),
+            )
+            return
         if action:
             await handle_tui_action(
                 frontend,
@@ -142,6 +152,15 @@ async def dispatch_incoming_text(
             return
 
         semantic_action = semantic_action_from_command(parsed.command)
+        if semantic_action and backend.name == "pi":
+            await frontend.send_html(
+                chat_id,
+                thread_id,
+                "⚠️ <b>Pi 交互操作未执行</b>\n"
+                "· tmuxbot 不接受通过 IM 批准或取消 Pi 交互。\n"
+                + pi_ssh_interaction_notice(b),
+            )
+            return
         if semantic_action:
             await handle_semantic_action(frontend, b, chat_id, thread_id, semantic_action)
             return

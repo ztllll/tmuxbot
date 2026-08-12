@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Pi 的菜单、选择、输入和确认界面改为只读识别：只有当前屏幕底部控制提示紧邻实时 Pi footer 时才通知原 IM endpoint，并给出精确 SSH/tmux pane；Telegram/飞书不再为 Pi 发送交互卡、方向键或批准/取消按键，旧卡 callback 也会拒绝执行。
+
 ### Fixed
 
 - 修复人工停止 Pi 长等待/工具执行后的误报：Pi 某些版本会把显式取消持久化为 `stopReason=error` 与 `This operation was aborted`。backend 兼容回推、受管 session-health extension 和十分钟 terminal-health audit 现在都将已知 cancellation 文案视为用户操作并静默，不会伪装成 provider 终态故障；正常长轮询仍因活跃工具证据保持静默。
@@ -17,7 +21,7 @@
 
 ### Added
 
-- 接入 `@narumitw/pi-plan-mode` 0.49.3：Pi backend 从当前精确 JSONL branch 恢复 `plan active / ready / saved / implementing`，在 IM 页面底部显示对应中文 Plan widget，并在回复状态栏补齐 `📝` 状态（兼容 `pi-statusline` 的 `plan ✓` 压缩渲染且不重复）。`plan_mode_complete` 和 `/plan show` 的完整计划作为可编辑 plan card 回推；bridge 重启后从持久 state 恢复状态栏和页面底部，但不会重复发送历史计划卡。`/plan` 与 `/plan tools` 打开原生 TUI 菜单，`/plan start|show|finalize|implement|save|export|exit|off|<prompt>` 直接穿透并返回屏幕回执；Telegram/飞书 Pi 控制面板增加“计划模式”入口，Telegram BotCommand 注册 `/plan`；picker detector 兼容 pi-tui-kit 的 `↑/↓ navigate • enter select • esc close` 底栏，使计划菜单和结构化问题能在远程 IM 被发现并操作；Telegram 自动发送 1–9 编号选择卡，飞书自动发送方向键/确认/取消控制卡，不再要求手动 `/refresh` 才看见模型后续弹出的 Plan 问题；Pi 非空闲时 `/plan` 立即拒绝，不会把工具/模式切换命令塞入 steering queue 后延迟生效。
+- 接入 `@narumitw/pi-plan-mode` 0.49.3：Pi backend 从当前精确 JSONL branch 恢复 `plan active / ready / saved / implementing`，在 IM 页面底部显示对应中文 Plan widget，并在回复状态栏补齐 `📝` 状态（兼容 `pi-statusline` 的 `plan ✓` 压缩渲染且不重复）。`plan_mode_complete` 和 `/plan show` 的完整计划作为可编辑 plan card 回推；bridge 重启后从持久 state 恢复状态栏和页面底部，但不会重复发送历史计划卡。`/plan` 与 `/plan tools` 打开原生 TUI 菜单，`/plan start|show|finalize|implement|save|export|exit|off|<prompt>` 直接穿透并返回屏幕回执；Telegram/飞书 Pi 控制面板增加“计划模式”入口，Telegram BotCommand 注册 `/plan`；picker detector 兼容 pi-tui-kit 的 `↑/↓ navigate • enter select • esc close` 底栏，使计划菜单和结构化问题能在远程 IM 被发现；Pi 非空闲时 `/plan` 立即拒绝，不会把工具/模式切换命令塞入 steering queue 后延迟生效。交互按键控制后来在同一 Unreleased 维护线收敛为 SSH-only，见上方 Changed。
 - 新增 Pi 专属双层异常巡检：受管 extension 将 assistant provider error 先标为 `recovering`，只有 Pi 发出 `agent_settled`、确认 retry/compaction/follow-up 全部结束后才写 `terminal_error` sidecar，由 bridge 校验精确 target/cwd/session/transcript 后通知一次；已加载该 sidecar 的 session 不再把重试过程单条 error 立即推给 IM，尚未 `/reload` 的旧 Pi 则保留即时回推作为部署迁移兜底，避免漏报窗口。第二层默认每 10 分钟只读观察已存在的精确 Pi pane，仅当已精确绑定的同一 session 连续 3 个审计周期保持 Pi 原生工作状态、JSONL size 和稳定屏幕内容均无进展、且未处于 retry、压缩、session handoff 或活跃子工具时，才向原 endpoint 去重提示“疑似失活，请人工查看”。两层均不会自动中断/重启 Pi；notification fingerprint 持久化，bridge 重启不重复推送。
 - 新增 `tmuxbot admin adopt-pi-session` 受控恢复命令：仅在操作者直接于 Pi TUI 切换会话而导致 route 继续钉在旧 JSONL、Telegram/飞书回推中断时使用。命令要求精确 JSONL 路径，校验 `type=session` 的 session ID 与 route cwd，先输出 plan，`--apply` 后经原子 route 写入、supervised bridge restart 与 route/tmux/service verify 完成认领；绝不按 mtime 猜测或自动跨会话切换。
 - systemd 安装增加 `tmuxbot install-service --now --self-heal`：单一 user service 提供开机自启动、`Restart=always` 进程恢复和周期 tmux/provider TUI 会话自愈。

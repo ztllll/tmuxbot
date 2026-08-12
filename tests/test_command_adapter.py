@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from tmuxbot.picker import detect_idle_picker, extract_picker_block
+from tmuxbot.picker import detect_idle_picker, detect_pi_interaction
 from tmuxbot.command_adapter import (
     CommandKind,
     action_from_command,
@@ -141,64 +141,94 @@ def test_binding_token_round_trip():
     assert binding_by_token(bindings, "missing") is None
 
 
-def test_picker_detector_uses_numbered_telegram_card_and_feishu_interaction_card(
-    monkeypatch
-):
+def test_pi_picker_detector_only_sends_static_ssh_notice(monkeypatch):
     raw = (
         "Plan mode\n"
         "→ Start Plan mode\n"
         "  Choose tools, then start…\n"
         "↑/↓ navigate • enter select • esc close\n"
+        "░▒▓ 🤖 gpt 5.6-sol 🪟 ctx 10.0%/360k\n"
+        "📄 JSONL 1.0 MB\n"
     )
     monkeypatch.setattr("tmuxbot.picker.tmux_capture", lambda *_args: raw)
     binding = SimpleNamespace(
-        name="pi-route", chat_id="oc_alpha", thread_id="omt_plan", tmux_target="pi:0.0"
+        name="pi-route", chat_id="oc_alpha", thread_id="omt_plan",
+        tmux_target="pi:0.0", backend="pi"
     )
 
     class State:
         picker_notified = {}
 
-    telegram_calls = []
+    calls = []
 
-    class TelegramFrontend:
-        name = "telegram"
-
-        async def send_picker_card(self, *args, **kwargs):
-            telegram_calls.append((args, kwargs))
-
-    asyncio.run(detect_idle_picker(binding, State(), TelegramFrontend()))
-    assert len(telegram_calls) == 1
-    assert "下方 1-9 按钮" in telegram_calls[0][0][2]
-
-    State.picker_notified = {}
-    feishu_calls = []
-
-    class FeishuFrontend:
+    class Frontend:
         name = "feishu"
 
-        async def send_interaction_card(self, *args, **kwargs):
-            feishu_calls.append((args, kwargs))
+        def backend_for(self, _binding):
+            return SimpleNamespace(name="pi")
 
-    asyncio.run(detect_idle_picker(binding, State(), FeishuFrontend()))
-    assert len(feishu_calls) == 1
-    assert feishu_calls[0][0][0:2] == ("oc_alpha", "omt_plan")
-    assert "使用下方方向键" in feishu_calls[0][0][2]
-    assert feishu_calls[0][0][3] == "pi-route"
+        async def send_html(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+        async def send_picker_card(self, *_args, **_kwargs):
+            raise AssertionError("Pi picker must not send a numbered card")
+
+        async def send_interaction_card(self, *_args, **_kwargs):
+            raise AssertionError("Pi picker must not send a remote-control card")
+
+    asyncio.run(detect_idle_picker(binding, State(), Frontend()))
+
+    assert len(calls) == 1
+    assert calls[0][0][0:2] == ("oc_alpha", "omt_plan")
+    assert "需要交互式操作" in calls[0][0][2]
+    assert "SSH" in calls[0][0][2]
+    assert "tmux select-window" in calls[0][0][2]
+    assert "pi:0.0" in calls[0][0][2]
 
 
-def test_pi_plan_mode_picker_footer_is_detected_for_remote_control():
-    raw = (
+def test_pi_plan_mode_picker_requires_live_footer_and_classifies_selection():
+    menu = (
         "Plan mode\n"
         "→ Start Plan mode\n"
         "  Choose tools, then start…\n"
         "↑/↓ navigate • enter select • esc close\n"
     )
 
-    block = extract_picker_block(raw)
+    assert detect_pi_interaction(menu) is None
 
-    assert block is not None
-    assert "Start Plan mode" in block
-    assert "enter select" in block
+    interaction = detect_pi_interaction(
+        menu + "░▒▓ 🤖 gpt 5.6-sol 🪟 ctx 10.0%/360k\n📄 JSONL 1.0 MB\n"
+    )
+
+    assert interaction is not None
+    assert interaction.kind == "selection"
+    assert interaction.label == "选择菜单"
+    assert "Start Plan mode" in interaction.block
+
+
+def test_pi_interaction_detector_classifies_input_and_rejects_historical_menu():
+    footer = "░▒▓ 🤖 gpt 5.6-sol 🪟 ctx 10.0%/360k\n📄 JSONL 1.0 MB\n"
+    input_screen = (
+        "Export plan\n> PLAN.md\nenter submit • esc back\n" + footer
+    )
+    historical = (
+        "Plan mode\n→ Implement here\n↑/↓ navigate • enter select • esc close\n"
+        "assistant discussed the menu here\n"
+        + footer
+    )
+    stale_footer = (
+        "Plan mode\n→ Implement here\n↑/↓ navigate • enter select • esc close\n"
+        + footer
+        + "old output one\nold output two\nold output three\nold output four\n"
+    )
+
+    interaction = detect_pi_interaction(input_screen)
+
+    assert interaction is not None
+    assert interaction.kind == "text_input"
+    assert interaction.label == "文本输入"
+    assert detect_pi_interaction(historical) is None
+    assert detect_pi_interaction(stale_footer) is None
 
 
 def test_detects_plan_approval_state():

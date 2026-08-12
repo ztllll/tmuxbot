@@ -125,6 +125,102 @@ def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
     assert "/new" in calls[0][3]
 
 
+def test_pi_interactive_command_injects_then_only_sends_ssh_notice(monkeypatch):
+    binding = _binding()
+    binding.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+        def interactive_session_handoff_commands(self):
+            return frozenset()
+
+    class Frontend:
+        async def send_html(self, chat_id, thread_id, text):
+            calls.append(("reply", chat_id, thread_id, text))
+
+        async def send_interaction_card(self, *_args):
+            raise AssertionError("Pi interactive commands must not expose IM controls")
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    async def send_text(*args, **_kwargs):
+        calls.append(("inject", args[1]))
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr(
+        "tmuxbot.command_adapter.tmux_capture",
+        lambda *_args: (
+            "Plan mode\n→ Start Plan mode\n"
+            "↑/↓ navigate • enter select • esc close\n"
+            "░▒▓ 🤖 gpt 5.6-sol 🪟 ctx 10.0%/360k\n📄 JSONL 1.0 MB"
+        ),
+    )
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(),
+            PiBackend(),
+            binding,
+            SimpleNamespace(pending_rename={}, command_transactions={}),
+            1,
+            8024,
+            "/plan",
+        )
+    )
+
+    assert calls[0] == ("inject", "/plan")
+    assert calls[1][0] == "reply"
+    assert "需要交互式操作" in calls[1][3]
+    assert "tmux select-window" in calls[1][3]
+    assert binding.tmux_target in calls[1][3]
+
+
+def test_pi_tui_key_command_is_rejected_with_ssh_notice(monkeypatch):
+    binding = _binding()
+    binding.backend = "pi"
+    calls = []
+
+    class PiBackend(_Backend):
+        name = "pi"
+        running_command_names = frozenset({"pi"})
+
+    class Frontend:
+        async def send_html(self, chat_id, thread_id, text):
+            calls.append((chat_id, thread_id, text))
+
+    async def ready(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr(
+        "tmuxbot.dispatch.handle_tui_action",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Pi TUI keys must not be injected from IM")
+        ),
+    )
+
+    asyncio.run(
+        dispatch_incoming_text(
+            Frontend(),
+            PiBackend(),
+            binding,
+            SimpleNamespace(pending_rename={}),
+            1,
+            8024,
+            "/down",
+        )
+    )
+
+    assert len(calls) == 1
+    assert "Pi 交互按键未执行" in calls[0][2]
+    assert "SSH" in calls[0][2]
+
+
 def test_pi_plan_command_while_working_fails_immediately_without_injection(monkeypatch):
     binding = _binding()
     binding.backend = "pi"

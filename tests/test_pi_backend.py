@@ -748,7 +748,8 @@ def test_pi_plan_question_tool_call_renders_remote_choices():
     assert events[0].kind == ProviderEventKind.TOOL_PROGRESS
     assert "本轮按什么范围实施" in events[0].text
     assert "1. 全部" in events[0].text
-    assert "/up /down /enter" in events[0].text
+    assert "不会代替选择" in events[0].text
+    assert "/up" not in events[0].text
 
 
 def test_pi_reads_dida_work_title_for_im_footer(tmp_path, monkeypatch):
