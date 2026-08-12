@@ -198,6 +198,14 @@ async def _dispatch_provider_events(
     b: "Binding", events, frontend: "Frontend", state: "State", backend: "Backend"
 ) -> bool:
     for event in events:
+        if (
+            event.kind.value == "provider_error"
+            and getattr(backend, "name", None) == "pi"
+            and callable(getattr(backend, "provider_error_is_managed", None))
+            and backend.provider_error_is_managed(b)
+        ):
+            log.debug("[%s] Pi provider error deferred to terminal-health audit", b.name)
+            continue
         decision = RuntimeV2Router.from_environment().route(event)
         for reduced in decision.deliveries:
             try:

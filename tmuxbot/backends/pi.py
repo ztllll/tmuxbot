@@ -28,6 +28,7 @@ from tmuxbot.core.events import (
 )
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.runtime.pi_handoff import read_handoff
+from tmuxbot.runtime.pi_session_health import read_session_health
 from tmuxbot.runtime.route_health import provider_session_file, provider_tree_is_safe
 from tmuxbot.tmux import (
     tmux_capture,
@@ -607,10 +608,17 @@ class PiBackend(Backend):
                 )
         native_id = row.get("id") or message.get("responseId")
         events: list[ProviderEvent] = []
-        # A persisted error is not necessarily terminal: Pi may still retry,
-        # compact, or drain queued follow-ups. The managed extension publishes
-        # `terminal_error` only after `agent_settled`; the periodic audit then
-        # sends one exact-endpoint notification without false retry alarms.
+        if message.get("stopReason") == "error":
+            error_message = str(message.get("errorMessage") or "Pi provider request failed")
+            events.append(
+                self.provider_event(
+                    row,
+                    ProviderEventKind.PROVIDER_ERROR,
+                    f"⚠️ <b>Pi 请求失败</b>\n· {html.escape(error_message)}",
+                    provider_session_id=provider_session_id,
+                    native_id=f"{native_id}:error" if native_id else None,
+                )
+            )
         if tools:
             events.append(
                 self.provider_event(
@@ -632,6 +640,21 @@ class PiBackend(Backend):
                 )
             )
         return events
+
+    def provider_error_is_managed(self, b: "Binding") -> bool:
+        """Whether the loaded Pi extension owns final error notification.
+
+        Existing long-running Pi processes may not have reloaded the managed
+        session-health reporter yet.  In that migration state transcript errors
+        must retain the legacy immediate IM path instead of disappearing.
+        """
+        health = read_session_health(b.tmux_target, b.cwd)
+        return bool(
+            health is not None
+            and health.session_id == b.provider_session_id
+            and b.transcript_path is not None
+            and health.transcript_path == Path(b.transcript_path)
+        )
 
     def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
         transcript = self.find_active_jsonl(b)

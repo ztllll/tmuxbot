@@ -220,7 +220,7 @@ def test_pi_estimates_compaction_eta_from_recent_session_history(tmp_path, monke
     assert PiBackend().estimated_compaction_seconds(binding(cwd)) == 180
 
 
-def test_pi_parser_defers_provider_errors_until_agent_settled_and_emits_compaction():
+def test_pi_parser_emits_provider_error_for_legacy_fallback_and_compaction():
     backend = PiBackend()
     error_events = backend.parse_event(
         json.dumps(
@@ -251,7 +251,8 @@ def test_pi_parser_defers_provider_errors_until_agent_settled_and_emits_compacti
         "session-1",
     )
 
-    assert error_events == []
+    assert error_events[0].kind == ProviderEventKind.PROVIDER_ERROR
+    assert "Request timed out" in error_events[0].text
     assert compaction_events[0].kind == ProviderEventKind.LIFECYCLE_CHANGE
     assert compaction_events[0].metadata["lifecycle"] == "compaction_end"
     assert compaction_events[0].metadata["tokens_before"] == 333342
