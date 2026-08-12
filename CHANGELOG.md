@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
+
 ### Changed
 
 - Pi 的菜单、选择、输入和确认界面改为只读识别：只有当前屏幕底部控制提示紧邻实时 Pi footer 时才通知原 IM endpoint，并给出精确 SSH/tmux pane；Telegram/飞书不再为 Pi 发送交互卡、方向键或批准/取消按键，旧卡 callback 也会拒绝执行。

@@ -1,4 +1,24 @@
+import zipfile
+
 from tmuxbot import pi_extension
+
+
+def test_wheel_contains_managed_pi_handoff_extension(tmp_path):
+    import subprocess
+
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wheel = next(tmp_path.glob("tmuxbot-*.whl"))
+
+    with zipfile.ZipFile(wheel) as archive:
+        assert (
+            "tmuxbot/pi-extensions/tmuxbot-session-handoff.ts"
+            in archive.namelist()
+        )
 
 
 def test_install_pi_handoff_extension_is_private_and_idempotent(tmp_path, monkeypatch):

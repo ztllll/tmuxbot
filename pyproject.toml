@@ -43,6 +43,9 @@ dev = [
     "httpx>=0.28,<1",
 ]
 
+[tool.hatch.build.targets.wheel.force-include]
+"pi-extensions/tmuxbot-session-handoff.ts" = "tmuxbot/pi-extensions/tmuxbot-session-handoff.ts"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

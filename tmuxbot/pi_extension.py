@@ -8,6 +8,10 @@ _HANDOFF_EXTENSION = "tmuxbot-session-handoff.ts"
 
 
 def managed_extension_source() -> Path:
+    package_source = Path(__file__).resolve().parent / "pi-extensions" / _HANDOFF_EXTENSION
+    if package_source.is_file():
+        return package_source
+    # Source checkouts keep the TypeScript extension at repository root.
     return Path(__file__).resolve().parent.parent / "pi-extensions" / _HANDOFF_EXTENSION
 
 
