@@ -352,6 +352,11 @@ def build_telegram_panel_markup(
             InlineKeyboardButton(text="恢复会话", callback_data=f"panel:{token}:cmd_resume"),
         ],
         [InlineKeyboardButton(text="切换模型", callback_data=f"panel:{token}:cmd_model")],
+        *(
+            [[InlineKeyboardButton(text="计划模式", callback_data=f"panel:{token}:cmd_plan")]]
+            if binding.backend == "pi"
+            else []
+        ),
         [
             InlineKeyboardButton(text="Esc", callback_data=f"panel:{token}:cmd_esc"),
             InlineKeyboardButton(text="Ctrl-C", callback_data=f"panel:{token}:cmd_cc"),

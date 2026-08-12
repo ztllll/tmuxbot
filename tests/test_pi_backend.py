@@ -464,6 +464,293 @@ def test_pi_terminal_status_recognizes_custom_powerline_footer():
     assert status.extension_statuses == ("📄 JSONL 13.8 MB",)
 
 
+def test_pi_plan_mode_snapshot_is_cached_until_transcript_changes(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "custom",
+                    "customType": "plan-mode-state",
+                    "data": {"enabled": True, "awaitingAction": False},
+                }
+            )
+            + "\n"
+        )
+    backend = PiBackend()
+    route = binding(cwd)
+    calls = 0
+    original = pi.read_plan_mode_snapshot
+
+    def tracked(path):
+        nonlocal calls
+        calls += 1
+        return original(path)
+
+    monkeypatch.setattr(pi, "read_plan_mode_snapshot", tracked)
+
+    assert backend.read_plan_mode(route).status == "active"
+    assert backend.read_plan_mode(route).status == "active"
+    assert calls == 1
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "custom",
+                    "customType": "plan-mode-state",
+                    "data": {"enabled": False, "awaitingAction": False},
+                }
+            )
+            + "\n"
+        )
+    assert backend.read_plan_mode(route) is None
+    assert calls == 2
+
+
+def test_pi_reads_plan_mode_state_from_current_jsonl_branch(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"type": "session", "version": 3, "id": "session-1", "cwd": str(cwd)},
+        {
+            "type": "custom",
+            "id": "plan-active",
+            "parentId": None,
+            "customType": "plan-mode-state",
+            "data": {"enabled": True, "awaitingAction": False},
+        },
+        {
+            "type": "custom",
+            "id": "abandoned-ready",
+            "parentId": "plan-active",
+            "customType": "plan-mode-state",
+            "data": {
+                "enabled": True,
+                "awaitingAction": True,
+                "latestPlan": "wrong branch",
+            },
+        },
+        {
+            "type": "message",
+            "id": "leaf",
+            "parentId": "plan-active",
+            "message": {"role": "assistant", "content": []},
+        },
+    ]
+    transcript.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    backend = PiBackend()
+
+    snapshot = backend.read_plan_mode(binding(cwd))
+
+    assert snapshot is not None
+    assert snapshot.status == "active"
+    assert snapshot.footer == "📝 plan active"
+    assert "规划中" in snapshot.widget
+
+
+def test_pi_plan_mode_states_cover_ready_saved_and_implementing(tmp_path, monkeypatch):
+    sessions_root = tmp_path / "sessions"
+    monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)
+    cwd = tmp_path / "repo"
+    transcript = sessions_root / encode_pi_cwd(cwd) / "session.jsonl"
+    write_session(transcript, cwd)
+    backend = PiBackend()
+    route = binding(cwd)
+
+    cases = [
+        (
+            {"enabled": True, "awaitingAction": True, "latestPlan": "## Ready"},
+            "ready",
+            "📝 plan ready",
+            "计划已就绪",
+        ),
+        (
+            {
+                "enabled": False,
+                "awaitingAction": False,
+                "savedPlan": {"plan": "## Saved", "source": "plan_mode_complete"},
+            },
+            "saved",
+            "📝 plan saved",
+            "计划已保存",
+        ),
+        (
+            {
+                "enabled": False,
+                "awaitingAction": False,
+                "activeImplementation": {
+                    "id": "plan-1",
+                    "plan": "## Implement",
+                    "source": "plan_mode_complete",
+                    "startedAt": 1,
+                    "retention": "keep",
+                },
+            },
+            "implementing",
+            "📝 plan implementing",
+            "实施计划生效中",
+        ),
+    ]
+    for index, (data, expected_status, expected_footer, widget_text) in enumerate(cases):
+        with transcript.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "custom",
+                        "id": f"plan-{index}",
+                        "customType": "plan-mode-state",
+                        "data": data,
+                    }
+                )
+                + "\n"
+            )
+        snapshot = backend.read_plan_mode(route)
+        assert snapshot is not None
+        assert snapshot.status == expected_status
+        assert snapshot.footer == expected_footer
+        assert widget_text in snapshot.widget
+
+
+def test_pi_status_footer_adds_persisted_plan_mode_when_screen_status_is_missing(
+    tmp_path, monkeypatch
+):
+    backend = PiBackend()
+    route = binding(tmp_path)
+    monkeypatch.setattr(
+        backend,
+        "read_plan_mode",
+        lambda _route: pi.PlanModeSnapshot(
+            status="ready",
+            footer="📝 plan ready",
+            widget="📝 计划已就绪",
+            plan="## Plan",
+        ),
+    )
+    status = PiBackend().parse_terminal_status(
+        "░▒▓ 🤖 gpt 5.6-sol\ue0b4 🪟 ctx 10.0%/360k\ue0b4\n📄 JSONL 3.5 MB"
+    )
+
+    enriched = backend.enrich_terminal_status(route, status)
+
+    assert enriched is not None
+    assert enriched.extension_statuses == ("📄 JSONL 3.5 MB", "📝 plan ready")
+    assert "📝 plan ready" in backend.format_status_footer(enriched)
+
+
+def test_pi_status_footer_does_not_duplicate_compact_plan_status(tmp_path, monkeypatch):
+    backend = PiBackend()
+    route = binding(tmp_path)
+    monkeypatch.setattr(
+        backend,
+        "read_plan_mode",
+        lambda _route: pi.PlanModeSnapshot(
+            status="ready",
+            footer="📝 plan ready",
+            widget="📝 计划已就绪",
+            plan="## Plan",
+        ),
+    )
+    status = PiBackend().parse_terminal_status(
+        "░▒▓ 🤖 gpt 5.6-sol\ue0b4 🪟 ctx 10.0%/360k\ue0b4\n"
+        "📄 JSONL 4.7 MB • 📝 plan ✓"
+    )
+
+    enriched = backend.enrich_terminal_status(route, status)
+
+    assert enriched is not None
+    assert enriched.extension_statuses == ("📄 JSONL 4.7 MB • 📝 plan ✓",)
+
+
+def test_pi_plan_mode_complete_and_proposed_plan_rows_emit_plan_updates():
+    backend = PiBackend()
+    tool_events = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "id": "plan-tool-result",
+                "message": {
+                    "role": "toolResult",
+                    "toolName": "plan_mode_complete",
+                    "content": [{"type": "text", "text": "**Proposed Plan**\n\n## Ship it"}],
+                    "details": {
+                        "version": 1,
+                        "source": "plan_mode_complete",
+                        "plan": "## Ship it",
+                    },
+                },
+            }
+        ),
+        "session-1",
+    )
+    message_events = backend.parse_event(
+        json.dumps(
+            {
+                "type": "custom_message",
+                "id": "plan-show",
+                "customType": "proposed-plan",
+                "content": "**Saved Plan**\n\n## Keep it",
+                "display": True,
+            }
+        ),
+        "session-1",
+    )
+
+    assert tool_events[0].kind == ProviderEventKind.PLAN_UPDATE
+    assert "Ship it" in tool_events[0].text
+    assert message_events[0].kind == ProviderEventKind.PLAN_UPDATE
+    assert "Saved Plan" in message_events[0].text
+
+
+def test_pi_plan_question_tool_call_renders_remote_choices():
+    events = PiBackend().parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "id": "question-call",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "name": "plan_mode_question",
+                            "arguments": {
+                                "questions": [
+                                    {
+                                        "id": "scope",
+                                        "header": "范围",
+                                        "question": "本轮按什么范围实施？",
+                                        "options": [
+                                            {"label": "全部", "description": "一次性全部处理"},
+                                            {"label": "最小", "description": "只处理阻断项"},
+                                        ],
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                    "stopReason": "toolUse",
+                },
+            }
+        ),
+        "session-1",
+    )
+
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.TOOL_PROGRESS
+    assert "本轮按什么范围实施" in events[0].text
+    assert "1. 全部" in events[0].text
+    assert "/up /down /enter" in events[0].text
+
+
 def test_pi_reads_dida_work_title_for_im_footer(tmp_path, monkeypatch):
     sessions_root = tmp_path / "sessions"
     monkeypatch.setattr(pi, "PI_SESSIONS_DIR", sessions_root)

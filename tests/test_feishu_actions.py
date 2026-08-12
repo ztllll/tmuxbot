@@ -146,6 +146,16 @@ def test_feishu_panel_updates_mention_policy_and_returns_refreshed_card(tmp_path
     assert scheduled == []
 
 
+def test_feishu_panel_plan_action_schedules_native_plan_command(tmp_path):
+    b = binding(tmp_path)
+    instance, scheduled = frontend(b)
+
+    response = instance._on_card_action(event(b, "cmd_plan"))
+
+    assert response.toast.type == "success"
+    assert scheduled == [(b, "oc_alpha", "cmd_plan")]
+
+
 def test_feishu_panel_model_action_schedules_native_model_command(tmp_path):
     b = binding(tmp_path)
     instance, scheduled = frontend(b)

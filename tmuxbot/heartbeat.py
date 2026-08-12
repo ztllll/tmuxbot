@@ -100,7 +100,7 @@ async def _sync_pi_compaction_status(state, frontend, b, backend, pane: str, now
                 "⚠️ <b>Pi 自动压缩状态已结束，但未观察到压缩完成记录</b>\n"
                 "· 任务可能没有自动续跑；请发送 <code>继续</code> 或用 <code>/screen</code> 检查 TUI"
             )
-            footer = render_task_footer(backend.read_tasks(b), style="pi")
+            footer = _pi_footer(b, backend)
             if footer:
                 body += f"\n\n{footer}"
             if current.get("msg_id") is not None:
@@ -141,10 +141,17 @@ def _compaction_body(b, backend, *, elapsed: int, estimate: int) -> str:
         timing = f"已进行 <code>{elapsed}s</code> · 预计剩余约 <code>{remaining}s</code>"
     else:
         timing = f"已进行 <code>{elapsed}s</code> · 已超过历史估算，仍在等待 provider"
-    footer = render_task_footer(backend.read_tasks(b), style="pi")
+    footer = _pi_footer(b, backend)
     body = (
         "🗜 <b>Pi 正在自动压缩上下文</b>\n"
         f"· {timing}\n"
         "· 新消息仍可发送，会排队到压缩结束后处理"
     )
     return f"{body}\n\n{footer}" if footer else body
+
+
+def _pi_footer(b, backend) -> str:
+    render_extension = getattr(backend, "render_extension_footer", None)
+    extension_footer = render_extension(b) if callable(render_extension) else ""
+    task_footer = render_task_footer(backend.read_tasks(b), style="pi")
+    return "\n\n".join(part for part in (extension_footer, task_footer) if part)

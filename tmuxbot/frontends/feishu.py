@@ -1274,6 +1274,7 @@ class FeishuFrontend(Frontend):
             build_feishu_control_panel(
                 html_to_feishu_markdown(text),
                 binding_token(b.name),
+                include_plan=b.backend == "pi",
             )
         )
         message_id = await asyncio.to_thread(
@@ -1332,6 +1333,7 @@ class FeishuFrontend(Frontend):
             "cmd_compact",
             "cmd_resume",
             "cmd_model",
+            "cmd_plan",
             "cmd_esc",
             "cmd_cc",
             "cmd_restart",
@@ -1363,6 +1365,7 @@ class FeishuFrontend(Frontend):
                     )
                 ),
                 token,
+                include_plan=b.backend == "pi",
             )
             return _card_action_response("success", "@ 策略已更新", card=card)
         if action == "refresh_panel":
@@ -1375,6 +1378,7 @@ class FeishuFrontend(Frontend):
                     )
                 ),
                 token,
+                include_plan=b.backend == "pi",
             )
             return _card_action_response("success", "面板已刷新", card=card)
         if action == "close_panel":

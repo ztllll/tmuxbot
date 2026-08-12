@@ -126,7 +126,7 @@ async def dispatch_incoming_text(
     if parsed:
         raw_text = parsed.injected_text
         cmd_for_feedback = parsed.command
-        spec = classify_command(backend, parsed.command)
+        spec = classify_command(backend, parsed.command, parsed.args)
 
         action = action_from_command(parsed.command, parsed.args)
         if action:

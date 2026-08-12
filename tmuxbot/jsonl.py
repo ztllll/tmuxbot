@@ -401,10 +401,13 @@ async def _handle_provider_lifecycle(frontend, b, state, backend, body: str) -> 
 
 
 def _task_footer(b: "Binding", backend: "Backend") -> str:
-    return render_task_footer(
+    task_footer = render_task_footer(
         backend.read_tasks(b),
         style="pi" if backend.name == "pi" else "summary",
     )
+    render_extension = getattr(backend, "render_extension_footer", None)
+    extension_footer = render_extension(b) if callable(render_extension) else ""
+    return "\n\n".join(part for part in (extension_footer, task_footer) if part)
 
 
 def _append_footer(body: str, footer: str) -> str:
@@ -451,6 +454,9 @@ async def _capture_terminal_status(
     try:
         pane = await asyncio.to_thread(tmux_capture, b.tmux_target, 30)
         status = backend.parse_terminal_status(pane)
+        status_enricher = getattr(backend, "enrich_terminal_status", None)
+        if callable(status_enricher):
+            status = status_enricher(b, status)
         metadata_getter = getattr(backend, "current_runtime_metadata", None)
         metadata = (
             metadata_getter(b)

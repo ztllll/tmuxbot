@@ -48,9 +48,22 @@ def test_telegram_panel_markup_is_chinese_and_contains_common_commands(tmp_path)
         "关闭",
     ]
     assert any(value.endswith(":cmd_model") for value in callbacks)
+    assert not any(value.endswith(":cmd_plan") for value in callbacks)
     assert any(value.endswith(":confirm_new") for value in callbacks)
     assert any(value.endswith(":confirm_restart") for value in callbacks)
     assert any(value.endswith(":confirm_stop") for value in callbacks)
+
+
+def test_telegram_pi_panel_includes_plan_mode_action(tmp_path):
+    route = binding(tmp_path)
+    route.backend = "pi"
+
+    markup = build_telegram_panel_markup(route)
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+    callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
+
+    assert "计划模式" in labels
+    assert any(value.endswith(":cmd_plan") for value in callbacks)
 
 
 def test_telegram_panel_new_session_uses_confirmation_keyboard(tmp_path):

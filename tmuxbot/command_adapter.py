@@ -124,6 +124,7 @@ _PI_INTERACTIVE = {
     "/trust": "保存当前项目的信任决定。",
     "/fork": "从历史 user message 创建新会话。",
     "/import": "导入 JSONL 并切换当前 provider session。",
+    "/plan": "打开 pi-plan-mode 原生菜单；可用方向键与确认键操作。",
 }
 
 _CODEX_INTERACTIVE = {
@@ -252,7 +253,7 @@ def parse_slash_text(
     return ParsedSlash(command=command, raw_command=raw_cmd, injected_text=injected, args=args)
 
 
-def classify_command(backend: "Backend", command: str) -> CommandSpec:
+def classify_command(backend: "Backend", command: str, args: str = "") -> CommandSpec:
     if command in _BLOCKED_COMMANDS:
         return CommandSpec(command, CommandKind.BLOCKED, notice=_BLOCKED_COMMANDS[command])
     if (
@@ -268,6 +269,12 @@ def classify_command(backend: "Backend", command: str) -> CommandSpec:
     if backend.name == "codex":
         interactive = _CODEX_INTERACTIVE
     elif backend.name == "pi":
+        if command == "/plan" and args.strip().lower() not in {"", "tools"}:
+            return CommandSpec(
+                command,
+                CommandKind.PASSTHROUGH,
+                description="执行 pi-plan-mode 直接命令并读取 TUI 回执。",
+            )
         interactive = _PI_INTERACTIVE
     else:
         interactive = _CLAUDE_INTERACTIVE

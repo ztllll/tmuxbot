@@ -52,6 +52,29 @@ def test_classify_known_capture_interactive_blocked_and_unknown():
     assert classify_command(backend, "/whatever").kind == CommandKind.PASSTHROUGH
 
 
+def test_pi_plan_mode_command_routes_menu_and_direct_subcommands_correctly():
+    backend = FakeBackend()
+    backend.name = "pi"
+
+    menu = classify_command(backend, "/plan", "")
+    tools = classify_command(backend, "/plan", "tools")
+    assert menu.kind == CommandKind.INTERACTIVE
+    assert tools.kind == CommandKind.INTERACTIVE
+    assert "pi-plan-mode" in menu.description
+    for args in (
+        "start",
+        "show",
+        "finalize",
+        "implement",
+        "save",
+        "export PLAN.md",
+        "exit",
+        "off",
+        "设计认证模块重构方案",
+    ):
+        assert classify_command(backend, "/plan", args).kind == CommandKind.PASSTHROUGH
+
+
 def test_pi_builtin_command_matrix_uses_pi_specific_interactions():
     backend = FakeBackend()
     backend.name = "pi"

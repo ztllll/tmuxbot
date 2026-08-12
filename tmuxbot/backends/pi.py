@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shlex
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,13 @@ from tmuxbot.core.events import (
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.runtime.pi_errors import is_user_abort_error
 from tmuxbot.runtime.pi_handoff import read_handoff
+from tmuxbot.runtime.pi_plan_mode import (
+    PLAN_MODE_COMPLETE_TOOL,
+    PROPOSED_PLAN_MESSAGE_TYPE,
+    PlanModeSnapshot,
+    current_jsonl_branch,
+    read_plan_mode_snapshot,
+)
 from tmuxbot.runtime.pi_session_health import read_session_health
 from tmuxbot.runtime.route_health import provider_session_file, provider_tree_is_safe
 from tmuxbot.tmux import (
@@ -236,6 +244,34 @@ def _session_header(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _format_plan_mode_question(arguments: Any) -> str:
+    if not isinstance(arguments, dict) or not isinstance(arguments.get("questions"), list):
+        return "❓ <b>Plan Mode 等待选择</b>\n· 使用 <code>/screen</code> 查看问题。"
+    parts = ["❓ <b>Plan Mode 等待选择</b>"]
+    for question in arguments["questions"][:3]:
+        if not isinstance(question, dict):
+            continue
+        prompt = str(question.get("question") or question.get("header") or "请选择").strip()
+        if prompt:
+            parts.append(f"· {html.escape(prompt)}")
+        options = question.get("options")
+        if isinstance(options, list):
+            for index, option in enumerate(options[:4], start=1):
+                if not isinstance(option, dict):
+                    continue
+                label = str(option.get("label") or "").strip()
+                description = str(option.get("description") or "").strip()
+                text = f"{index}. {label}" if label else str(index)
+                if description:
+                    text += f" — {description}"
+                parts.append(html.escape(text))
+    parts.append(
+        "· 使用 <code>/up /down /enter</code> 在原生 TUI 选择；"
+        "自由输入请先用 <code>/screen</code> 查看提示。"
+    )
+    return "\n".join(parts)
+
+
 def _format_tool(name: str, arguments: Any) -> str:
     labels = {
         "read": "📖 读取",
@@ -264,6 +300,9 @@ class PiBackend(Backend):
         self._runtime_metadata_cache: dict[
             Path, tuple[int, int, ProviderRuntimeMetadata]
         ] = {}
+        self._plan_mode_cache: dict[
+            Path, tuple[int, int, PlanModeSnapshot | None]
+        ] = {}
 
     @property
     def start_cmd(self) -> str:
@@ -289,6 +328,7 @@ class PiBackend(Backend):
         ("whoami", "👤 我的 user_id / chat_id"),
         ("new", "🆕 开新会话"),
         ("resume", "🔄 恢复历史会话"),
+        ("plan", "📝 计划模式"),
         ("esc", "⎋ 中断当前生成"),
         ("cc", "⌃C 取消/清空输入"),
         ("eof", "⌃D 退出 Pi"),
@@ -558,7 +598,25 @@ class PiBackend(Backend):
             row = json.loads(line)
         except json.JSONDecodeError:
             return []
+        return self._parse_row(row, provider_session_id)
+
+    def _parse_row(
+        self, row: dict[str, Any], provider_session_id: str | None = None
+    ) -> list[ProviderEvent]:
         row_type = row.get("type")
+        if row_type == "custom_message" and row.get("customType") == PROPOSED_PLAN_MESSAGE_TYPE:
+            content = str(row.get("content") or "").strip()
+            if not content or row.get("display") is False:
+                return []
+            return [
+                self.provider_event(
+                    row,
+                    ProviderEventKind.PLAN_UPDATE,
+                    html.escape(content),
+                    provider_session_id=provider_session_id,
+                    native_id=str(row.get("id") or "plan-show"),
+                )
+            ]
         if row_type == "compaction":
             tokens_before = int(row.get("tokensBefore", 0) or 0)
             usage = row.get("usage") or {}
@@ -581,6 +639,28 @@ class PiBackend(Backend):
         if row_type != "message":
             return []
         message = row.get("message") or {}
+        if (
+            message.get("role") == "toolResult"
+            and message.get("toolName") == PLAN_MODE_COMPLETE_TOOL
+        ):
+            details = message.get("details") or {}
+            plan = details.get("plan") if isinstance(details, dict) else None
+            valid_details = (
+                isinstance(details, dict)
+                and details.get("version") == 1
+                and details.get("source") == PLAN_MODE_COMPLETE_TOOL
+            )
+            if not valid_details or not isinstance(plan, str) or not plan.strip():
+                return []
+            return [
+                self.provider_event(
+                    row,
+                    ProviderEventKind.PLAN_UPDATE,
+                    f"<b>Proposed Plan</b>\n\n{html.escape(plan.strip())}",
+                    provider_session_id=provider_session_id,
+                    native_id=str(row.get("id") or "plan-complete"),
+                )
+            ]
         if message.get("role") != "assistant":
             return []
         tools: list[str] = []
@@ -601,12 +681,12 @@ class PiBackend(Backend):
                         f"{'…' if len(thinking) > 300 else ''}</i>"
                     )
             elif kind == "toolCall":
-                tools.append(
-                    _format_tool(
-                        str(block.get("name") or "?"),
-                        block.get("arguments") or {},
-                    )
-                )
+                name = str(block.get("name") or "?")
+                arguments = block.get("arguments") or {}
+                if name == "plan_mode_question":
+                    tools.append(_format_plan_mode_question(arguments))
+                else:
+                    tools.append(_format_tool(name, arguments))
         native_id = row.get("id") or message.get("responseId")
         events: list[ProviderEvent] = []
         if message.get("stopReason") == "error":
@@ -658,6 +738,60 @@ class PiBackend(Backend):
             and b.transcript_path is not None
             and health.transcript_path == Path(b.transcript_path)
         )
+
+    def read_plan_mode(self, b: "Binding") -> PlanModeSnapshot | None:
+        transcript = self.find_active_jsonl(b)
+        if transcript is None:
+            return None
+        try:
+            stat = transcript.stat()
+        except OSError:
+            return None
+        cached = self._plan_mode_cache.get(transcript)
+        if cached is not None and cached[:2] == (stat.st_size, stat.st_mtime_ns):
+            return cached[2]
+        snapshot = read_plan_mode_snapshot(transcript)
+        self._plan_mode_cache[transcript] = (stat.st_size, stat.st_mtime_ns, snapshot)
+        return snapshot
+
+    def enrich_terminal_status(
+        self, b: "Binding", status: TerminalStatus | None
+    ) -> TerminalStatus | None:
+        snapshot = self.read_plan_mode(b)
+        if snapshot is None:
+            return status
+        if status is None:
+            metadata = self.current_runtime_metadata(b)
+            return TerminalStatus(
+                state=TerminalState.IDLE,
+                provider=metadata.provider,
+                model=metadata.model,
+                effort=metadata.effort,
+                session_name=metadata.session_name,
+                input_tokens=metadata.input_tokens,
+                output_tokens=metadata.output_tokens,
+                cache_read_tokens=metadata.cache_read_tokens,
+                cache_write_tokens=metadata.cache_write_tokens,
+                cache_hit_rate=metadata.cache_hit_rate,
+                cost_usd=metadata.cost_usd,
+                extension_statuses=(snapshot.footer,),
+            )
+        existing = tuple(status.extension_statuses)
+        has_plan_status = any(
+            re.search(
+                r"(?:^|\s)(?:📝\s*)?plan(?:\s+(?:active|ready|saved|implementing|✓))?(?:\s|$|•)",
+                item,
+                re.I,
+            )
+            for item in existing
+        )
+        if has_plan_status:
+            return status
+        return replace(status, extension_statuses=(*existing, snapshot.footer))
+
+    def render_extension_footer(self, b: "Binding") -> str:
+        snapshot = self.read_plan_mode(b)
+        return snapshot.widget if snapshot is not None else ""
 
     def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
         transcript = self.find_active_jsonl(b)
@@ -991,38 +1125,7 @@ class PiBackend(Backend):
         latest: list[dict[str, Any]] | None = None
         selected_work_id: str | None = None
         work_titles: dict[str, str] = {}
-        try:
-            raw_rows = transcript.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        except OSError:
-            return []
-        entries: list[dict[str, Any]] = []
-        for line in raw_rows:
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict) and row.get("type") != "session":
-                entries.append(row)
-        by_id = {
-            str(row["id"]): row
-            for row in entries
-            if isinstance(row.get("id"), str) and row.get("id")
-        }
-        branch: list[dict[str, Any]] = []
-        current = entries[-1] if entries else None
-        seen: set[str] = set()
-        while current is not None:
-            branch.append(current)
-            current_id = current.get("id")
-            if isinstance(current_id, str):
-                if current_id in seen:
-                    break
-                seen.add(current_id)
-            parent_id = current.get("parentId")
-            current = by_id.get(parent_id) if isinstance(parent_id, str) else None
-        branch.reverse()
+        branch = current_jsonl_branch(transcript)
         for row in branch:
             if row.get("type") != "message":
                 continue

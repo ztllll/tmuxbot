@@ -147,6 +147,33 @@ def test_pi_compaction_end_edits_the_existing_status_message(tmp_path):
     asyncio.run(run())
 
 
+def test_pi_plan_widget_is_appended_above_todos_in_final_assistant_message(tmp_path):
+    async def run():
+        class PlanBackend(PiTodoBackend):
+            def render_extension_footer(self, _binding):
+                return "📝 <b>计划已就绪</b>\n· 使用 <code>/plan</code> 选择下一步。"
+
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = PlanBackend([{"id": 1, "subject": "Review", "status": "pending"}])
+
+        await on_tmux_event(b, "assistant_text", "计划如下", frontend, state, backend)
+
+        assert frontend.sent == [
+            (
+                "html",
+                123,
+                None,
+                "计划如下\n\n"
+                "📝 <b>计划已就绪</b>\n· 使用 <code>/plan</code> 选择下一步。\n\n"
+                "● <b>Todos (0/1)</b>\n└─ ○ Review",
+            )
+        ]
+
+    asyncio.run(run())
+
+
 def test_pi_todo_snapshot_is_appended_to_every_final_assistant_message(tmp_path):
     async def run():
         tasks = [

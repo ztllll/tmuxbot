@@ -288,7 +288,9 @@ def _reply_blocks_text(blocks: list[ReplyBlock]) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]:
+def build_feishu_control_panel(
+    markdown_text: str, token: str, *, include_plan: bool = False
+) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
@@ -316,7 +318,11 @@ def build_feishu_control_panel(markdown_text: str, token: str) -> dict[str, Any]
         _section_label("模型与运行控制"),
         _button_row(
             "panel_model",
-            (("切换模型", "cmd_model", "primary"),),
+            (
+                (("切换模型", "cmd_model", "primary"), ("计划模式", "cmd_plan", "default"))
+                if include_plan
+                else (("切换模型", "cmd_model", "primary"),)
+            ),
             token,
         ),
         _button_row(

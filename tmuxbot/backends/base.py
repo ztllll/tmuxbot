@@ -116,6 +116,16 @@ class Backend(ABC):
             permission_mode=self.current_permission_mode(b),
         )
 
+    def enrich_terminal_status(
+        self, b: "Binding", status: TerminalStatus | None
+    ) -> TerminalStatus | None:
+        """Add provider-authoritative extension state omitted from the captured screen."""
+        return status
+
+    def render_extension_footer(self, b: "Binding") -> str:
+        """Render provider extension state below assistant content, if any."""
+        return ""
+
     def format_status_footer(self, status: TerminalStatus | None) -> str | None:
         if status is None:
             return None

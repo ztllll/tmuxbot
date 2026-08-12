@@ -170,7 +170,7 @@ journalctl --user -u tmuxbot -f
 - **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时读取 `~/.codex/config.toml` 的 `model`；可在当前会话中用原生 `/model` 临时切换，下一次 bot 重启则应用最新配置。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**:`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
 - **按 route 选择 adapter**:同一 Telegram Bot/飞书 App credential 可按精确 topic/thread route 混合承载 Claude Code、Codex 和 Pi；不同 credential 仍可并行部署
-- **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`
+- **核心命令**:`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`；Pi 安装 `@narumitw/pi-plan-mode` 后支持 `/plan` 菜单及 `start/show/finalize/implement/save/export/exit` 子命令穿透
 - **TUI 透传**:`/context` `/cost` `/usage` `/compact` `/clear` 等,抓屏结构化反馈
 - **工具调用聚合**:一个 turn 内的 tool_use 流式刷同一条 IM 消息,真说话单独 push 触发通知
 - **Codex 计划跟随**:`update_plan` 会维护一条可编辑的“当前计划”消息,TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态
@@ -180,7 +180,7 @@ journalctl --user -u tmuxbot -f
 - **Telegram 状态标识**:Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
 - **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
-- **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏
+- **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏；`pi-plan-mode` 的 active/ready/saved/implementing 状态与中文 widget 同步到 IM 页面底部，完整计划使用可编辑计划卡回推
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
 - **订阅配额**:`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时(走 OAuth API)
