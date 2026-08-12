@@ -79,14 +79,27 @@ async def detect_idle_picker(b: "Binding", state: "State", frontend: "Frontend")
     state.picker_notified[b.name] = h
 
     body = block[:3000]
-    text = (
-        "⚠️ <b>TUI 有 picker 待响应</b>\n"
-        "(claude jsonl 事务式 flush 中,完整卡片要等)\n\n"
-        f"<pre>{html.escape(body)}</pre>\n"
-        "<i>下方 1-9 按钮 = 模拟 ↓×N + Enter</i>"
-    )
+    numbered = getattr(frontend, "send_picker_card", None)
+    if callable(numbered):
+        text = (
+            "⚠️ <b>TUI 有 picker 待响应</b>\n\n"
+            f"<pre>{html.escape(body)}</pre>\n"
+            "<i>下方 1-9 按钮 = 模拟 ↓×N + Enter</i>"
+        )
+        sender = lambda: numbered(
+            b.chat_id, b.thread_id, text, b.name, num_options=9
+        )
+    else:
+        text = (
+            "⚠️ <b>TUI 有 picker 待响应</b>\n\n"
+            f"<pre>{html.escape(body)}</pre>\n"
+            "<i>使用下方方向键移动高亮项，确认提交，取消关闭。</i>"
+        )
+        sender = lambda: frontend.send_interaction_card(
+            b.chat_id, b.thread_id, text, b.name
+        )
     log.info(f"[{b.name}] picker push ({len(block)} chars), hash={h[:8]}")
     try:
-        await frontend.send_picker_card(b.chat_id, b.thread_id, text, b.name, num_options=9)  # type: ignore[attr-defined]
+        await sender()
     except Exception:
         log.exception("picker push err")

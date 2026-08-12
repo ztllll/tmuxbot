@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from tmuxbot.picker import extract_picker_block
+from tmuxbot.picker import detect_idle_picker, extract_picker_block
 from tmuxbot.command_adapter import (
     CommandKind,
     action_from_command,
@@ -139,6 +139,51 @@ def test_binding_token_round_trip():
 
     assert binding_by_token(bindings, token).name == "beta"
     assert binding_by_token(bindings, "missing") is None
+
+
+def test_picker_detector_uses_numbered_telegram_card_and_feishu_interaction_card(
+    monkeypatch
+):
+    raw = (
+        "Plan mode\n"
+        "→ Start Plan mode\n"
+        "  Choose tools, then start…\n"
+        "↑/↓ navigate • enter select • esc close\n"
+    )
+    monkeypatch.setattr("tmuxbot.picker.tmux_capture", lambda *_args: raw)
+    binding = SimpleNamespace(
+        name="pi-route", chat_id="oc_alpha", thread_id="omt_plan", tmux_target="pi:0.0"
+    )
+
+    class State:
+        picker_notified = {}
+
+    telegram_calls = []
+
+    class TelegramFrontend:
+        name = "telegram"
+
+        async def send_picker_card(self, *args, **kwargs):
+            telegram_calls.append((args, kwargs))
+
+    asyncio.run(detect_idle_picker(binding, State(), TelegramFrontend()))
+    assert len(telegram_calls) == 1
+    assert "下方 1-9 按钮" in telegram_calls[0][0][2]
+
+    State.picker_notified = {}
+    feishu_calls = []
+
+    class FeishuFrontend:
+        name = "feishu"
+
+        async def send_interaction_card(self, *args, **kwargs):
+            feishu_calls.append((args, kwargs))
+
+    asyncio.run(detect_idle_picker(binding, State(), FeishuFrontend()))
+    assert len(feishu_calls) == 1
+    assert feishu_calls[0][0][0:2] == ("oc_alpha", "omt_plan")
+    assert "使用下方方向键" in feishu_calls[0][0][2]
+    assert feishu_calls[0][0][3] == "pi-route"
 
 
 def test_pi_plan_mode_picker_footer_is_detected_for_remote_control():
