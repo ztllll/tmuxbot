@@ -27,6 +27,7 @@ from tmuxbot.core.events import (
     TerminalStatus,
 )
 from tmuxbot.core.sessions import SessionIdentity
+from tmuxbot.runtime.pi_errors import is_user_abort_error
 from tmuxbot.runtime.pi_handoff import read_handoff
 from tmuxbot.runtime.pi_session_health import read_session_health
 from tmuxbot.runtime.route_health import provider_session_file, provider_tree_is_safe
@@ -610,6 +611,8 @@ class PiBackend(Backend):
         events: list[ProviderEvent] = []
         if message.get("stopReason") == "error":
             error_message = str(message.get("errorMessage") or "Pi provider request failed")
+            if is_user_abort_error(error_message):
+                return events
             events.append(
                 self.provider_event(
                     row,

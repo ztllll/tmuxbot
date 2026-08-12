@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -171,6 +172,46 @@ def test_terminal_error_sidecar_notifies_once_without_waiting_for_stall_samples(
     assert frontend.sent[0][:2] == (123, 456)
     assert "停止自动恢复" in frontend.sent[0][2]
     assert "503 unavailable" in frontend.sent[0][2]
+
+
+def test_aborted_terminal_error_sidecar_is_silent(tmp_path, monkeypatch):
+    route = binding(tmp_path)
+    message = "This operation was aborted"
+    route.transcript_path.write_text(
+        route.transcript_path.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "stopReason": "error",
+                    "errorMessage": message,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    backend = PiBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
+    frontend = Frontend(route, backend)
+    state = SimpleNamespace(compaction_status={}, ensure_locks={})
+    health = SimpleNamespace(
+        state="terminal_error",
+        session_id="session-1",
+        transcript_path=route.transcript_path,
+        response_id="response-aborted",
+        error_message=message,
+    )
+    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(pi_terminal_health, "read_session_health", lambda _target, _cwd: health)
+    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "idle")
+    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda *_args: False)
+
+    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, {}))
+
+    assert frontend.sent == []
 
 
 def test_stale_terminal_error_is_silent_after_later_user_message(tmp_path, monkeypatch):

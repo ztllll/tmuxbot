@@ -9,6 +9,16 @@ function recordName(target: string): string {
   return `${safe}-${digest}.json`;
 }
 
+function isUserAbortError(message: unknown): boolean {
+  const normalized = String(message || "").trim().toLowerCase().replace(/[.!]+$/, "");
+  return new Set([
+    "operation aborted",
+    "request was aborted",
+    "the operation was aborted",
+    "this operation was aborted",
+  ]).has(normalized);
+}
+
 function stateDir(): string {
   return process.env.TMUXBOT_STATE_DIR || join(process.env.HOME || "", ".local", "state", "tmuxbot");
 }
@@ -80,8 +90,13 @@ export default function tmuxbotSessionHandoff(pi: ExtensionAPI): void {
   pi.on("message_end", async (event) => {
     if (event.message.role !== "assistant") return;
     if (event.message.stopReason === "error") {
+      const message = String(event.message.errorMessage || "Pi provider request failed").slice(0, 500);
+      if (isUserAbortError(message)) {
+        candidateError = undefined;
+        return;
+      }
       candidateError = {
-        message: String(event.message.errorMessage || "Pi provider request failed").slice(0, 500),
+        message,
         ...(event.message.responseId ? { responseId: event.message.responseId } : {}),
       };
       await writeHealth("recovering");

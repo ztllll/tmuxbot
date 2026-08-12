@@ -220,6 +220,26 @@ def test_pi_estimates_compaction_eta_from_recent_session_history(tmp_path, monke
     assert PiBackend().estimated_compaction_seconds(binding(cwd)) == 180
 
 
+def test_pi_parser_silences_user_aborted_provider_error():
+    events = PiBackend().parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "id": "aborted-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [],
+                    "stopReason": "error",
+                    "errorMessage": "This operation was aborted",
+                },
+            }
+        ),
+        "session-1",
+    )
+
+    assert events == []
+
+
 def test_pi_parser_emits_provider_error_for_legacy_fallback_and_compaction():
     backend = PiBackend()
     error_events = backend.parse_event(

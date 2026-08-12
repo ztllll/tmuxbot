@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tmuxbot.core.events import TerminalState
+from tmuxbot.runtime.pi_errors import is_user_abort_error
 from tmuxbot.runtime.pi_session_health import read_session_health
 from tmuxbot.runtime.route_health import provider_tree_is_safe
 from tmuxbot.tmux import tmux_capture, tmux_has_session
@@ -226,6 +227,7 @@ async def audit_pi_terminals_once(
             if (
                 session_health is not None
                 and session_health.state == "terminal_error"
+                and not is_user_abort_error(session_health.error_message)
                 and session_health.session_id == binding.provider_session_id
                 and Path(binding.transcript_path or "") == session_health.transcript_path
                 and provider_tree_is_safe(binding.tmux_target, "pi")
