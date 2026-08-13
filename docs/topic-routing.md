@@ -68,7 +68,7 @@ Direct file editing is allowed. `tmuxbot route validate` is available now; `tmux
 
 ## Admin DM
 
-The admin route is enabled explicitly. Its default target directory is `Path.home()`, overridden by `TMUXBOT_ADMIN_CWD`. Its CLI is configured by `TMUXBOT_ADMIN_CLI` and may be `pi`, `claude_code`, or `codex`. A persisted `admin: true` YAML record stores session identity only; without `TMUXBOT_ADMIN_ENABLED=1` it is ignored and cannot grant Admin capability.
+The admin route is enabled explicitly. Its default target directory is the dedicated XDG workspace `$XDG_DATA_HOME/tmuxbot/admin` (normally `~/.local/share/tmuxbot/admin`), overridden by `TMUXBOT_ADMIN_CWD`. tmuxbot creates it with mode `0700`. Its CLI is configured by `TMUXBOT_ADMIN_CLI` and may be `pi`, `claude_code`, or `codex`. A persisted `admin: true` YAML record stores session identity only; without `TMUXBOT_ADMIN_ENABLED=1` it is ignored and cannot grant Admin capability.
 
 Suggested environment:
 
@@ -76,7 +76,7 @@ Suggested environment:
 TMUXBOT_ADMIN_ENABLED=1
 TMUXBOT_ADMIN_TMUX=tmuxbot-admin
 TMUXBOT_ADMIN_CLI=pi
-# TMUXBOT_ADMIN_CWD=/srv/projects
+# TMUXBOT_ADMIN_CWD=/srv/tmuxbot-admin
 ```
 
 Admin capability is protected by both identity and endpoint shape:
@@ -86,15 +86,16 @@ Admin capability is protected by both identity and endpoint shape:
 
 A group mention can never acquire admin capability. Once authenticated, the management TUI has the full permissions of the Unix account running tmuxbot; it may edit YAML, code, tmux, systemd user services, and other user-owned files.
 
-The operator-facing natural-language workflow, prompt templates, deterministic execution order, and acceptance checklist are documented in [`admin-dm-operations.md`](admin-dm-operations.md). The recommended layout uses a root-directory Admin Pi for management and separate project panes for group topics.
+The operator-facing natural-language workflow, prompt templates, deterministic execution order, and acceptance checklist are documented in [`admin-dm-operations.md`](admin-dm-operations.md). The recommended layout uses a dedicated Admin workspace outside both the home-directory root and project trees, plus separate project panes for group topics.
 
-Every Admin LLM receives the same **Admin Operations Contract** through a managed block installed into the Admin cwd's `AGENTS.md` and `CLAUDE.md`. The contract deliberately stays short: discover exact endpoints and panes, produce a plan, apply through a deterministic transaction, then verify. Provider-specific prompt skill is optional; correctness belongs to `tmuxbot admin`, not to the model's memory.
+Every Admin LLM receives the same **Admin Operations Contract** through a managed block installed into the Admin cwd's `AGENTS.md` and `CLAUDE.md`. `install-contract` also writes `ADMIN-RUNBOOK.md` with deployment-specific runtime knowledge and `tmuxbot-admin-context.json` with schema version and content hashes. `verify-context` detects missing, modified, or stale context. The contract stays short and mandatory; the runbook supplies progressive detail. Provider-specific system prompts or skills are optional hardening, while correctness belongs to `tmuxbot admin`, not to model memory.
 
 The transaction interface is:
 
 ```text
 tmuxbot admin contract
-tmuxbot admin install-contract --cwd PATH
+tmuxbot admin install-contract [--cwd PATH]
+tmuxbot admin verify-context [--cwd PATH] [--json]
 tmuxbot admin provision-project --name ROUTE --channel telegram|feishu ... [--apply]
 # Lower-level recovery/diagnostics:
 tmuxbot admin inventory [--json]

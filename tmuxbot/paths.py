@@ -12,6 +12,15 @@ def _path(environ: Mapping[str, str], name: str) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
+def default_admin_cwd(
+    environ: Mapping[str, str], *, home: Path | None = None
+) -> Path:
+    """Return the dedicated Admin DM workspace without creating it."""
+    resolved_home = (home if home is not None else Path.home()).expanduser()
+    data_base = _path(environ, "XDG_DATA_HOME") or resolved_home / ".local/share"
+    return (data_base / "tmuxbot/admin").resolve()
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimePaths:
     config_dir: Path

@@ -3,7 +3,16 @@ from pathlib import Path
 
 import pytest
 
-from tmuxbot.paths import RuntimePaths
+from tmuxbot.paths import RuntimePaths, default_admin_cwd
+
+
+def test_default_admin_cwd_follows_xdg_data_home(tmp_path: Path):
+    assert default_admin_cwd({}, home=tmp_path / "home") == (
+        tmp_path / "home/.local/share/tmuxbot/admin"
+    ).resolve()
+    assert default_admin_cwd(
+        {"XDG_DATA_HOME": str(tmp_path / "share")}, home=tmp_path / "home"
+    ) == (tmp_path / "share/tmuxbot/admin").resolve()
 
 
 def test_paths_default_to_xdg_under_empty_home(tmp_path: Path):

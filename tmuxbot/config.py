@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
+from tmuxbot.paths import default_admin_cwd
 from tmuxbot.state import Binding, S
 from tmuxbot.utils import load_offsets
 from tmuxbot.validation import ConfigValidationError, validate_bindings
@@ -19,7 +20,7 @@ _BINDINGS_WRITE_LOCK = threading.Lock()
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
-def _admin_binding(boss_user_id: int) -> Binding | None:
+def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
     if os.getenv("TMUXBOT_ADMIN_ENABLED", "").strip().lower() not in _TRUE_VALUES:
         return None
     channel = os.getenv("TMUXBOT_ADMIN_CHANNEL", "telegram").strip().lower()
@@ -54,11 +55,29 @@ def _admin_binding(boss_user_id: int) -> Binding | None:
     tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin").strip()
     if not tmux_session:
         raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
-    cwd = Path(os.getenv("TMUXBOT_ADMIN_CWD") or Path.home()).expanduser().resolve()
-    if not cwd.is_dir():
-        raise ConfigValidationError(
-            [f"TMUXBOT_ADMIN_CWD must be an existing directory: {cwd}"]
+    configured_cwd = os.getenv("TMUXBOT_ADMIN_CWD", "").strip()
+    cwd = (
+        Path(configured_cwd).expanduser().resolve()
+        if configured_cwd
+        else default_admin_cwd(os.environ)
+    )
+    try:
+        cwd.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if cwd.is_symlink() or not cwd.is_dir():
+            raise OSError("path is not a real directory")
+        os.chmod(cwd, 0o700)
+        from tmuxbot.admin_cli import install_admin_context
+
+        install_admin_context(
+            cwd=cwd,
+            bindings_file=bindings_file,
+            service=os.getenv("TMUXBOT_SERVICE", "tmuxbot.service").strip()
+            or "tmuxbot.service",
         )
+    except (OSError, RuntimeError) as exc:
+        raise ConfigValidationError(
+            [f"TMUXBOT_ADMIN_CWD must be a prepared private directory: {cwd}: {exc}"]
+        ) from exc
     return Binding(
         name="tmuxbot-admin",
         chat_id=chat_id,
@@ -111,6 +130,22 @@ def save_binding_identity(bindings_file: Path | None, binding: Binding) -> None:
                     bindings_file,
                 )
                 return
+            if binding.admin:
+                entry.update(
+                    {
+                        "channel": binding.channel,
+                        "bot_token_env": binding.bot_token_env,
+                        "chat_id": binding.chat_id,
+                        "thread_id": binding.thread_id,
+                        "tmux_session": binding.tmux_session,
+                        "tmux_window": binding.tmux_window,
+                        "tmux_pane": binding.tmux_pane,
+                        "cwd": str(binding.cwd),
+                        "backend": binding.backend,
+                        "mention_required": binding.mention_required,
+                        "admin": True,
+                    }
+                )
             if binding.thread_root_message_id:
                 entry["thread_root_message_id"] = binding.thread_root_message_id
             else:
@@ -224,7 +259,7 @@ def load_config(
 
     persisted_admins = [binding for binding in bindings if binding.admin]
     bindings = [binding for binding in bindings if not binding.admin]
-    admin = _admin_binding(boss_user_id)
+    admin = _admin_binding(boss_user_id, bindings_file)
     if admin is not None:
         if len(persisted_admins) > 1:
             raise ConfigValidationError(

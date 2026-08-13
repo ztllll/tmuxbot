@@ -115,7 +115,7 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
     assert bindings_file.stat().st_mode & 0o777 == 0o600
 
 
-def test_admin_dm_route_defaults_to_runtime_home_and_configurable_pi(monkeypatch, tmp_path):
+def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
@@ -140,7 +140,7 @@ def test_admin_dm_route_defaults_to_runtime_home_and_configurable_pi(monkeypatch
     )
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr("tmuxbot.config.Path.home", lambda: home)
+    monkeypatch.setattr("tmuxbot.paths.Path.home", lambda: home)
 
     load_config(env_file, bindings_file, tmp_path / "offsets.json")
 
@@ -148,9 +148,60 @@ def test_admin_dm_route_defaults_to_runtime_home_and_configurable_pi(monkeypatch
     assert admin.chat_id == 123
     assert admin.thread_id is None
     assert admin.tmux_target == "tmuxbot-admin:0.0"
-    assert admin.cwd == home
+    assert admin.cwd == home / ".local/share/tmuxbot/admin"
+    assert admin.cwd.is_dir()
+    assert admin.cwd.stat().st_mode & 0o777 == 0o700
+    assert (admin.cwd / "AGENTS.md").is_file()
+    assert (admin.cwd / "ADMIN-RUNBOOK.md").is_file()
+    assert (admin.cwd / "tmuxbot-admin-context.json").is_file()
     assert admin.backend == "pi"
     assert admin.bot_token_env == "TG_BOT_TOKEN"
+
+
+def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, tmp_path):
+    bindings_file = tmp_path / "bindings.yaml"
+    stale = {
+        "name": "tmuxbot-admin",
+        "channel": "telegram",
+        "bot_token_env": "TG_BOT_TOKEN",
+        "chat_id": 123,
+        "thread_id": None,
+        "tmux_session": "tmuxbot-admin",
+        "tmux_window": 0,
+        "tmux_pane": 0,
+        "cwd": str(tmp_path / "old-admin"),
+        "backend": "pi",
+        "admin": True,
+        "provider_session_id": "old-session",
+    }
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding(), stale]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    new_cwd = tmp_path / "admin"
+    binding = Binding(
+        name="tmuxbot-admin",
+        chat_id=123,
+        thread_id=None,
+        tmux_session="tmuxbot-admin",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=new_cwd,
+        backend="pi",
+        bot_token_env="TG_CODEX_BOT_TOKEN",
+        channel="telegram",
+        mention_required=False,
+        admin=True,
+        provider_session_id="new-session",
+    )
+
+    save_binding_identity(bindings_file, binding)
+
+    saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"]
+    admin = next(entry for entry in saved if entry.get("admin"))
+    assert admin["cwd"] == str(new_cwd)
+    assert admin["bot_token_env"] == "TG_CODEX_BOT_TOKEN"
+    assert admin["provider_session_id"] == "new-session"
 
 
 def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeypatch, tmp_path):
@@ -248,19 +299,24 @@ def test_admin_dm_route_can_override_channel_credential_endpoint_and_cwd(monkeyp
     assert admin.backend == "codex"
 
 
-def test_admin_dm_route_rejects_missing_cwd(monkeypatch, tmp_path):
+def test_admin_dm_route_creates_configured_private_cwd(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(tmp_path / "missing"))
+    admin_cwd = tmp_path / "missing" / "admin"
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(admin_cwd))
     bindings_file = tmp_path / "bindings.yaml"
     bindings_file.write_text(
         yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigValidationError, match="existing directory"):
-        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+    load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+
+    admin = next(binding for binding in S.bindings if binding.admin)
+    assert admin.cwd == admin_cwd
+    assert admin_cwd.stat().st_mode & 0o777 == 0o700
+    assert (admin_cwd / "AGENTS.md").is_file()
 
 
 def test_admin_dm_route_rejects_non_private_telegram_endpoint(monkeypatch, tmp_path):

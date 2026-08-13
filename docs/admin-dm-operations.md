@@ -27,14 +27,14 @@ Environment="TMUXBOT_ADMIN_CHAT_ID=123456789"
 Environment="TMUXBOT_ADMIN_CREDENTIAL=TG_BOT_TOKEN"
 Environment="TMUXBOT_ADMIN_TMUX=tmuxbot-admin"
 Environment="TMUXBOT_ADMIN_CLI=pi"
-Environment="TMUXBOT_ADMIN_CWD=/home/you"
+Environment="TMUXBOT_ADMIN_CWD=/home/you/.local/share/tmuxbot/admin"
 ```
 
 其中：
 
 - `TMUXBOT_ADMIN_CHAT_ID` 必须是 Boss 的正数 Telegram private user ID；省略时默认使用 `BOSS_USER_ID`。
 - `TMUXBOT_ADMIN_CREDENTIAL` 指定承载管理 DM 的 Telegram Bot credential。
-- `TMUXBOT_ADMIN_CWD` 默认是运行用户的 `Path.home()`。建议管理会话使用用户根目录，而不是某个项目目录。
+- `TMUXBOT_ADMIN_CWD` 默认是 `$XDG_DATA_HOME/tmuxbot/admin`，通常为 `~/.local/share/tmuxbot/admin`。tmuxbot 会以 `0700` 创建它。该目录应独立于用户根目录和所有项目树，避免 Admin 指令沿目录层级被普通项目会话继承。
 - `TMUXBOT_ADMIN_CLI` 可为 `pi`、`claude_code` 或 `codex`。
 - `admin: true` YAML 记录只保存 provider session identity；没有 `TMUXBOT_ADMIN_ENABLED=1` 时不会授予 Admin 权限。
 
@@ -68,9 +68,13 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 # 打印机器可读/人可读的操作契约
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service contract
 
-# 把受管契约幂等安装到 Admin cwd 的 AGENTS.md + CLAUDE.md
+# 幂等安装 AGENTS.md + CLAUDE.md 契约、ADMIN-RUNBOOK.md 和 context manifest
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  install-contract --cwd /home/you
+  install-contract
+
+# 检查 schema/version、部署参数和文件 hash 是否仍一致
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  verify-context --json
 
 # 发现当前 routes 与真实 tmux panes
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
@@ -169,6 +173,12 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 `--apply` 事务会校验完整候选 route table，并使用原子 YAML 替换。systemd 重启或 post-apply verify 失败时恢复旧 YAML 并尝试恢复旧 bridge。若本次显式创建了新 tmux session，事务失败会清理该新 session；不会触碰预先存在的 tmux。
 
 `provision-project` 默认把 route 名作为 tmux session 名并使用 `NAME:0.0`；可用 `--tmux-target` 显式覆盖。目标不存在时 `--apply` 自动事务创建，不再要求操作者额外记 `--create-target`；目标已存在时只在 cwd 完全相同且未被 route 占用时复用。禁止为 route 直接运行 `tmux new-session`。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
+
+### 2.1 为什么不用单一 system prompt
+
+核心身份和硬规则写入 `AGENTS.md` / `CLAUDE.md`，可同时覆盖 Pi、Claude Code 和 Codex，并在 `/new`、resume 或 compact 后重新加载。`ADMIN-RUNBOOK.md` 承载部署相关细节，避免每轮 system prompt 背整本运维手册。Pi 的 `.pi/APPEND_SYSTEM.md`、provider skill 或 prompt template 可以作为加固和快捷入口，但不作为唯一正确性来源。
+
+`tmuxbot-admin-context.json` 保存 schema version、Admin cwd、bindings/service 参数和受管文件 hash；部署变更或手工修改后，`verify-context` 会 fail closed 并要求重新运行 `install-contract`。修改活动 Pi 的 context files 后运行 `/reload`，Claude/Codex 则按各自 CLI 的重载或安全重启方式生效。
 
 ## 3. 在 DM 中需要提供什么
 
@@ -310,7 +320,7 @@ tmuxbot route unbind NAME
 - endpoint 唯一键是 `(channel, bot_token_env, chat_id, thread_id)`。
 - tmux target 唯一键是 `(tmux_session, tmux_window, tmux_pane)`；同一个 tmux session 可以承载多个不同 pane route。
 - 一个 credential 可以混合承载 Claude Code、Codex 和 Pi；adapter 是 route 属性，不由 Bot token 决定。
-- 项目话题应绑定项目 pane；Admin DM 应绑定用户根目录下的独立管理 pane，不应复用项目 pane。
+- 项目话题应绑定项目 pane；Admin DM 应绑定专用 XDG workspace 下的独立管理 pane，不应使用用户根目录或复用项目 pane。
 - 同一 backend 不应让两个 route 竞争同一 cwd transcript。需要并行独立会话时，应使用不同项目/worktree cwd 或明确的 provider session 隔离策略。
 - Pi 的菜单、选择、文本输入和确认界面是 SSH-only：tmuxbot 只有在控制提示紧邻当前实时 Pi footer 时才向原 endpoint 通知精确 pane；不会通过 Telegram/飞书发送方向键、Enter、Escape、批准或取消，旧交互卡 callback 也会拒绝。
 - Pi 建议 tmux 开启：
@@ -346,7 +356,7 @@ tmuxbot route unbind NAME
 ```text
 Boss DM
 └─ tmuxbot-admin:0.0
-   cwd=/home/you
+   cwd=/home/you/.local/share/tmuxbot/admin
    adapter=pi
    用途=管理 tmux、route、systemd 与项目入口
 

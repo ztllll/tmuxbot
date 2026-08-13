@@ -76,6 +76,8 @@ class FakeRuntime(AdminRuntime):
         self.restarts: list[str] = []
         self.created: list[tuple[str, Path]] = []
         self.removed: list[str] = []
+        self.renamed: list[tuple[str, str]] = []
+        self.respawned: list[tuple[str, Path]] = []
 
     def target_status(self, target):
         return self.targets.get(target.value, {"state": "stopped", "target": target.value})
@@ -96,6 +98,23 @@ class FakeRuntime(AdminRuntime):
     def remove_created_target(self, target):
         self.removed.append(target.value)
         self.targets.pop(target.value, None)
+
+    def rename_session(self, old_name: str, new_name: str) -> None:
+        self.renamed.append((old_name, new_name))
+        moved = {}
+        for key, value in list(self.targets.items()):
+            if key.split(":", 1)[0] != old_name:
+                continue
+            suffix = key.split(":", 1)[1]
+            self.targets.pop(key)
+            new_key = f"{new_name}:{suffix}"
+            moved[new_key] = {**value, "target": new_key}
+        self.targets.update(moved)
+
+    def respawn_target(self, target, cwd: Path) -> None:
+        self.respawned.append((target.value, cwd))
+        status = self.targets[target.value]
+        self.targets[target.value] = {**status, "cwd": str(cwd), "command": "bash"}
 
     def restart_service(self, service: str) -> None:
         self.restarts.append(service)
@@ -170,6 +189,9 @@ def test_admin_contract_install_is_idempotent_and_preserves_existing_text(tmp_pa
     assert first == second
     assert first.startswith("existing\n")
     assert first.count("tmuxbot-admin-contract:start") == 1
+    assert "dedicated tmuxbot Admin DM management agent" in first
+    assert "not an ordinary project" in first
+    assert "ADMIN-RUNBOOK.md" in first
     assert "Never guess a topic/thread ID" in first
     assert "do not claim this interface cannot send files" in first
     assert "[download](</absolute/path/report.pdf>)" in first
@@ -177,7 +199,65 @@ def test_admin_contract_install_is_idempotent_and_preserves_existing_text(tmp_pa
     assert (admin_cwd / "CLAUDE.md").read_text(encoding="utf-8").count(
         "tmuxbot-admin-contract:start"
     ) == 1
+    runbook = (admin_cwd / "ADMIN-RUNBOOK.md").read_text(encoding="utf-8")
+    assert "How this conversation runs" in runbook
+    assert str(bindings.resolve()) in runbook
+    manifest = json.loads(
+        (admin_cwd / "tmuxbot-admin-context.json").read_text(encoding="utf-8")
+    )
+    assert manifest["schema_version"] == 1
+    assert manifest["admin_cwd"] == str(admin_cwd.resolve())
+    assert set(manifest["files"]) == {"AGENTS.md", "CLAUDE.md", "ADMIN-RUNBOOK.md"}
+    assert admin_cwd.stat().st_mode & 0o777 == 0o700
+    assert all(
+        path.stat().st_mode & 0o777 == 0o600
+        for path in (
+            admin_cwd / "AGENTS.md",
+            admin_cwd / "CLAUDE.md",
+            admin_cwd / "ADMIN-RUNBOOK.md",
+            admin_cwd / "tmuxbot-admin-context.json",
+        )
+    )
     assert "installed:" in capsys.readouterr().out
+
+
+def test_admin_context_verification_detects_stale_contract(tmp_path, capsys):
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route()])
+    admin_cwd = tmp_path / "admin"
+    argv = [
+        "--file", str(bindings), "--service", "bridge.service",
+        "install-contract", "--cwd", str(admin_cwd),
+    ]
+    assert run_admin_command(argv) == 0
+    (admin_cwd / "AGENTS.md").write_text("tampered\n", encoding="utf-8")
+
+    exit_code = run_admin_command(
+        [
+            "--file", str(bindings), "--service", "bridge.service",
+            "verify-context", "--cwd", str(admin_cwd), "--json",
+        ]
+    )
+
+    assert exit_code == 2
+    payload = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert payload["ok"] is False
+    assert any("AGENTS.md" in error for error in payload["errors"])
+
+
+def test_admin_contract_install_creates_default_dedicated_workspace(
+    monkeypatch, tmp_path, capsys
+):
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route()])
+    data_home = tmp_path / "share"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    assert run_admin_command(["--file", str(bindings), "install-contract"]) == 0
+
+    admin_cwd = data_home / "tmuxbot/admin"
+    assert (admin_cwd / "AGENTS.md").is_file()
+    assert str(admin_cwd) in capsys.readouterr().out
 
 
 def test_telegram_topic_link_parses_private_forum_endpoint():
@@ -907,6 +987,124 @@ def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
 
     assert exit_code == 2
     assert "exactly one topic intent" in capsys.readouterr().out
+
+
+def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
+    old_cwd = tmp_path / "pi-agent"
+    old_cwd.mkdir()
+    new_cwd = tmp_path / "dida-todo"
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime(
+        {
+            "pi-agent:0.0": {
+                "state": "running",
+                "target": "pi-agent:0.0",
+                "cwd": str(old_cwd),
+                "command": "pi",
+                "dead": False,
+            }
+        }
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file", str(bindings), "--service", "bridge.service",
+            "rename-project", "pi-agent", "--new-name", "dida-todo",
+            "--new-cwd", str(new_cwd),
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    assert bindings.read_bytes() == original
+    assert old_cwd.is_dir() and not new_cwd.exists()
+    assert runtime.renamed == []
+    assert runtime.respawned == []
+    payload = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
+    assert payload["operation"] == "rename-project"
+    assert payload["before"]["tmux_target"] == "pi-agent:0.0"
+    assert payload["after"]["tmux_target"] == "dida-todo:0.0"
+    assert payload["after"]["provider_session_id"] is None
+
+
+def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
+    old_cwd = tmp_path / "pi-agent"
+    old_cwd.mkdir()
+    (old_cwd / "marker").write_text("ok", encoding="utf-8")
+    new_cwd = tmp_path / "dida-todo"
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    runtime = FakeRuntime(
+        {
+            "pi-agent:0.0": {
+                "state": "running",
+                "target": "pi-agent:0.0",
+                "cwd": str(old_cwd),
+                "command": "pi",
+                "dead": False,
+            }
+        }
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file", str(bindings), "--service", "bridge.service",
+            "rename-project", "pi-agent", "--new-name", "dida-todo",
+            "--new-cwd", str(new_cwd), "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    assert not old_cwd.exists()
+    assert (new_cwd / "marker").read_text(encoding="utf-8") == "ok"
+    bound = RouteStore(bindings).inspect("dida-todo")
+    assert bound.cwd == new_cwd
+    assert bound.tmux_target == "dida-todo:0.0"
+    assert bound.provider_session_id is None
+    assert bound.transcript_path is None
+    assert runtime.renamed == [("pi-agent", "dida-todo")]
+    assert runtime.respawned == [("dida-todo:0.0", new_cwd)]
+    assert runtime.restarts == ["bridge.service"]
+
+
+def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failure(tmp_path):
+    old_cwd = tmp_path / "pi-agent"
+    old_cwd.mkdir()
+    new_cwd = tmp_path / "dida-todo"
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    original = bindings.read_bytes()
+    runtime = FakeRuntime(
+        {
+            "pi-agent:0.0": {
+                "state": "running",
+                "target": "pi-agent:0.0",
+                "cwd": str(old_cwd),
+                "command": "pi",
+                "dead": False,
+            }
+        },
+        restart_error=True,
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file", str(bindings), "--service", "bridge.service",
+            "rename-project", "pi-agent", "--new-name", "dida-todo",
+            "--new-cwd", str(new_cwd), "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 2
+    assert bindings.read_bytes() == original
+    assert old_cwd.is_dir() and not new_cwd.exists()
+    assert "pi-agent:0.0" in runtime.targets
+    assert "dida-todo:0.0" not in runtime.targets
+    assert runtime.renamed == [("pi-agent", "dida-todo"), ("dida-todo", "pi-agent")]
 
 
 def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):

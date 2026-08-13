@@ -74,11 +74,13 @@ tmuxbot serve --open
 - [Topic route 设计](./docs/topic-routing.md)：endpoint、target、adapter 与 fail-closed 约束
 - [DEVELOPMENT.md](./DEVELOPMENT.md)：源码开发、测试和内部架构
 
-为避免弱模型手工拼错 YAML、thread ID、tmux 或 systemd，Admin 会话应安装统一的 **Admin Operations Contract**，并只调用确定性事务命令：
+为避免弱模型手工拼错 YAML、thread ID、tmux 或 systemd，Admin DM 使用独立 workspace（默认 `~/.local/share/tmuxbot/admin`），避免根目录管理规则污染普通项目会话。安装命令会生成统一的 **Admin Operations Contract**、部署 runbook 和可校验 manifest：
 
 ```bash
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  install-contract --cwd /home/you
+  install-contract
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  verify-context --json
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   provision-project --name demo-pi --channel telegram \
   --credential TG_CODEX_BOT_TOKEN \
