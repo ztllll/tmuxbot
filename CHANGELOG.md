@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- 更新 GitHub 仓库入口、配置与运维说明：新增 Telegram/飞书 credential、精确 route、XDG 路径、systemd、Pi SSH-only、附件/Web 安全的集中配置文档；同步修正生命周期审计、Admin service 名称、route 示例和架构图。
+
 ### Fixed
 
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。

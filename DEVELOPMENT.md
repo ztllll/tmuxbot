@@ -363,7 +363,7 @@ systemctl --user enable --now tmuxbot.service
 loginctl enable-linger $USER   # 让 service 在 logout 后继续跑
 
 # 或安装单一 service 并打开 tmux/provider watchdog
-# tmuxbot install-service --now --self-heal
+# tmuxbot install-service --now
 
 # 日志 / 重启 / 停
 journalctl --user -u tmuxbot -f

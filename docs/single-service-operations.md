@@ -20,6 +20,8 @@ the unit uses `KillMode=process`.
 
 ## Install
 
+完整 credential、route 与 XDG 路径说明见 [`configuration.md`](configuration.md)。
+
 ```bash
 uv tool install 'tmuxbot[full]'
 tmuxbot install-service --now
@@ -29,7 +31,8 @@ systemctl --user status tmuxbot.service
 journalctl --user -u tmuxbot.service -n 100 --no-pager
 ```
 
-`install-service` writes only `~/.config/systemd/user/tmuxbot.service`. It also
+`install-service` writes only `~/.config/systemd/user/tmuxbot.service` and reads
+credentials from `~/.config/tmuxbot/.env`. It also
 disables and removes the legacy `tmuxbot-bridge-refresh@tmuxbot.timer`; periodic
 forced restarts are not part of the availability model.
 

@@ -3,6 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](./VERSIONING.md)
+[![CI](https://github.com/ztllll/tmuxbot/actions/workflows/ci.yml/badge.svg)](https://github.com/ztllll/tmuxbot/actions/workflows/ci.yml)
+
+> **CI 状态说明：** 当前 GitHub-hosted jobs 若显示未启动，仓库 Actions 注释为账户 billing lock；本地与部署验收命令见[维护质量](#维护质量)。
 
 > Telegram + 飞书 ↔ tmux 内 AI CLI(Claude Code / Codex / Pi)双向桥 —— 远程在 IM 话题发消息推动精确 tmux pane 里的 CLI,输出实时回推同一话题。
 >
@@ -53,14 +56,23 @@ Anthropic 文档说明:从 **2026-06-15** 起,Claude 订阅用户的 **Agent SDK
 
 ## 30 秒上手
 
+要求：Linux、Python 3.10+、tmux，以及至少一个已安装的交互式 CLI（Claude Code / Codex / Pi）。
+
 ```bash
 uv tool install 'tmuxbot[full]'
+tmuxbot doctor
 tmuxbot serve --open
 ```
 
 首次运行会自动打开中文 WebUI，并生成 10 分钟有效、设置成功后立即失效的一次性本机授权。没有 `.env`、通道或 binding 时 WebUI 也会保持可用；bridge 显示“尚未配置”。运行 `tmuxbot doctor` 可检查 tmux、Claude Code、Codex、Pi 和运行目录。
 
-源码开发、旧 `.env` / `bindings.yaml` 配置和 IM `/whoami` 验证方式仍保留，见 [DEVELOPMENT.md](./DEVELOPMENT.md)。通过 Boss DM 用自然语言创建或绑定 tmux 与 Telegram/飞书话题，见 [Admin DM 运维指南](./docs/admin-dm-operations.md)；完整 route 模型见 [Topic Routes and Admin DM](./docs/topic-routing.md)。
+配置入口：
+
+- [配置与运行说明](./docs/configuration.md)：XDG 路径、Telegram/飞书 credential、`bindings.yaml`、systemd、Pi SSH-only 与附件/Web 安全
+- [bindings.example.yaml](./bindings.example.yaml)：可直接改写的 route 示例
+- [Admin DM 运维指南](./docs/admin-dm-operations.md)：plan → apply → verify 的确定性项目开通流程
+- [Topic route 设计](./docs/topic-routing.md)：endpoint、target、adapter 与 fail-closed 约束
+- [DEVELOPMENT.md](./DEVELOPMENT.md)：源码开发、测试和内部架构
 
 为避免弱模型手工拼错 YAML、thread ID、tmux 或 systemd，Admin 会话应安装统一的 **Admin Operations Contract**，并只调用确定性事务命令：
 
@@ -107,8 +119,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now tmuxbot.service
 loginctl enable-linger $USER
 
-# 或由安装器生成同一个 unit，并启用 tmux/provider 常驻自愈
-# tmuxbot install-service --now --self-heal
+# 或由安装器生成同一个 unit；健康审计始终非破坏且只检查已有 pane
+# tmuxbot install-service --now
 
 # 看日志 / 重启 / 停
 journalctl --user -u tmuxbot -f
@@ -127,13 +139,12 @@ systemd start-limit，瞬时连续故障不会让服务永久停在 failed。运
 
 tmux 会话默认按消息懒启动：手动执行 `tmux kill-session -t <name>`，或在
 Telegram/飞书发送 `/tmuxstop` 后，后台不会周期性复活它；下一条消息到达时会自动重建
-tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。需要常驻自愈时，可显式设置
-`TMUXBOT_LIFECYCLE_ENABLED=1`，或用 `tmuxbot install-service --now --self-heal`
-写入 unit。watchdog 默认每 30 秒核对 route target，缺失时按持久 provider identity
-重建 tmux/CLI；它不会执行 `tmux kill-server`。默认每 60 分钟仅巡检**已存在**的 route pane：
-验证 provider 前台进程与健康状态，必要时仅恢复该 route 的异常 provider 进程树。它不会按空闲
-时间退出 Claude/Codex/Pi，也不会重建被人工关闭的 tmux；缺失 target 仍等下一条精确 route 消息
-按需恢复。Telegram、飞书和 Web 控制面板都提供带确认的“关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
+tmux，并恢复已绑定的 Claude/Codex/Pi provider 会话。安装器默认设置
+`TMUXBOT_LIFECYCLE_ENABLED=1`，用于非破坏性健康审计。watchdog 默认每 60 分钟仅巡检
+**已存在**的 route pane：验证 provider 前台进程与健康状态，必要时仅恢复该 route 的异常
+provider 进程树。它不会按空闲时间退出 Claude/Codex/Pi，不会重建被人工关闭的 tmux，也不会执行
+`tmux kill-server`；缺失 target 仍等下一条精确 route 消息按需恢复。Telegram、飞书和 Web
+控制面板都提供带确认的“关闭 tmux”操作，管理记录和历史不会被删除。旧多服务主机的合并、offset 防回吐、
 回滚和验收步骤见 [`docs/single-service-operations.md`](docs/single-service-operations.md)。
 
 ### Web control plane
@@ -149,7 +160,7 @@ tmuxbot serve --open
 需要常驻时：
 
 ```bash
-tmuxbot install-service --now --self-heal
+tmuxbot install-service --now
 journalctl --user -u tmuxbot -f
 ```
 
@@ -179,7 +190,7 @@ journalctl --user -u tmuxbot -f
 - **长回复自动分页**:Telegram 按 HTML/UTF-16 安全边界拆成多条消息并保持代码块标签完整；飞书同时按 Card JSON 2.0 的 30KB payload 和每卡最多 50 个 body element 拆成连续卡片，不再因大量短 Markdown 段落触发 `element exceeds the limit`，也不把普通长回复截断成预览或强制改发 TXT
 - **Telegram 状态标识**:Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**:工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
-- **picker 兜底**:claude TUI 事务式 flush jsonl 导致 picker 不可见时,屏幕 OCR 抓 picker 字符画推 inline keyboard
+- **交互界面处理**:Claude TUI 事务式 flush JSONL 导致 picker 不可见时，屏幕检测后提供编号 picker 兜底；Pi 菜单/输入/确认严格采用 SSH-only，只通知精确 pane，不从 IM 模拟按键
 - **Pi 原生运行语义**:Working/streaming 时的普通文字、附件及 `/rename` pending 名称立即进入 Pi steering queue；CLI 从 shell 冷唤醒后必须观察到真实 Pi footer/status 才投递首条消息；自动压缩在 IM 中显示基于当前 session 历史中位耗时的可编辑倒计时，并只以 JSONL `type=compaction` 作为完成硬信号；当前 branch 的 `rpiv-todo` 快照持续显示在回复末尾，clear/全部 deleted 后隐藏；`pi-plan-mode` 的 active/ready/saved/implementing 状态与中文 widget 同步到 IM 页面底部，完整计划使用可编辑计划卡回推；Pi 菜单、选择、输入和确认界面仅在底部控制提示紧邻实时 footer 时通知原 endpoint，IM 不模拟任何交互按键，用户按提示 SSH attach 到精确 tmux pane 处理
 - **活性指示**:TUI 状态行「时间 + token」指纹判活跃,工作中显示 typing(Telegram);飞书无 typing API
 - **消息已读反应**:TG 👀 emoji(Bot API 7.0+);飞书 👀 OnIt reaction
@@ -203,11 +214,12 @@ TelegramFrontend      FeishuFrontend
               │
         dispatch.py (共享命令分发层)
               │
-     ┌────────┴────────┐
-     │                 │
-ClaudeCodeBackend  CodexBackend
-     │                 │
-     └────────┬────────┘
+     ┌────────┼────────┐
+     │        │        │
+ClaudeCode  Codex      Pi
+ Backend    Backend   Backend
+     │        │        │
+     └────────┼────────┘
               │
          tmux pane(s)
      TUI idle 轮询 → paste-buffer

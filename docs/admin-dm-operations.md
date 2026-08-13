@@ -128,7 +128,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 绑定已有 topic：
 
 ```bash
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   bind-topic \
   --name demo-pi \
   --channel feishu \
@@ -147,7 +147,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 迁移已有 route 到统一项目群的新话题（保留 pane、cwd、adapter 与 provider identity）：
 
 ```bash
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   move-topic existing-route \
   --channel feishu \
   --chat-id oc_new_group \
@@ -160,7 +160,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
 独立验证：
 
 ```bash
-tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot-codex.service \
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   verify existing-route --json
 ```
 
@@ -312,6 +312,7 @@ tmuxbot route unbind NAME
 - 一个 credential 可以混合承载 Claude Code、Codex 和 Pi；adapter 是 route 属性，不由 Bot token 决定。
 - 项目话题应绑定项目 pane；Admin DM 应绑定用户根目录下的独立管理 pane，不应复用项目 pane。
 - 同一 backend 不应让两个 route 竞争同一 cwd transcript。需要并行独立会话时，应使用不同项目/worktree cwd 或明确的 provider session 隔离策略。
+- Pi 的菜单、选择、文本输入和确认界面是 SSH-only：tmuxbot 只有在控制提示紧邻当前实时 Pi footer 时才向原 endpoint 通知精确 pane；不会通过 Telegram/飞书发送方向键、Enter、Escape、批准或取消，旧交互卡 callback 也会拒绝。
 - Pi 建议 tmux 开启：
 
   ```tmux

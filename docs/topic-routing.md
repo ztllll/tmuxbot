@@ -1,10 +1,10 @@
 # Topic Routes and Admin DM
 
-Status: accepted design; first implementation slice is on `feature/topic-router-pi` after v0.3.0.
+Status: implemented on `main`; v0.3.0 is the frozen baseline and subsequent maintenance is tracked under `CHANGELOG.md [Unreleased]`.
 
 ## Product boundary
 
-tmuxbot is a bidirectional transport between an exact IM endpoint and a real tmux pane. It moves user input, attachments, terminal state, structured local transcript events, and control keystrokes. It does not interpret development tasks or become a workflow/project-management system.
+tmuxbot is a bidirectional transport between an exact IM endpoint and a real tmux pane. It moves user input, attachments, terminal state, structured local transcript events, and provider-safe controls. It does not interpret development tasks or become a workflow/project-management system. Pi interactions are deliberately observation-only: live menus/inputs are detected and handed off to SSH rather than translated into IM keystrokes.
 
 The same pane remains attachable over SSH. IM and SSH therefore control one shared interactive CLI/TUI session rather than separate headless jobs.
 
@@ -129,7 +129,7 @@ tmuxbot route restart NAME
 tmuxbot route replace-cli NAME BACKEND
 ```
 
-The route-store slice provides `list`, `inspect`, `validate`, `bind`, and `unbind`, plus per-route adapter dispatch. The Admin transaction layer now owns the common create/move/verify workflow and supervised restart. `attach`, in-process reload, and broader lifecycle operations remain planned behind the route namespace; direct YAML edits still require an explicit bridge restart.
+The route-store slice provides `list`, `inspect`, `validate`, `bind`, and `unbind`, plus per-route adapter dispatch. The Admin transaction layer owns the common create/move/verify workflow and supervised restart. The broader command list above records the intended namespace; commands not exposed by `tmuxbot route --help` remain planned. Direct YAML edits still require an explicit bridge restart.
 
 ## Pi adapter
 
@@ -142,6 +142,7 @@ Pi runs in its interactive TUI in tmux. tmuxbot does not use Pi RPC, SDK, or pri
 - normalizes assistant text, thinking, and tool calls;
 - reads model/thinking/usage metadata;
 - recognizes Pi TUI process and activity state, preserves Pi's native Working-state steering queue, and verifies cold wake before delivering: ordinary text and attachments are submitted immediately while streaming; a shell wake ignores stale TUI scrollback but must observe a real Pi footer/status before the user payload is pasted;
+- detects Pi menus, multi-selects, text inputs and confirmation views only when their bottom control hints are adjacent to the current live Pi footer. It sends one static SSH/tmux target notice to the exact route and never injects navigation/approval keys from IM; stale Telegram/Feishu action callbacks fail closed;
 - mirrors Pi's native footer or the installed `pi-statusline` powerline fields: provider/model/thinking, cumulative input/output, cacheRead (`R`)/cacheWrite (`W`), latest prompt cache-hit rate, cost/subscription, context usage/window and auto-compaction, cwd/Git branch/session name, plus extension status lines. TUI values remain the real-time source; the active Pi JSONL only fills fields omitted by terminal width. Claude/Codex retain their existing provider-specific status parsers;
 - replays `rpiv-todo` from the active JSONL branch's latest valid `todo` tool-result snapshot. Whenever at least one non-deleted task exists, every Pi assistant/working IM message carries a persistent TUI-style `Todos (completed/total)` panel with snapshot order, status glyphs, task IDs, `activeForm`, and dependency IDs. Completed-only snapshots remain visible; the panel disappears only after clear/all-deleted. Deleted tasks and abandoned JSONL branches are ignored;
 - mirrors auto-compaction as an editable IM status: TUI `Auto-compacting...` starts a countdown based on the median of the session's latest compaction durations (default 180 seconds), updates periodically, and JSONL `type=compaction` finalizes the card with token metadata. If the TUI leaves compaction without the hard JSONL marker, the card fails closed and warns that work may not have resumed;

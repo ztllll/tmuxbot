@@ -18,8 +18,8 @@ installs the locked npm dependencies, runs Vitest, and builds the production Web
 ## Change Expectations
 
 - Keep behavior changes covered by focused tests.
-- Update `README.md`, `DEVELOPMENT.md`, `.env.example`, or
-  `bindings.example.yaml` when configuration or operator behavior changes.
+- Update `README.md`, `docs/configuration.md`, `DEVELOPMENT.md`, `.env.example`,
+  or `bindings.example.yaml` when configuration or operator behavior changes.
 - Update `CHANGELOG.md` under `Unreleased`.
 - Keep sensitive files out of git: `.env`, `bindings.yaml`, `data/`,
   `CLAUDE.md`.

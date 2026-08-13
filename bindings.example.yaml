@@ -14,7 +14,12 @@
 #   cwd           CLI working directory
 #   backend       claude_code / codex / pi
 #   bot_token_env credential namespace; routes sharing it use one bot/app
-#   mention_required explicit group/topic mention policy (recommended for Telegram)
+#   mention_required explicit group/topic mention policy; project topics usually false
+#
+# Validate after editing:
+#   tmuxbot route --file /path/to/bindings.yaml validate
+# Prefer `tmuxbot admin provision-project` for normal project creation/binding;
+# it plans first, then owns target creation, atomic write, restart and verification.
 
 bindings:
   # Telegram DM -> Claude Code
@@ -54,6 +59,8 @@ bindings:
     backend: codex
 
   # Feishu thread -> Pi. Root messages are a different endpoint and stay silent.
+  # If Pi later opens a menu/input/confirmation, tmuxbot only sends an SSH notice
+  # for this exact pane; it never drives Pi keys from Telegram/Feishu.
   - name: feishu-topic
     channel: feishu
     bot_token_env: FEISHU
