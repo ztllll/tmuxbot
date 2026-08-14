@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.backends.codex import CodexBackend
-from tmuxbot.backends.pi import PiBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.core.events import TerminalState, TerminalStatus
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.frontends.telegram import TG_SPLIT, TelegramFrontend, split_for_tg
@@ -228,10 +228,10 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
 
 def test_telegram_status_footer_uses_the_binding_backend_in_mixed_credentials(tmp_path):
     b = binding(tmp_path)
-    b.backend = "pi"
+    b.backend = "omp"
     frontend = TelegramFrontend.__new__(TelegramFrontend)
     frontend.backend = CodexBackend()
-    frontend.backends = {"codex": frontend.backend, "pi": PiBackend()}
+    frontend.backends = {"codex": frontend.backend, "omp": OmpBackend()}
     status = TerminalStatus(
         state=TerminalState.WORKING,
         model="gpt-5.6-luna",
@@ -239,7 +239,7 @@ def test_telegram_status_footer_uses_the_binding_backend_in_mixed_credentials(tm
         cwd=str(tmp_path),
     )
 
-    assert frontend._status_footer_text(status, b) == PiBackend().format_status_footer(status)
+    assert frontend._status_footer_text(status, b) == OmpBackend().format_status_footer(status)
 
 
 def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):
@@ -276,9 +276,7 @@ def test_telegram_final_stream_sends_overflow_as_followup_messages(tmp_path):
     assert any(call[0] == "message" for call in calls[1:])
     assert all(utf16_len(call[1]) <= TG_SPLIT for call in calls)
     assert all(
-        call[2].get("message_thread_id") == 456
-        for call in calls[1:]
-        if call[0] == "message"
+        call[2].get("message_thread_id") == 456 for call in calls[1:] if call[0] == "message"
     )
 
 
@@ -350,7 +348,11 @@ def test_telegram_assistant_reply_promotes_relative_file_without_exposing_path(t
     assert calls[0][0] == "message"
     assert str(report) not in calls[0][1]
     assert calls[0][1].endswith("文件：报告")
-    assert calls[1] == ("document", str(report), {"caption": "result.pdf", "message_thread_id": 456})
+    assert calls[1] == (
+        "document",
+        str(report),
+        {"caption": "result.pdf", "message_thread_id": 456},
+    )
 
 
 def test_telegram_file_upload_failure_reports_only_basename(tmp_path):
@@ -396,7 +398,9 @@ def test_light_status_summary_does_not_use_heavy_status_injection(tmp_path, monk
 
     frontend = TelegramFrontend.__new__(TelegramFrontend)
     frontend.send_html = send_html
-    monkeypatch.setattr("tmuxbot.frontends.telegram.tmux_capture", lambda target, lines=50: "• Working (2s)")
+    monkeypatch.setattr(
+        "tmuxbot.frontends.telegram.tmux_capture", lambda target, lines=50: "• Working (2s)"
+    )
     monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda session: True)
     monkeypatch.setattr("tmuxbot.tmux.tmux_pane_command", lambda target: "codex")
     monkeypatch.setattr("tmuxbot.commands.inject_slash_and_capture", fail_inject)

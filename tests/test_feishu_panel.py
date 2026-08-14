@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.frontends.feishu import FeishuFrontend
@@ -62,9 +63,7 @@ def test_feishu_control_panel_is_chinese_and_contains_common_actions(tmp_path):
     assert all(len(row["columns"]) <= 3 for row in rows)
     new_button = next(button for button in buttons if button["text"]["content"] == "新会话")
     assert new_button["confirm"]["title"]["content"] == "确认创建新会话？"
-    restart_button = next(
-        button for button in buttons if button["text"]["content"] == "重启 CLI"
-    )
+    restart_button = next(button for button in buttons if button["text"]["content"] == "重启 CLI")
     assert restart_button["confirm"]["title"]["content"] == "确认重启 CLI？"
 
 
@@ -97,6 +96,11 @@ def test_feishu_send_control_panel_sends_card_json_v2(tmp_path):
     b = binding(tmp_path)
     frontend = FeishuFrontend.__new__(FeishuFrontend)
     frontend.group_only_when_mentioned = True
+    frontend.backend = SimpleNamespace(
+        name="claude_code",
+        bot_commands=(),
+        current_model=lambda _binding: None,
+    )
     frontend._outbound_message_ids = set()
     frontend._v2_message_ids = set()
     frontend._send_card_sync = lambda chat_id, content: (

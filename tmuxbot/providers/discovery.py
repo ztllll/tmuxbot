@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from tmuxbot.control_plane.models import (
-    PROVIDER_BINARIES,
+    DISCOVERABLE_PROVIDER_BINARIES,
     ProviderProfile,
     ProviderProbeResult,
 )
@@ -36,7 +36,7 @@ class ProviderDiscovery:
     def scan(self) -> list[ProviderProfile]:
         discovered: list[ProviderProfile] = []
         now = int(time.time())
-        for binary_name in sorted(PROVIDER_BINARIES):
+        for binary_name in sorted(DISCOVERABLE_PROVIDER_BINARIES):
             candidate = self.resolve_executable(binary_name)
             if not candidate:
                 continue
@@ -73,7 +73,7 @@ class ProviderDiscovery:
         override_name = {
             "claude": "CLAUDE_BIN",
             "codex": "CODEX_BIN",
-            "pi": "PI_BIN",
+            "omp": "OMP_BIN",
         }.get(binary_name)
         if override_name:
             override = os.getenv(override_name)
@@ -129,7 +129,7 @@ class ProviderDiscovery:
 
     @staticmethod
     def _verify_identity(provider: ProviderProfile) -> None:
-        if provider.binary_name not in PROVIDER_BINARIES:
+        if provider.binary_name not in DISCOVERABLE_PROVIDER_BINARIES:
             raise ProviderDiscoveryError("not_allowlisted")
         if os.path.realpath(provider.executable_path) != provider.executable_path:
             raise ProviderDiscoveryError("identity_changed")

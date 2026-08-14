@@ -29,19 +29,19 @@ tmuxbot serve --open
 创建 `~/.config/tmuxbot/.env`：
 
 ```dotenv
-TG_BOT_TOKEN=123456789:replace-me
+TG_OMP_BOT_TOKEN=123456789:replace-me
 BOSS_USER_ID=123456789
 CLAUDE_BIN=/home/you/.local/bin/claude
 CODEX_BIN=/home/you/.local/bin/codex
-PI_BIN=/home/you/.local/bin/pi
+OMP_BIN=/home/you/.local/bin/omp
 ```
 
 说明：
 
-- `TG_BOT_TOKEN` 是 BotFather token；同一个 token 可以承载 Claude Code、Codex 和 Pi route。
+- `TG_OMP_BOT_TOKEN` 是 OMP route 的默认 Telegram credential；credential identity 与 backend 相互独立，已有 route 显式设置的 `bot_token_env` 应原样保留。
 - `BOSS_USER_ID` 是唯一允许操作 route 的 Telegram 用户 ID。可先设为 `0`，通过私聊第一条消息进入一次性 setup mode；生产环境应固定为真实 ID。
-- 多个 Telegram Bot 使用新的变量名，例如 `TG_CODEX_BOT_TOKEN`，并在 route 的 `bot_token_env` 中引用。
-- 群/topic 是否必须 `@bot` 优先由 route 的 `mention_required` 控制；全局默认使用 `TELEGRAM_GROUP_MENTION_ONLY=true|false`，credential 级可使用 `<TOKEN_ENV>_GROUP_MENTION_ONLY`，以 `_BOT_TOKEN` 结尾的变量也兼容去掉该后缀的短名（例如 `TG_CODEX_GROUP_MENTION_ONLY`）。
+- 多个 Telegram Bot 使用独立变量名，例如 Claude Code 的 `TG_BOT_TOKEN`、Codex 的 `TG_CODEX_BOT_TOKEN`，并在 route 的 `bot_token_env` 中引用。
+- 群/topic 是否必须 `@bot` 优先由 route 的 `mention_required` 控制；全局默认使用 `TELEGRAM_GROUP_MENTION_ONLY=true|false`，credential 级可使用 `<TOKEN_ENV>_GROUP_MENTION_ONLY`，以 `_BOT_TOKEN` 结尾的变量也兼容去掉该后缀的短名（例如 `TG_OMP_GROUP_MENTION_ONLY`）。
 
 Telegram forum topic route 只需要 `chat_id + thread_id`。可使用：
 
@@ -90,16 +90,16 @@ credential 级开关使用 `<bot_token_env>_CARD_V2` 与 `<bot_token_env>_STREAM
 
 ```yaml
 bindings:
-  - name: demo-pi
+  - name: demo-omp
     channel: telegram
-    bot_token_env: TG_BOT_TOKEN
+    bot_token_env: TG_OMP_BOT_TOKEN
     chat_id: -1001234567890
     thread_id: 8024
-    tmux_session: demo-pi
+    tmux_session: demo-omp
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/you/projects/demo
-    backend: pi
+    backend: omp
     mention_required: false
 ```
 
@@ -114,7 +114,7 @@ bindings:
 | `thread_root_message_id` | 飞书 thread 的稳定回复锚点；Telegram 不需要 |
 | `tmux_session/window/pane` | 唯一 tmux target |
 | `cwd` | provider TUI 的绝对工作目录 |
-| `backend` | `claude_code`、`codex` 或 `pi` |
+| `backend` | `claude_code`、`codex` 或 `omp` |
 | `mention_required` | 群内是否必须 @bot；项目 topic 通常设为 `false` |
 
 约束：
@@ -143,12 +143,12 @@ tmuxbot admin \
   --file ~/.config/tmuxbot/bindings.yaml \
   --service tmuxbot.service \
   provision-project \
-  --name demo-pi \
+  --name demo-omp \
   --channel telegram \
-  --credential TG_BOT_TOKEN \
+  --credential TG_OMP_BOT_TOKEN \
   --topic-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID \
   --cwd /home/you/projects/demo \
-  --backend pi
+  --backend omp
 
 # 核对 endpoint、cwd、adapter、target 后，原命令末尾增加：
 # --apply
@@ -176,25 +176,43 @@ TMUXBOT_LIFECYCLE_INTERVAL=3600
 
 它只检查已存在 pane，不按空闲退出 provider，也不会复活被人工关闭的 tmux。缺失 route target 在下一条精确 endpoint 消息到达时按需恢复。`--self-heal` 仅保留为兼容参数。
 
-## 7. Pi 专属行为
+## 7. OMP 专属行为
 
-Pi 保持真实交互 TUI，不使用 RPC/SDK/print mode。推荐 tmux 配置：
+Oh My Pi（运行时命令 `omp`）始终运行真实交互式 TUI，不使用 RPC、SDK 或 print/headless mode。tmuxbot 通过 provider registry 启动它，固定参数为：
+
+```text
+omp --approval-mode yolo --extension <受管扩展的绝对路径>
+```
+
+浏览器、route YAML 和 Admin 请求都不能提交 binary path、tmux target 对应的任意 argv 或自定义启动参数；可执行文件只按 `OMP_BIN` → `PATH` → `~/.local/bin/omp` 在服务端解析。受管扩展随 tmuxbot 打包，并在每次启动时用 `--extension` 显式加载，不依赖用户扩展发现目录。
+
+OMP 会话通常位于 `~/.omp/agent/sessions/<project-key>/<timestamp>_<id>.jsonl`。当前精确会话身份由扩展同时写入：
+
+- `$TMUXBOT_STATE_DIR/omp-session-handoffs/`：`tmuxTarget/cwd/sessionId/transcriptPath/processId`；
+- `$TMUXBOT_STATE_DIR/omp-session-health/`：同一会话身份及 `idle/working/recovering/terminal_error`。
+
+OMP 新 session 的 JSONL 可能到首条消息才创建。文件尚不存在时，tmuxbot 只接受受管扩展写入、位于官方 `~/.omp/agent/sessions` root、文件名匹配 session ID，且 `processId` 确属 exact pane 的 pending identity；文件出现后立即要求 header/cwd/session ID 全部吻合。已有 pin 只使用 `omp ... --resume <绝对 JSONL 路径>` 恢复，不使用 `--continue`、`--session` 或按 mtime 猜测会话。pin 不存在、header/cwd 不匹配、OMP 恢复失败或新启动未发布匹配 sidecar 时，tmuxbot 保留原 pin 并显式失败，绝不会静默开启新会话覆盖连续性。
+
+`/restart` 对 OMP 执行干净的 pane respawn，再按上述固定参数和现有精确 pin 启动；它不会向原生 TUI 注入 Ctrl-C/Ctrl-D。正在运行的 OMP 若缺少有效受管 handoff，也会 fail closed，并要求通过 `/restart` 或 Web 重新启动受管 OMP。
+
+推荐 tmux 配置：
 
 ```tmux
 set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-Pi 菜单、选择、文本输入和确认界面采用 **SSH-only**：tmuxbot 只有在当前屏幕底部控制提示紧邻实时 Pi footer 时才向原 endpoint 告警，并给出精确 `SESSION:WINDOW.PANE`。IM 不发送方向键/选择卡，也不模拟 Enter、Escape、批准或取消；旧卡 callback 同样会拒绝。
+OMP 原生菜单、picker、ask、approval、plan review、文本输入和确认界面采用 **SSH-only**：tmuxbot 只向原 endpoint 提示精确 `SESSION:WINDOW.PANE`，不从 Telegram/飞书发送方向键、Enter、Escape、批准或取消。bot `/plan` 只是本地帮助；它不会把 `/plan` 注入 OMP，而是提示操作者 SSH attach 后使用默认 `Alt+Shift+P`（自定义 keybindings 可能不同）。
 
-可选的只读失活审计：
+只读终端健康审计默认启用，可显式配置：
 
 ```dotenv
-TMUXBOT_PI_TERMINAL_HEALTH_ENABLED=1
-TMUXBOT_PI_TERMINAL_HEALTH_INTERVAL=600
+TMUXBOT_OMP_TERMINAL_HEALTH_ENABLED=1
+TMUXBOT_OMP_TERMINAL_HEALTH_INTERVAL=600
+TMUXBOT_OMP_TERMINAL_HEALTH_FILE=/home/you/.local/state/tmuxbot/omp-terminal-health.json
 ```
 
-该审计不会自动 `/restart`、`/new`、停止或杀进程。
+该审计只通知 provider-authored terminal error 或多信号疑似失活，不自动 `/restart`、`/new`、停止或杀进程。完整设计见 [`omp-terminal-error-audit.md`](omp-terminal-error-audit.md)。
 
 ## 8. 附件与 Web 安全
 
@@ -226,9 +244,10 @@ journalctl --user -u tmuxbot.service -n 100 --no-pager
 日志应看到对应 credential frontend、每条 route 的 `tailer start/alive`，以及需要时的：
 
 ```text
-managed Pi handoff extension installed
-Pi terminal-health audit starting
+OMP terminal-health audit starting · interval=600.0s
 lifecycle watchdog starting
 ```
+
+若现有 OMP pane 没有匹配的受管身份，日志/错误会明确报告“缺少有效的受管会话身份 sidecar”，而不是选择同 cwd 下最新的 JSONL。
 
 生产迁移、offset 防历史回吐和单服务合并见 [`single-service-operations.md`](single-service-operations.md)。

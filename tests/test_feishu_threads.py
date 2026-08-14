@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import asyncio
 import json
 
-from tmuxbot.backends.pi import PiBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.frontends.feishu import (
     FeishuFrontend,
     FeishuThreadAnchorMissing,
@@ -24,14 +24,14 @@ def frontend(*, root_message_id: str | None = None) -> FeishuFrontend:
             tmux_window=0,
             tmux_pane=0,
             cwd=Path("/tmp/topic-a"),
-            backend="pi",
+            backend="omp",
             channel="feishu",
             bot_token_env="FEISHU",
             thread_root_message_id=root_message_id,
         )
     ]
-    instance.backend = PiBackend()
-    instance.backends = {"pi": instance.backend}
+    instance.backend = OmpBackend()
+    instance.backends = {"omp": instance.backend}
     instance._thread_reply_anchors = (
         {("oc_group", "omt_a"): root_message_id} if root_message_id else {}
     )
@@ -51,14 +51,12 @@ def test_feishu_startup_preloads_only_persisted_topic_roots():
             tmux_window=0,
             tmux_pane=0,
             cwd=Path("/tmp/dm"),
-            backend="pi",
+            backend="omp",
             channel="feishu",
         )
     )
 
-    assert _persisted_thread_anchors(bindings) == {
-        ("oc_group", "omt_a"): "om_root"
-    }
+    assert _persisted_thread_anchors(bindings) == {("oc_group", "omt_a"): "om_root"}
 
 
 def test_feishu_find_binding_uses_exact_string_thread():
@@ -75,15 +73,12 @@ def test_feishu_thread_reply_uses_persisted_route_root_after_restart(monkeypatch
     monkeypatch.setattr(
         instance,
         "_reply_message_sync",
-        lambda message_id, msg_type, content: calls.append(
-            (message_id, msg_type, content)
-        )
-        or "om_reply",
+        lambda message_id, msg_type, content: (
+            calls.append((message_id, msg_type, content)) or "om_reply"
+        ),
     )
 
-    result = instance._send_message_sync(
-        "oc_group", "omt_a", "interactive", '{"schema":"2.0"}'
-    )
+    result = instance._send_message_sync("oc_group", "omt_a", "interactive", '{"schema":"2.0"}')
 
     assert result == "om_reply"
     assert calls == [("om_persisted_root", "interactive", '{"schema":"2.0"}')]
@@ -100,15 +95,12 @@ def test_feishu_thread_reply_uses_authenticated_inbound_root_anchor(monkeypatch)
     monkeypatch.setattr(
         instance,
         "_reply_message_sync",
-        lambda message_id, msg_type, content: calls.append(
-            (message_id, msg_type, content)
-        )
-        or "om_reply",
+        lambda message_id, msg_type, content: (
+            calls.append((message_id, msg_type, content)) or "om_reply"
+        ),
     )
 
-    result = instance._send_message_sync(
-        "oc_group", "omt_a", "interactive", '{"schema":"2.0"}'
-    )
+    result = instance._send_message_sync("oc_group", "omt_a", "interactive", '{"schema":"2.0"}')
 
     assert result == "om_reply"
     assert calls == [("om_root", "interactive", '{"schema":"2.0"}')]
@@ -142,9 +134,7 @@ def test_feishu_thread_reply_never_falls_back_to_group_root(monkeypatch):
     )
 
     try:
-        instance._send_message_sync(
-            "oc_group", "omt_a", "interactive", '{"schema":"2.0"}'
-        )
+        instance._send_message_sync("oc_group", "omt_a", "interactive", '{"schema":"2.0"}')
     except FeishuThreadAnchorMissing as exc:
         assert "omt_a" in str(exc)
     else:
@@ -183,7 +173,7 @@ def test_feishu_chat_removal_deprovisions_every_topic_route(monkeypatch):
         tmux_window=0,
         tmux_pane=0,
         cwd=Path("/tmp/topic-b"),
-        backend="pi",
+        backend="omp",
         channel="feishu",
         bot_token_env="FEISHU",
     )
@@ -220,9 +210,7 @@ def test_feishu_thread_v2_edit_keeps_exact_binding_metadata(monkeypatch):
     monkeypatch.setattr(
         instance,
         "_patch_card_sync",
-        lambda message_id, content: (
-            cards.append(("edit", json.loads(content))) or True
-        ),
+        lambda message_id, content: cards.append(("edit", json.loads(content))) or True,
     )
 
     async def run():

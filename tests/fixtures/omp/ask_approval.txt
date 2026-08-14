@@ -1,0 +1,8 @@
+Allow bash to run this command?
+  pytest -q tests/test_omp_backend.py
+
+→ Approve once
+  Deny
+enter confirm • esc cancel
+╭── π  > ⬢ GPT-5.6 Sol (AISuperToken) · ◕ high > 📁 ~/claude-project/tmuxbot > ⑂ main > ◫ 43.5%/360K > $0.131 ▶ ──╮
+╰─ ─╯

@@ -5,6 +5,7 @@
 - CodexBackend
 - 未来其他 AI cli
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +14,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TYPE_CHECKING
+from typing import Callable, Mapping, TYPE_CHECKING
 
 from tmuxbot.core.capabilities import ProviderCapabilities
 from tmuxbot.core.events import (
@@ -40,23 +41,24 @@ class TaskSnapshot(list):
 @dataclass
 class CmdOpts:
     """slash 命令兜底参数: 解析器 + 轮询窗口 + 早退信号 + 兜底文案"""
+
     parser: Callable[[str], str | None] | None = None
     init_delay: float = 0.8
     poll: float = 0.5
-    max_iters: int = 8         # 默认 ~5s 窗口
+    max_iters: int = 8  # 默认 ~5s 窗口
     lines: int = 80
-    parser_can_retry: bool = False    # parser 返回 None 时是否继续等
-    done_pattern: re.Pattern | None = None    # 屏幕命中即结束
+    parser_can_retry: bool = False  # parser 返回 None 时是否继续等
+    done_pattern: re.Pattern | None = None  # 屏幕命中即结束
     expect_new_session: bool = False  # /clear /new: 切 session_id 新建 jsonl
-    # Pi creates the new session in memory first and persists its JSONL only
+    # OMP creates the new session in memory first and persists its JSONL only
     # after the first assistant reply. Keep the handoff armed instead of
     # requiring an immediate transcript switch.
     defer_new_session_persistence: bool = False
     expect_session_handoff: bool = False  # clone 等会立即创建/切换 transcript 的命令
-    expect_compact_done: bool = False # /compact: 不切 session_id, 同 jsonl 末尾追加压缩 marker
-    notice: str | None = None         # 进度提示文案
+    expect_compact_done: bool = False  # /compact: 不切 session_id, 同 jsonl 末尾追加压缩 marker
+    notice: str | None = None  # 进度提示文案
     fallback_summary: str | None = None  # 走完都没出 summary 时用
-    failure_summary: str | None = None   # 期待硬信号但未出现时的 provider 专属提示
+    failure_summary: str | None = None  # 期待硬信号但未出现时的 provider 专属提示
 
 
 class Backend(ABC):
@@ -66,8 +68,8 @@ class Backend(ABC):
     """
 
     name: str = "base"
-    pane_command_name: str = ""   # 检测 pane 是不是这个 backend (e.g. "claude" / "codex")
-    start_cmd: str = ""           # 启动命令字符串 (会注入到 tmux)
+    pane_command_name: str = ""  # 检测 pane 是不是这个 backend (e.g. "claude" / "codex")
+    start_cmd: str = ""  # 启动命令字符串 (会注入到 tmux)
     bot_commands: list[tuple[str, str]] = []  # (cmd, desc) for BotFather menu
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
 
@@ -91,6 +93,35 @@ class Backend(ABC):
     @property
     def accepts_input_while_busy(self) -> bool:
         return self.capabilities.accepts_input_while_busy
+
+    def interactive_commands(self) -> Mapping[str, str]:
+        """Provider-native commands that open an interactive TUI surface."""
+        return {}
+
+    @property
+    def remote_tui_actions_allowed(self) -> bool:
+        """Whether IM callbacks may translate into direct TUI key presses."""
+        return True
+
+    @property
+    def requires_idle_for_control_commands(self) -> bool:
+        """Whether command_opts controls must fail closed while the TUI is busy."""
+        return False
+
+    @property
+    def restart_via_clean_respawn(self) -> bool:
+        """Whether an explicit restart must replace the pane without TUI key injection."""
+        return False
+
+    def format_remote_interaction_notice(
+        self, binding: "Binding", interaction_label: str
+    ) -> str | None:
+        """Return a provider-specific handoff notice instead of remote TUI controls."""
+        return None
+
+    def format_remote_access_notice(self, binding: "Binding", interaction_label: str) -> str | None:
+        """Return an SSH/access hint without claiming a live interaction was detected."""
+        return self.format_remote_interaction_notice(binding, interaction_label)
 
     def current_model(self, b: "Binding") -> str | None:
         """Return the model recorded by the active provider transcript, if known.
@@ -171,10 +202,7 @@ class Backend(ABC):
     ) -> ProviderEvent:
         """Build a deterministic normalized event from one provider-native row."""
         session_id = (
-            provider_session_id
-            or source.get("sessionId")
-            or source.get("session_id")
-            or "unknown"
+            provider_session_id or source.get("sessionId") or source.get("session_id") or "unknown"
         )
         if native_id:
             source_id = str(native_id)
@@ -223,9 +251,7 @@ class Backend(ABC):
         """找该 binding 当前活跃的 jsonl 文件 (mtime 最新)"""
 
     @abstractmethod
-    def parse_event(
-        self, line: str, provider_session_id: str | None = None
-    ) -> list[ProviderEvent]:
+    def parse_event(self, line: str, provider_session_id: str | None = None) -> list[ProviderEvent]:
         """jsonl 一行 → 0..多条渠道无关 ProviderEvent。"""
 
     @abstractmethod

@@ -25,6 +25,7 @@ def test_scan_only_discovers_allowlisted_regular_executables(tmp_path, monkeypat
     real_codex = _executable(bin_dir / "codex-real", "printf 'codex 1.0\\n'\n")
     (bin_dir / "codex").symlink_to(real_codex)
     _executable(bin_dir / "claude", "printf 'claude 2.0\\n'\n")
+    _executable(bin_dir / "omp", "printf 'omp 0.84.1\\n'\n")
     _executable(bin_dir / "pi", "printf 'pi 0.84.1\\n'\n")
     _executable(bin_dir / "evil", "printf 'evil\\n'\n")
     (bin_dir / "tmux").mkdir()
@@ -32,7 +33,7 @@ def test_scan_only_discovers_allowlisted_regular_executables(tmp_path, monkeypat
 
     found = ProviderDiscovery().scan()
 
-    assert [item.binary_name for item in found] == ["claude", "codex", "pi"]
+    assert [item.binary_name for item in found] == ["claude", "codex", "omp"]
     codex = next(item for item in found if item.binary_name == "codex")
     assert codex.executable_path == str(real_codex.resolve())
     info = real_codex.stat()
@@ -41,6 +42,7 @@ def test_scan_only_discovers_allowlisted_regular_executables(tmp_path, monkeypat
         info.st_ino,
         info.st_mtime_ns,
     )
+    assert all(item.binary_name != "pi" for item in found)
 
 
 def test_scan_finds_user_local_cli_when_systemd_path_omits_it(tmp_path, monkeypatch):
@@ -55,6 +57,26 @@ def test_scan_finds_user_local_cli_when_systemd_path_omits_it(tmp_path, monkeypa
 
     claude = next(item for item in found if item.binary_name == "claude")
     assert claude.executable_path == str((bin_dir / "claude").resolve())
+
+
+def test_omp_resolution_prefers_override_then_path_then_user_local(tmp_path, monkeypatch):
+    override = _executable(tmp_path / "override-omp", "exit 0\n")
+    path_dir = tmp_path / "path-bin"
+    path_dir.mkdir()
+    path_binary = _executable(path_dir / "omp", "exit 0\n")
+    home = tmp_path / "home"
+    local_dir = home / ".local" / "bin"
+    local_dir.mkdir(parents=True)
+    local_binary = _executable(local_dir / "omp", "exit 0\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(path_dir))
+    monkeypatch.setenv("OMP_BIN", str(override))
+
+    assert ProviderDiscovery.resolve_executable("omp") == str(override)
+    monkeypatch.delenv("OMP_BIN")
+    assert ProviderDiscovery.resolve_executable("omp") == str(path_binary)
+    monkeypatch.setenv("PATH", "")
+    assert ProviderDiscovery.resolve_executable("omp") == str(local_binary)
 
 
 def test_probe_uses_exact_argv_without_shell_and_returns_version(tmp_path):
@@ -80,9 +102,7 @@ def test_probe_uses_exact_argv_without_shell_and_returns_version(tmp_path):
 
 
 def test_tmux_probe_uses_native_version_flag(tmp_path):
-    executable = _executable(
-        tmp_path / "tmux", "test \"$1\" = -V || exit 9\nprintf 'tmux 3.4\n'\n"
-    )
+    executable = _executable(tmp_path / "tmux", "test \"$1\" = -V || exit 9\nprintf 'tmux 3.4\n'\n")
     info = executable.stat()
     provider = ProviderProfile(
         id="provider-tmux",
@@ -196,10 +216,26 @@ def test_probe_rejects_toctou_identity_change(tmp_path):
         ProviderDiscovery().probe(provider)
 
 
-def test_probe_rejects_identity_replacement_during_command(tmp_path):
-    executable = _executable(
-        tmp_path / "codex", "sleep 0.15\nprintf 'codex old\\n'\n"
+def test_probe_rejects_historical_pi_profile_as_undiscoverable(tmp_path):
+    executable = _executable(tmp_path / "pi", "printf 'pi 0.84.1\\n'\n")
+    info = executable.stat()
+    provider = ProviderProfile(
+        id="provider-pi",
+        binary_name="pi",
+        executable_path=str(executable),
+        version="pi 0.84.1",
+        device=info.st_dev,
+        inode=info.st_ino,
+        mtime_ns=info.st_mtime_ns,
+        discovered_at=1,
     )
+
+    with pytest.raises(ProviderDiscoveryError, match="not_allowlisted"):
+        ProviderDiscovery().probe(provider)
+
+
+def test_probe_rejects_identity_replacement_during_command(tmp_path):
+    executable = _executable(tmp_path / "codex", "sleep 0.15\nprintf 'codex old\\n'\n")
     info = executable.stat()
     provider = ProviderProfile(
         id="provider-raced",
@@ -214,9 +250,7 @@ def test_probe_rejects_identity_replacement_during_command(tmp_path):
 
     def replace_while_running():
         time.sleep(0.05)
-        replacement = _executable(
-            tmp_path / "replacement-during-probe", "printf 'codex new\\n'\n"
-        )
+        replacement = _executable(tmp_path / "replacement-during-probe", "printf 'codex new\\n'\n")
         os.replace(replacement, executable)
 
     racer = threading.Thread(target=replace_while_running)

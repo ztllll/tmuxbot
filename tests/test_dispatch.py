@@ -16,6 +16,23 @@ class _Backend:
     def command_aliases(self):
         return {}
 
+    def interactive_commands(self):
+        return {}
+
+    @property
+    def remote_tui_actions_allowed(self):
+        return self.name != "omp"
+
+    @property
+    def requires_idle_for_control_commands(self):
+        return self.name == "omp"
+
+    def format_remote_interaction_notice(self, binding, interaction_label):
+        return f"SSH {binding.tmux_target} {interaction_label}"
+
+    def format_remote_access_notice(self, binding, interaction_label):
+        return f"SSH {binding.tmux_target} {interaction_label}"
+
     @property
     def capabilities(self):
         return ProviderCapabilities(name=self.name)
@@ -74,14 +91,14 @@ def test_channel_new_arms_session_handoff_before_tmux_injection(monkeypatch):
     assert sent[0][1] == "/new"
 
 
-def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
+def test_omp_new_while_working_fails_immediately_without_injection(monkeypatch):
     binding = _binding()
-    binding.backend = "pi"
+    binding.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
         @property
         def capabilities(self):
@@ -107,7 +124,7 @@ def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
     asyncio.run(
         dispatch_incoming_text(
             Frontend(),
-            PiBackend(),
+            OmpBackend(),
             binding,
             SimpleNamespace(pending_rename={}),
             1,
@@ -121,28 +138,25 @@ def test_pi_new_while_working_fails_immediately_without_injection(monkeypatch):
     assert binding.pending_session_handoff_after is None
     assert len(calls) == 1
     assert "当前仍在 <code>Working" in calls[0][3]
-    assert "/esc" in calls[0][3]
+    assert "/esc" not in calls[0][3]
     assert "/new" in calls[0][3]
 
 
-def test_pi_interactive_command_injects_then_only_sends_ssh_notice(monkeypatch):
+def test_omp_plan_help_is_local_and_never_injected(monkeypatch):
     binding = _binding()
-    binding.backend = "pi"
+    binding.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
-        def interactive_session_handoff_commands(self):
-            return frozenset()
+        def read_plan_mode(self, _binding):
+            return None
 
     class Frontend:
         async def send_html(self, chat_id, thread_id, text):
             calls.append(("reply", chat_id, thread_id, text))
-
-        async def send_interaction_card(self, *_args):
-            raise AssertionError("Pi interactive commands must not expose IM controls")
 
     async def ready(*_args, **_kwargs):
         return True
@@ -151,43 +165,37 @@ def test_pi_interactive_command_injects_then_only_sends_ssh_notice(monkeypatch):
         calls.append(("inject", args[1]))
 
     monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
-    monkeypatch.setattr(
-        "tmuxbot.command_adapter.tmux_capture",
-        lambda *_args: (
-            "Plan mode\n→ Start Plan mode\n"
-            "↑/↓ navigate • enter select • esc close\n"
-            "░▒▓ 🤖 gpt 5.6-sol 🪟 ctx 10.0%/360k\n📄 JSONL 1.0 MB"
-        ),
-    )
-    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
 
     asyncio.run(
         dispatch_incoming_text(
             Frontend(),
-            PiBackend(),
+            OmpBackend(),
             binding,
-            SimpleNamespace(pending_rename={}, command_transactions={}),
+            SimpleNamespace(pending_rename={}),
             1,
             8024,
-            "/plan",
+            "/plan finalize",
         )
     )
 
-    assert calls[0] == ("inject", "/plan")
-    assert calls[1][0] == "reply"
-    assert "需要交互式操作" in calls[1][3]
-    assert "tmux select-window" in calls[1][3]
-    assert binding.tmux_target in calls[1][3]
+    assert not any(call[0] == "inject" for call in calls)
+    assert len(calls) == 1
+    assert "OMP Plan 模式未启用" in calls[0][3]
+    assert "Alt+Shift+P" in calls[0][3]
+    assert "自定义 keybindings" in calls[0][3]
+    assert binding.tmux_target in calls[0][3]
+    assert "已确认" not in calls[0][3]
 
 
-def test_pi_tui_key_command_is_rejected_with_ssh_notice(monkeypatch):
+def test_omp_tui_key_command_is_rejected_with_ssh_notice(monkeypatch):
     binding = _binding()
-    binding.backend = "pi"
+    binding.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
     class Frontend:
         async def send_html(self, chat_id, thread_id, text):
@@ -196,18 +204,17 @@ def test_pi_tui_key_command_is_rejected_with_ssh_notice(monkeypatch):
     async def ready(*_args, **_kwargs):
         return True
 
+    sent_keys = []
     monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
     monkeypatch.setattr(
-        "tmuxbot.dispatch.handle_tui_action",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("Pi TUI keys must not be injected from IM")
-        ),
+        "tmuxbot.command_adapter.tmux_send_key",
+        lambda target, key: sent_keys.append((target, key)),
     )
 
     asyncio.run(
         dispatch_incoming_text(
             Frontend(),
-            PiBackend(),
+            OmpBackend(),
             binding,
             SimpleNamespace(pending_rename={}),
             1,
@@ -216,26 +223,23 @@ def test_pi_tui_key_command_is_rejected_with_ssh_notice(monkeypatch):
         )
     )
 
+    assert sent_keys == []
     assert len(calls) == 1
-    assert "Pi 交互按键未执行" in calls[0][2]
     assert "SSH" in calls[0][2]
+    assert binding.tmux_target in calls[0][2]
 
 
-def test_pi_plan_command_while_working_fails_immediately_without_injection(monkeypatch):
+def test_omp_plan_help_reports_active_native_mode_without_injection(monkeypatch):
     binding = _binding()
-    binding.backend = "pi"
+    binding.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
-        @property
-        def capabilities(self):
-            return ProviderCapabilities(name=self.name, accepts_input_while_busy=True)
-
-        def parse_terminal_status(self, _pane):
-            return TerminalStatus(state=TerminalState.WORKING, label="Retrying (1/5)...")
+        def read_plan_mode(self, _binding):
+            return SimpleNamespace(status="active")
 
     class Frontend:
         async def send_html(self, chat_id, thread_id, text):
@@ -248,36 +252,33 @@ def test_pi_plan_command_while_working_fails_immediately_without_injection(monke
         calls.append(("inject",))
 
     monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
-    monkeypatch.setattr("tmuxbot.dispatch.tmux_capture", lambda *_args: "Retrying")
-    monkeypatch.setattr("tmuxbot.command_adapter.tmux_capture", lambda *_args: "Retrying")
-    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
 
     asyncio.run(
         dispatch_incoming_text(
             Frontend(),
-            PiBackend(),
+            OmpBackend(),
             binding,
             SimpleNamespace(pending_rename={}),
             1,
             8024,
-            "/plan finalize",
+            "/plan",
         )
     )
 
     assert not any(call[0] == "inject" for call in calls)
     assert len(calls) == 1
-    assert "/plan 未执行" in calls[0][3]
-    assert "Retrying" in calls[0][3]
-    assert "/esc" in calls[0][3]
+    assert "OMP Plan 模式已启用" in calls[0][3]
+    assert "未向 OMP pane 注入" in calls[0][3]
 
 
-def test_channel_clone_arms_session_handoff_before_tmux_injection(monkeypatch):
+def test_channel_fork_arms_session_handoff_before_tmux_injection(monkeypatch):
     binding = _binding()
     sent = []
 
     class Backend(_Backend):
         def command_opts(self):
-            return {"/clone": CmdOpts(expect_session_handoff=True)}
+            return {"/fork": CmdOpts(expect_session_handoff=True)}
 
     async def ready(*_args, **_kwargs):
         return True
@@ -299,12 +300,12 @@ def test_channel_clone_arms_session_handoff_before_tmux_injection(monkeypatch):
             SimpleNamespace(pending_rename={}, fire=fire),
             1,
             None,
-            "/clone",
+            "/fork",
         )
     )
 
     assert binding.pending_session_handoff_after is not None
-    assert sent[0][1] == "/clone"
+    assert sent[0][1] == "/fork"
 
 
 def test_stop_closes_tmux_without_starting_it_first(monkeypatch):
@@ -383,26 +384,30 @@ def test_restart_after_stop_only_starts_runtime(monkeypatch):
     b = _binding()
     calls = []
 
-    async def ready(*_args, **_kwargs):
-        calls.append("ensure")
-        return True
+    async def restart(*_args, **_kwargs):
+        calls.append("restart")
+        return False
 
     class Frontend:
         async def send_html(self, *_args):
             calls.append("reply")
 
-    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
-    monkeypatch.setattr("tmuxbot.dispatch.tmux_has_session", lambda _session: False)
+    monkeypatch.setattr("tmuxbot.dispatch.restart_binding", restart)
     monkeypatch.setattr("tmuxbot.dispatch.tmux_send_key", lambda *_args: calls.append("key"))
 
     asyncio.run(
         dispatch_incoming_text(
-            Frontend(), _Backend(), b, SimpleNamespace(pending_rename={}),
-            1, None, "/restart",
+            Frontend(),
+            _Backend(),
+            b,
+            SimpleNamespace(pending_rename={}),
+            1,
+            None,
+            "/restart",
         )
     )
 
-    assert calls == ["ensure", "reply"]
+    assert calls == ["restart", "reply"]
 
 
 def test_message_after_stop_starts_runtime_before_injection(monkeypatch):
@@ -434,14 +439,14 @@ def test_message_after_stop_starts_runtime_before_injection(monkeypatch):
     assert calls == ["ensure", "inject"]
 
 
-def test_pi_normal_message_enables_busy_submission(monkeypatch):
+def test_omp_normal_message_enables_busy_submission(monkeypatch):
     b = _binding()
-    b.backend = "pi"
+    b.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
         @property
         def capabilities(self):
@@ -459,7 +464,7 @@ def test_pi_normal_message_enables_busy_submission(monkeypatch):
     asyncio.run(
         dispatch_incoming_text(
             SimpleNamespace(),
-            PiBackend(),
+            OmpBackend(),
             b,
             SimpleNamespace(pending_rename={}),
             1,
@@ -471,14 +476,14 @@ def test_pi_normal_message_enables_busy_submission(monkeypatch):
     assert calls[0][1]["allow_busy_submission"] is True
 
 
-def test_pi_pending_rename_enables_busy_submission(monkeypatch):
+def test_omp_pending_rename_enables_busy_submission(monkeypatch):
     b = _binding()
-    b.backend = "pi"
+    b.backend = "omp"
     calls = []
 
-    class PiBackend(_Backend):
-        name = "pi"
-        running_command_names = frozenset({"pi"})
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
 
         @property
         def capabilities(self):
@@ -500,7 +505,7 @@ def test_pi_pending_rename_enables_busy_submission(monkeypatch):
     asyncio.run(
         dispatch_incoming_text(
             Frontend(),
-            PiBackend(),
+            OmpBackend(),
             b,
             SimpleNamespace(pending_rename={b.name: __import__("time").time()}),
             1,

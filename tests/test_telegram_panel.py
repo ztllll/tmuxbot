@@ -54,16 +54,16 @@ def test_telegram_panel_markup_is_chinese_and_contains_common_commands(tmp_path)
     assert any(value.endswith(":confirm_stop") for value in callbacks)
 
 
-def test_telegram_pi_panel_includes_plan_mode_action(tmp_path):
+def test_telegram_omp_panel_does_not_advertise_local_plan_as_tui_action(tmp_path):
     route = binding(tmp_path)
-    route.backend = "pi"
+    route.backend = "omp"
 
     markup = build_telegram_panel_markup(route)
     labels = [button.text for row in markup.inline_keyboard for button in row]
     callbacks = [button.callback_data for row in markup.inline_keyboard for button in row]
 
-    assert "计划模式" in labels
-    assert any(value.endswith(":cmd_plan") for value in callbacks)
+    assert "计划模式" not in labels
+    assert not any(value.endswith(":cmd_plan") for value in callbacks)
 
 
 def test_telegram_panel_new_session_uses_confirmation_keyboard(tmp_path):
@@ -148,9 +148,7 @@ def test_telegram_claude_model_interaction_offers_session_only_button(tmp_path):
 
     frontend._tg_call = tg_call
 
-    asyncio.run(
-        frontend.send_interaction_card(-100, None, "🎛 /model 已注入", "alpha")
-    )
+    asyncio.run(frontend.send_interaction_card(-100, None, "🎛 /model 已注入", "alpha"))
 
     labels = [button.text for row in calls[0].inline_keyboard for button in row]
     assert "仅本会话" in labels

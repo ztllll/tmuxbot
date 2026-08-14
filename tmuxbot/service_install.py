@@ -32,7 +32,9 @@ def install_service(
     env_file = resolved_home / ".config/tmuxbot/.env"
     # Health audits are always non-destructive: they inspect only existing panes,
     # never recreate a manually closed session, and never idle-exit a provider.
-    lifecycle_environment = "Environment=TMUXBOT_LIFECYCLE_ENABLED=1\nEnvironment=TMUXBOT_LIFECYCLE_INTERVAL=3600\n"
+    lifecycle_environment = (
+        "Environment=TMUXBOT_LIFECYCLE_ENABLED=1\nEnvironment=TMUXBOT_LIFECYCLE_INTERVAL=3600\n"
+    )
     content = f"""[Unit]
 Description=tmuxbot WebUI and tmux bridge supervisor
 After=network-online.target
@@ -46,8 +48,8 @@ Type=simple
 # existing panes; manually closed sessions remain dormant until route input.
 KillMode=process
 EnvironmentFile=-{env_file}
-Environment=TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid
-{lifecycle_environment}ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_PID_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_PID_FILE")" 2>/dev/null || true; fi'
+Environment=TMUXBOT_BRIDGE_OMPD_FILE=%t/tmuxbot/bridge.pid
+{lifecycle_environment}ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_OMPD_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_OMPD_FILE")" 2>/dev/null || true; fi'
 ExecStart={executable} serve
 Restart=always
 RestartSec=5
@@ -68,12 +70,11 @@ WantedBy=default.target
     # that helper would create avoidable outages and violate the one-service contract.
     refresh_service = unit_dir / "tmuxbot-bridge-refresh@.service"
     refresh_timer = unit_dir / "tmuxbot-bridge-refresh@.timer"
-    refresh_link = (
-        unit_dir / "timers.target.wants/tmuxbot-bridge-refresh@tmuxbot.timer"
-    )
-    if any(path.exists() or path.is_symlink() for path in (
-        refresh_service, refresh_timer, refresh_link
-    )):
+    refresh_link = unit_dir / "timers.target.wants/tmuxbot-bridge-refresh@tmuxbot.timer"
+    if any(
+        path.exists() or path.is_symlink()
+        for path in (refresh_service, refresh_timer, refresh_link)
+    ):
         runner(
             [
                 "systemctl",

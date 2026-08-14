@@ -69,12 +69,8 @@ class StreamingFooterFrontend(FakeFrontend):
         self.next_message_id += 1
         return SimpleNamespace(message_id=self.next_message_id)
 
-    async def edit_reply_stream(
-        self, binding, message_id, html_text, *, final=False, footer=None
-    ):
-        self.sent.append(
-            ("stream_edit", binding.chat_id, message_id, html_text, final, footer)
-        )
+    async def edit_reply_stream(self, binding, message_id, html_text, *, final=False, footer=None):
+        self.sent.append(("stream_edit", binding.chat_id, message_id, html_text, final, footer))
 
 
 class FakeBackend:
@@ -87,8 +83,8 @@ class FakeBackend:
         return None
 
 
-class PiTodoBackend(FakeBackend):
-    name = "pi"
+class OmpTodoBackend(FakeBackend):
+    name = "omp"
 
     def __init__(self, tasks):
         self.tasks = tasks
@@ -109,24 +105,22 @@ def binding(tmp_path):
     )
 
 
-def test_pi_compaction_end_edits_the_existing_status_message(tmp_path):
+def test_omp_compaction_end_edits_the_existing_status_message(tmp_path):
     async def run():
         frontend = FinalizingFrontend()
         state = SimpleNamespace(
             setup_mode=False,
-            compaction_status={
-                "alpha": {"msg_id": 101, "chat_id": 123, "started_at": 1000.0}
-            },
+            compaction_status={"alpha": {"msg_id": 101, "chat_id": 123, "started_at": 1000.0}},
         )
         b = binding(tmp_path)
-        backend = PiTodoBackend(
-            [{"id": 1, "subject": "Continue", "status": "in_progress"}]
+        backend = OmpTodoBackend(
+            [{"phase": "Execution", "content": "Continue", "status": "in_progress"}]
         )
 
         await on_tmux_event(
             b,
             "provider_lifecycle",
-            "✅ <b>Pi 自动压缩已完成</b>",
+            "✅ <b>OMP 自动压缩已完成</b>",
             frontend,
             state,
             backend,
@@ -138,8 +132,8 @@ def test_pi_compaction_end_edits_the_existing_status_message(tmp_path):
                 "finalize",
                 123,
                 101,
-                "✅ <b>Pi 自动压缩已完成</b>\n\n"
-                "● <b>Todos (0/1)</b>\n└─ ◐ <b>Continue</b>",
+                "✅ <b>OMP 自动压缩已完成</b>\n\n● <b>Todos (0/1)</b>\n"
+                "▾ <b>Execution</b> (0/1)\n└─ ◐ <b>Continue</b>",
                 "completed",
             )
         ]
@@ -147,16 +141,16 @@ def test_pi_compaction_end_edits_the_existing_status_message(tmp_path):
     asyncio.run(run())
 
 
-def test_pi_plan_widget_is_appended_above_todos_in_final_assistant_message(tmp_path):
+def test_omp_plan_widget_is_appended_above_todos_in_final_assistant_message(tmp_path):
     async def run():
-        class PlanBackend(PiTodoBackend):
+        class PlanBackend(OmpTodoBackend):
             def render_extension_footer(self, _binding):
                 return "📝 <b>计划已就绪</b>\n· 使用 <code>/plan</code> 选择下一步。"
 
         frontend = FakeFrontend()
         state = SimpleNamespace(setup_mode=False)
         b = binding(tmp_path)
-        backend = PlanBackend([{"id": 1, "subject": "Review", "status": "pending"}])
+        backend = PlanBackend([{"phase": "Review", "content": "Review", "status": "pending"}])
 
         await on_tmux_event(b, "assistant_text", "计划如下", frontend, state, backend)
 
@@ -167,31 +161,30 @@ def test_pi_plan_widget_is_appended_above_todos_in_final_assistant_message(tmp_p
                 None,
                 "计划如下\n\n"
                 "📝 <b>计划已就绪</b>\n· 使用 <code>/plan</code> 选择下一步。\n\n"
-                "● <b>Todos (0/1)</b>\n└─ ○ Review",
+                "● <b>Todos (0/1)</b>\n▾ <b>Review</b> (0/1)\n└─ ○ Review",
             )
         ]
 
     asyncio.run(run())
 
 
-def test_pi_todo_snapshot_is_appended_to_every_final_assistant_message(tmp_path):
+def test_omp_todo_snapshot_is_appended_to_every_final_assistant_message(tmp_path):
     async def run():
         tasks = [
-            {"id": 1, "subject": "Audit", "status": "completed"},
-            {"id": 2, "subject": "Implement", "status": "completed", "blockedBy": [1]},
+            {"phase": "Execution", "content": "Audit", "status": "completed"},
+            {"phase": "Execution", "content": "Implement", "status": "completed"},
         ]
         frontend = FakeFrontend()
         state = SimpleNamespace(setup_mode=False)
         b = binding(tmp_path)
-        backend = PiTodoBackend(tasks)
+        backend = OmpTodoBackend(tasks)
 
         await on_tmux_event(b, "assistant_text", "第一条", frontend, state, backend)
         await on_tmux_event(b, "assistant_text", "第二条", frontend, state, backend)
 
         panel = (
-            "○ <b>Todos (2/2)</b>\n"
-            "├─ ✓ #1 <s>Audit</s>\n"
-            "└─ ✓ #2 <s>Implement</s> ⛓ #1"
+            "○ <b>Todos (2/2)</b>\n▾ <b>Execution</b> (2/2)\n"
+            "├─ ✓ <s>Audit</s>\n└─ ✓ <s>Implement</s>"
         )
         assert frontend.sent == [
             ("html", 123, None, f"第一条\n\n{panel}"),
@@ -340,11 +333,11 @@ def test_assistant_text_promotes_relative_markdown_link_from_binding_cwd(tmp_pat
     asyncio.run(run())
 
 
-def test_pi_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
+def test_omp_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
     async def run():
         tasks = [
-            {"id": 1, "subject": "Audit", "status": "completed"},
-            {"id": 2, "subject": "Implement", "status": "in_progress", "blockedBy": [1]},
+            {"phase": "Execution", "content": "Audit", "status": "completed"},
+            {"phase": "Execution", "content": "Implement", "status": "in_progress"},
         ]
         frontend = FakeFrontend()
         state = SimpleNamespace(setup_mode=False, tool_aggregator={}, fire=close_coro)
@@ -356,7 +349,7 @@ def test_pi_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
             "📋 任务 update",
             frontend,
             state,
-            PiTodoBackend(tasks),
+            OmpTodoBackend(tasks),
         )
 
         assert frontend.sent == [
@@ -366,8 +359,9 @@ def test_pi_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
                 None,
                 "💭 <b>工作中…</b>\n📋 任务 update\n\n"
                 "● <b>Todos (1/2)</b>\n"
-                "├─ ✓ #1 <s>Audit</s>\n"
-                "└─ ◐ #2 <b>Implement</b> ⛓ #1",
+                "▾ <b>Execution</b> (1/2)\n"
+                "├─ ✓ <s>Audit</s>\n"
+                "└─ ◐ <b>Implement</b>",
             )
         ]
 
@@ -407,8 +401,10 @@ def test_final_assistant_text_immediately_completes_the_tool_status_card(tmp_pat
             setup_mode=False,
             tool_aggregator={
                 "alpha": {
-                    "msg_id": "om-working", "chat_id": 123,
-                    "content": ["💭 <b>工作中…</b>", "工具执行"], "last_ts": 0,
+                    "msg_id": "om-working",
+                    "chat_id": 123,
+                    "content": ["💭 <b>工作中…</b>", "工具执行"],
+                    "last_ts": 0,
                 }
             },
         )
@@ -464,13 +460,13 @@ def test_assistant_plan_edits_latest_plan_message(tmp_path):
     asyncio.run(run())
 
 
-def test_pi_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
+def test_omp_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
     async def run():
-        tasks = [{"id": 1, "subject": "Done", "status": "completed"}]
+        tasks = [{"phase": "Execution", "content": "Done", "status": "completed"}]
         frontend = FakeFrontend()
         state = SimpleNamespace(setup_mode=False)
         b = binding(tmp_path)
-        backend = PiTodoBackend(tasks)
+        backend = OmpTodoBackend(tasks)
 
         await on_tmux_event(b, "assistant_live_text", "进度", frontend, state, backend)
         await on_tmux_event(b, "assistant_text", "进度", frontend, state, backend)
@@ -480,7 +476,7 @@ def test_pi_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
                 "html",
                 123,
                 None,
-                "进度\n\n○ <b>Todos (1/1)</b>\n└─ ✓ <s>Done</s>",
+                "进度\n\n○ <b>Todos (1/1)</b>\n▾ <b>Execution</b> (1/1)\n└─ ✓ <s>Done</s>",
             )
         ]
 

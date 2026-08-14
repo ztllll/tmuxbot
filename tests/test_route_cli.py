@@ -20,7 +20,7 @@ def route(name: str = "alpha", **overrides) -> dict[str, object]:
         "tmux_window": 0,
         "tmux_pane": 0,
         "cwd": f"/tmp/{name}",
-        "backend": "pi",
+        "backend": "omp",
     }
     item.update(overrides)
     return item
@@ -51,9 +51,7 @@ def test_route_store_round_trips_feishu_thread_root_anchor(tmp_path, capsys):
     item = RouteStore(path).inspect("alpha")
 
     assert item.thread_root_message_id == "om_root"
-    assert run_route_command(
-        ["--file", str(path), "inspect", "alpha", "--json"]
-    ) == 0
+    assert run_route_command(["--file", str(path), "inspect", "alpha", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["thread_root_message_id"] == "om_root"
 
 
@@ -121,15 +119,25 @@ def test_route_cli_bind_accepts_explicit_mention_policy(tmp_path, capsys):
 
     exit_code = run_route_command(
         [
-            "--file", str(path), "bind",
-            "--name", "alpha",
-            "--channel", "telegram",
-            "--credential", "TG_BOT_TOKEN",
-            "--chat-id", "-1001",
-            "--thread-id", "42",
-            "--tmux-session", "alpha",
-            "--cwd", "/tmp/alpha",
-            "--backend", "pi",
+            "--file",
+            str(path),
+            "bind",
+            "--name",
+            "alpha",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_BOT_TOKEN",
+            "--chat-id",
+            "-1001",
+            "--thread-id",
+            "42",
+            "--tmux-session",
+            "alpha",
+            "--cwd",
+            "/tmp/alpha",
+            "--backend",
+            "omp",
             "--no-mention-required",
         ]
     )
@@ -145,22 +153,18 @@ def test_route_cli_list_json_is_machine_readable(tmp_path, capsys):
     path = tmp_path / "bindings.yaml"
     write_routes(path, [route()])
 
-    exit_code = run_route_command(
-        ["--file", str(path), "list", "--json"]
-    )
+    exit_code = run_route_command(["--file", str(path), "list", "--json"])
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["name"] == "alpha"
     assert payload[0]["thread_id"] == 42
-    assert payload[0]["backend"] == "pi"
+    assert payload[0]["backend"] == "omp"
 
 
 def test_main_parser_exposes_route_namespace_without_consuming_route_flags(tmp_path):
     path = tmp_path / "bindings.yaml"
-    args = build_parser().parse_args(
-        ["route", "--file", str(path), "list", "--json"]
-    )
+    args = build_parser().parse_args(["route", "--file", str(path), "list", "--json"])
 
     assert args.command == "route"
     assert args.route_file == path

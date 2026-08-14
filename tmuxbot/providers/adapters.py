@@ -11,12 +11,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from tmuxbot.providers.codex_config import codex_launch_arguments
+from tmuxbot.omp_extension import managed_extension_source
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderAdapter:
     binary_name: str
     display_name: str
+    route_backend: str
+    telegram_credential_env: str
     launch_arguments: tuple[str, ...]
     model_command: str | None
     teamrun_instruction: str
@@ -27,10 +30,21 @@ class ProviderAdapter:
         return self.model_command is not None
 
 
+def omp_launch_arguments() -> tuple[str, ...]:
+    """Return the fixed interactive OMP argv with the managed extension pinned."""
+
+    extension = managed_extension_source().resolve()
+    if not extension.is_file():
+        raise OSError(f"managed OMP handoff extension missing: {extension}")
+    return ("--approval-mode", "yolo", "--extension", str(extension))
+
+
 _ADAPTERS = {
     "claude": ProviderAdapter(
         binary_name="claude",
         display_name="Claude Code",
+        route_backend="claude_code",
+        telegram_credential_env="TG_BOT_TOKEN",
         launch_arguments=("--dangerously-skip-permissions",),
         model_command="/model",
         teamrun_instruction="使用 Claude Code 的 Bash 工具执行 worker 回报命令。",
@@ -38,17 +52,22 @@ _ADAPTERS = {
     "codex": ProviderAdapter(
         binary_name="codex",
         display_name="Codex",
+        route_backend="codex",
+        telegram_credential_env="TG_CODEX_BOT_TOKEN",
         launch_arguments=("--dangerously-bypass-approvals-and-sandbox",),
         model_command="/model",
         teamrun_instruction="使用 Codex 的 shell 工具执行 worker 回报命令。",
         launch_arguments_resolver=lambda: codex_launch_arguments(),
     ),
-    "pi": ProviderAdapter(
-        binary_name="pi",
-        display_name="Pi",
-        launch_arguments=("--approve",),
+    "omp": ProviderAdapter(
+        binary_name="omp",
+        display_name="Oh My Pi",
+        route_backend="omp",
+        telegram_credential_env="TG_OMP_BOT_TOKEN",
+        launch_arguments=(),
         model_command="/model",
-        teamrun_instruction="使用 Pi 的 bash 工具执行 worker 回报命令。",
+        teamrun_instruction="使用 OMP 的 bash 工具执行 worker 回报命令。",
+        launch_arguments_resolver=omp_launch_arguments,
     ),
 }
 

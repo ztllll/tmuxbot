@@ -14,6 +14,7 @@
 - tool_use 在 function_call (name + arguments JSON string)
 - agent_message event_msg 跟 response_item message 内容重复 → 跳过避免双推
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,8 +39,13 @@ from tmuxbot.core.events import (
 from tmuxbot.core.sessions import SessionIdentity
 from tmuxbot.providers.adapters import provider_launch_arguments
 from tmuxbot.tmux import (
-    tmux_capture, tmux_has_session, tmux_new_session,
-    tmux_pane_command, tmux_pane_process_commands, tmux_safe_launch, tmux_send_key,
+    tmux_capture,
+    tmux_has_session,
+    tmux_new_session,
+    tmux_pane_command,
+    tmux_pane_process_commands,
+    tmux_safe_launch,
+    tmux_send_key,
 )
 from tmuxbot.utils import strip_decorations
 
@@ -49,6 +55,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
+
+
 # --dangerously-bypass-approvals-and-sandbox: codex 最高权限(跳过所有审批 + 无沙箱),
 # 等价 claude 的 --dangerously-skip-permissions。bot 是 tmux 桥接, 命令需无人值守自动执行。
 # CODEX_BIN 仍可配绝对路径(防 tmux shell PATH 不含 ~/.npm-global/bin)。
@@ -75,16 +83,16 @@ def _resume_cmd(session_id: str) -> str:
 
 # ────────── 工具名中文化 (codex 工具集) ──────────
 CODEX_TOOL_ZH = {
-    "exec_command":         "💻 执行",
-    "update_plan":          "📋 更新计划",
-    "apply_patch":          "✂️ 改文件",
-    "read_file":            "📖 读取",
-    "write_file":           "✏️ 写入",
-    "search":               "🔍 搜索",
-    "view_image":           "🖼 看图",
-    "open_link":            "🌐 打开链接",
-    "web_search":           "🌐 联网搜索",
-    "fetch":                "🌐 抓取",
+    "exec_command": "💻 执行",
+    "update_plan": "📋 更新计划",
+    "apply_patch": "✂️ 改文件",
+    "read_file": "📖 读取",
+    "write_file": "✏️ 写入",
+    "search": "🔍 搜索",
+    "view_image": "🖼 看图",
+    "open_link": "🌐 打开链接",
+    "web_search": "🌐 联网搜索",
+    "fetch": "🌐 抓取",
 }
 
 
@@ -159,9 +167,7 @@ def _format_codex_custom_tool(name: str, input_text: str) -> str:
 def _format_patch_apply_end(payload: dict) -> str:
     success = bool(payload.get("success"))
     text = "\n".join(
-        str(payload.get(k) or "").strip()
-        for k in ("stdout", "stderr")
-        if payload.get(k)
+        str(payload.get(k) or "").strip() for k in ("stdout", "stderr") if payload.get(k)
     )
     files = _patch_result_file_names(text)
     if files:
@@ -292,6 +298,42 @@ class CodexBackend(Backend):
             supports_interactive_pickers=True,
         )
 
+    def interactive_commands(self) -> dict[str, str]:
+        return {
+            "/agent": "切换/查看 agent thread。",
+            "/apps": "打开 app/connector picker。",
+            "/approve": "审批最近一次 auto review deny 的重试。",
+            "/btw": "开启 side conversation。",
+            "/debug-config": "显示配置层诊断。",
+            "/diff": "显示当前 diff。",
+            "/experimental": "打开实验功能开关。",
+            "/fast": "切换或查看 Fast tier。",
+            "/fork": "fork 当前会话。",
+            "/goal": "设置或管理持久 goal。",
+            "/hooks": "查看/管理 hooks。",
+            "/ide": "引入 IDE 上下文。",
+            "/keymap": "打开快捷键设置。",
+            "/mcp": "查看 MCP 工具状态。",
+            "/memories": "配置 memories。",
+            "/mention": "选择/附加文件。",
+            "/model": "切换模型，无参数时打开模型 picker。",
+            "/permissions": "切换 approval/sandbox 权限模式。",
+            "/personality": "选择回复风格。",
+            "/plan": "进入计划模式并可带 inline prompt。",
+            "/plugins": "打开插件浏览/管理界面。",
+            "/ps": "查看后台 terminal。",
+            "/raw": "切换 raw scrollback。",
+            "/resume": "恢复历史会话。",
+            "/review": "启动 working tree review。",
+            "/side": "开启 side conversation。",
+            "/skills": "浏览/选择 skills。",
+            "/statusline": "配置 status line。",
+            "/stop": "停止后台 terminal。",
+            "/theme": "选择终端主题。",
+            "/title": "配置终端标题。",
+            "/vim": "切换 composer Vim mode。",
+        }
+
     @property
     def running_command_names(self) -> frozenset[str]:
         return self.pane_command_names
@@ -380,9 +422,7 @@ class CodexBackend(Backend):
         if b.transcript_path:
             pinned = Path(b.transcript_path)
             metadata = self._session_metadata(pinned)
-            if metadata and self._metadata_matches(
-                metadata, target_cwd, b.provider_session_id
-            ):
+            if metadata and self._metadata_matches(metadata, target_cwd, b.provider_session_id):
                 # A saved identity is normally authoritative.  However, Codex
                 # /new creates a new rollout while keeping the same tmux pane;
                 # after a bridge restart an old persisted path would otherwise
@@ -400,9 +440,7 @@ class CodexBackend(Backend):
         if b.provider_session_id:
             for jl in matching:
                 metadata = self._session_metadata(jl)
-                if metadata and self._metadata_matches(
-                    metadata, target_cwd, b.provider_session_id
-                ):
+                if metadata and self._metadata_matches(metadata, target_cwd, b.provider_session_id):
                     return jl
         # 按 mtime 倒序, 找第一个 cwd 匹配的。找不到就返回 None, 不能兜底到全局最新,
         # 否则多个 binding 会同时 tail 同一个 Codex rollout, 导致跨 chat 推送。
@@ -455,11 +493,7 @@ class CodexBackend(Backend):
             settings = payload.get("thread_settings")
             if isinstance(settings, dict):
                 metadata = ProviderRuntimeMetadata(
-                    model=(
-                        settings["model"]
-                        if isinstance(settings.get("model"), str)
-                        else None
-                    ),
+                    model=(settings["model"] if isinstance(settings.get("model"), str) else None),
                     effort=(
                         settings["reasoning_effort"]
                         if isinstance(settings.get("reasoning_effort"), str)
@@ -505,9 +539,7 @@ class CodexBackend(Backend):
             return None
 
     @staticmethod
-    def _metadata_matches(
-        metadata: dict, target_cwd: str, session_id: str | None
-    ) -> bool:
+    def _metadata_matches(metadata: dict, target_cwd: str, session_id: str | None) -> bool:
         cwd = metadata.get("cwd")
         if not isinstance(cwd, str) or str(Path(cwd).resolve()) != target_cwd:
             return False
@@ -527,9 +559,7 @@ class CodexBackend(Backend):
             cwd=str(b.cwd),
         )
 
-    def parse_event(
-        self, line: str, provider_session_id: str | None = None
-    ) -> list[ProviderEvent]:
+    def parse_event(self, line: str, provider_session_id: str | None = None) -> list[ProviderEvent]:
         """Codex rollout row → normalized provider events."""
         try:
             j = json.loads(line)
@@ -569,12 +599,7 @@ class CodexBackend(Backend):
                     ]
                 return []
             if pt == "agent_message_delta":
-                delta = str(
-                    p.get("delta")
-                    or p.get("message")
-                    or p.get("text")
-                    or ""
-                )
+                delta = str(p.get("delta") or p.get("message") or p.get("text") or "")
                 if delta:
                     return [
                         self.provider_event(
@@ -598,8 +623,7 @@ class CodexBackend(Backend):
                     )
                 ]
             # 这些都跟 response_item 重复或纯 metadata, 跳过
-            if pt in ("token_count", "user_message",
-                      "agent_reasoning_delta", "agent_reasoning"):
+            if pt in ("token_count", "user_message", "agent_reasoning_delta", "agent_reasoning"):
                 return []
             return []
 
@@ -751,14 +775,13 @@ class CodexBackend(Backend):
                 continue
             low = scr.lower()
             if "update" in low and ("update now" in low or "skip" in low):
-                tmux_send_key(b.tmux_target, "Escape")   # 取消更新, 绝不 Update now
+                tmux_send_key(b.tmux_target, "Escape")  # 取消更新, 绝不 Update now
                 continue
             if ("trust" in low or "信任" in low) and ("yes" in low or "no" in low or "1." in scr):
-                tmux_send_key(b.tmux_target, "Enter")    # 选信任 (默认 Yes)
+                tmux_send_key(b.tmux_target, "Enter")  # 选信任 (默认 Yes)
                 continue
-            if (
-                    self.is_running_command(tmux_pane_command(b.tmux_target))
-                and ("›" in scr or "gpt-" in low)
+            if self.is_running_command(tmux_pane_command(b.tmux_target)) and (
+                "›" in scr or "gpt-" in low
             ):
                 break
         await asyncio.sleep(1.0)  # prompt 渲染余量
@@ -766,25 +789,34 @@ class CodexBackend(Backend):
     def command_opts(self) -> dict[str, CmdOpts]:
         return {
             # codex 实际跑这些命令时屏幕反馈格式跟 claude 不同, 但 fallback raw 也能用
-            "/status":  CmdOpts(parser=parse_status_codex, lines=250),  # 长输出抓全(同 claude)
-            "/clear":   CmdOpts(
+            "/status": CmdOpts(parser=parse_status_codex, lines=250),  # 长输出抓全(同 claude)
+            "/clear": CmdOpts(
                 parser=parse_clear_codex,
-                init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True,
+                init_delay=0.5,
+                poll=0.3,
+                max_iters=15,
+                expect_new_session=True,
             ),
-            "/new":     CmdOpts(
+            "/new": CmdOpts(
                 parser=parse_new_codex,
-                init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True,
+                init_delay=0.5,
+                poll=0.3,
+                max_iters=15,
+                expect_new_session=True,
             ),
             "/compact": CmdOpts(
                 parser=parse_compact_codex,
-                init_delay=2.0, poll=1.0, max_iters=120, lines=120,
+                init_delay=2.0,
+                poll=1.0,
+                max_iters=120,
+                lines=120,
                 parser_can_retry=True,
                 done_pattern=CODEX_COMPACT_DONE_RE,
                 expect_new_session=True,
                 notice="⏳ Codex 压缩中…",
                 fallback_summary="✅ <b>Codex 上下文已压缩</b>",
             ),
-            "/resume":  CmdOpts(init_delay=0.5, poll=0.3, max_iters=6),
+            "/resume": CmdOpts(init_delay=0.5, poll=0.3, max_iters=6),
         }
 
     def command_aliases(self) -> dict[str, str]:
@@ -802,7 +834,7 @@ class CodexBackend(Backend):
         count = 0
         last_ts = None
         model = None
-        for line in all_lines[-last_n * 5:]:  # codex jsonl 行更多, 多扫些
+        for line in all_lines[-last_n * 5 :]:  # codex jsonl 行更多, 多扫些
             try:
                 j = json.loads(line)
             except Exception:
@@ -835,7 +867,7 @@ class CodexBackend(Backend):
             "count": count,
             "input": total_in - cached,
             "output": total_out,
-            "cache_create": 0,            # codex 没单独 cache_create 字段
+            "cache_create": 0,  # codex 没单独 cache_create 字段
             "cache_read": cached,
             "cache_hit_rate": cache_hit,
             "last_ts": last_ts,

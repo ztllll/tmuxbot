@@ -5,6 +5,7 @@ shell can retain stopped provider children after an interrupted launch.  This
 module provides one process-tree observation seam so backends never need to
 reconstruct ``ps`` output themselves.
 """
+
 from __future__ import annotations
 
 import shlex
@@ -42,9 +43,7 @@ def pane_processes(target: str) -> tuple[PaneProcess, ...]:
     root_pid = tmux_pane_pid(target)
     if root_pid is None:
         return ()
-    result = subprocess.run(
-        ["ps", "-eo", "pid=,ppid=,stat=,args="], capture_output=True, text=True
-    )
+    result = subprocess.run(["ps", "-eo", "pid=,ppid=,stat=,args="], capture_output=True, text=True)
     children: dict[int, list[PaneProcess]] = {}
     processes: dict[int, PaneProcess] = {}
     for line in result.stdout.splitlines():
@@ -59,7 +58,7 @@ def pane_processes(target: str) -> tuple[PaneProcess, ...]:
         processes[pid] = process
         children.setdefault(parent_pid, []).append(process)
 
-    # ``respawn-pane ... exec pi`` makes Pi the pane root rather than a shell
+    # ``respawn-pane ... exec omp`` makes OMP the pane root rather than a shell
     # descendant.  Include it so health is invariant to the launch wrapper.
     result_processes: list[PaneProcess] = []
     root = processes.get(root_pid)
@@ -86,7 +85,7 @@ def has_stopped_provider_process(target: str, executable: str) -> bool:
 def provider_tree_is_safe(target: str, executable: str) -> bool:
     """Whether the pane has its expected foreground provider and no stopped copy.
 
-    Pi can retain a short wrapper parent plus its worker child, so process count
+    OMP can retain a short wrapper parent plus its worker child, so process count
     is deliberately not a health criterion.  The dangerous state observed in
     production was a stopped sibling, which is unambiguous and fail-closed.
     """
@@ -97,7 +96,7 @@ def provider_tree_is_safe(target: str, executable: str) -> bool:
 def provider_session_file(target: str, executable: str) -> Path | None:
     """Return a provider's precise live transcript path when it publishes one.
 
-    Some Pi releases do not export ``PI_SESSION_FILE``.  Absence is therefore
+    Some OMP releases do not export ``OMP_SESSION_FILE``.  Absence is therefore
     not a health failure; callers use it only as an authoritative handoff hint.
     """
     matching = _matching_provider_processes(target, executable)
@@ -108,7 +107,7 @@ def provider_session_file(target: str, executable: str) -> Path | None:
             raw = Path(f"/proc/{process.pid}/environ").read_bytes()
         except OSError:
             continue
-        key = b"PI_SESSION_FILE="
+        key = b"OMP_SESSION_FILE="
         for entry in raw.split(b"\0"):
             if entry.startswith(key):
                 value = entry[len(key) :].decode("utf-8", errors="surrogateescape")

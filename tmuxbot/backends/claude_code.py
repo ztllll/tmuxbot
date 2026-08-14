@@ -6,6 +6,7 @@
 - find_tui_activity_fp: 抓 ✶ Doing… (Xm Ys · ↓ Xk tokens) 这种行
 - command_opts: /context /cost /usage /status /help /compact /clear /new /resume /rename
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,6 +53,8 @@ _CONTEXT_USAGE_MODEL_RE = re.compile(
     r"\*\*Model:\*\*\s*`?([A-Za-z0-9][A-Za-z0-9_.-]*)`?",
     re.I,
 )
+
+
 def _start_cmd() -> str:
     # CLAUDE_BIN 可配绝对路径, 防 systemd/tmux shell PATH 不含 ~/.local/bin 或命中旧 npm 入口。
     arguments = [
@@ -63,23 +66,23 @@ def _start_cmd() -> str:
 
 # ────────── tool 中文化 + 关键参数提取 ──────────
 TOOL_ZH = {
-    "Read":          "📖 读取",
-    "Write":         "✏️ 写入",
-    "Edit":          "✂️ 编辑",
-    "MultiEdit":     "✂️ 多处编辑",
-    "Bash":          "💻 执行",
-    "Grep":          "🔍 搜索",
-    "Glob":          "📁 列举",
-    "WebSearch":     "🌐 联网搜索",
-    "WebFetch":      "🌐 抓取网页",
-    "Task":          "🤖 派子任务",
-    "TaskCreate":    "➕ 新任务",
-    "TaskUpdate":    "🔄 更新任务",
-    "TaskList":      "📋 任务清单",
-    "TodoWrite":     "📋 写待办",
-    "NotebookEdit":  "📓 改 notebook",
-    "ToolSearch":    "🧰 查工具",
-    "Skill":         "💡 调用 Skill",
+    "Read": "📖 读取",
+    "Write": "✏️ 写入",
+    "Edit": "✂️ 编辑",
+    "MultiEdit": "✂️ 多处编辑",
+    "Bash": "💻 执行",
+    "Grep": "🔍 搜索",
+    "Glob": "📁 列举",
+    "WebSearch": "🌐 联网搜索",
+    "WebFetch": "🌐 抓取网页",
+    "Task": "🤖 派子任务",
+    "TaskCreate": "➕ 新任务",
+    "TaskUpdate": "🔄 更新任务",
+    "TaskList": "📋 任务清单",
+    "TodoWrite": "📋 写待办",
+    "NotebookEdit": "📓 改 notebook",
+    "ToolSearch": "🧰 查工具",
+    "Skill": "💡 调用 Skill",
 }
 
 
@@ -125,11 +128,11 @@ def format_tool_use(name: str, inp: dict) -> str:
 # ────────── parse_* 系列 (TUI 命令输出结构化) ──────────
 CAT_ZH = {
     "System prompt": "系统提示",
-    "System tools":  "系统工具",
-    "Memory files":  "记忆文件",
-    "Skills":        "技能",
-    "Messages":      "对话消息",
-    "Free space":    "剩余空间",
+    "System tools": "系统工具",
+    "Memory files": "记忆文件",
+    "Skills": "技能",
+    "Messages": "对话消息",
+    "Free space": "剩余空间",
 }
 
 
@@ -176,9 +179,12 @@ def parse_context(raw: str) -> str | None:
     mem_n = len(set(re.findall(r"~/\.claude/CLAUDE\.md", clean)))
     skill_n = len(re.findall(r"^\s*[├└]\s*\S+:\s*[\~\d]", clean, re.M))
     foot = []
-    if mcp_n: foot.append(f"MCP工具×{mcp_n}")
-    if mem_n: foot.append(f"记忆×{mem_n}")
-    if skill_n: foot.append(f"技能×{skill_n}")
+    if mcp_n:
+        foot.append(f"MCP工具×{mcp_n}")
+    if mem_n:
+        foot.append(f"记忆×{mem_n}")
+    if skill_n:
+        foot.append(f"技能×{skill_n}")
     if foot:
         parts.append("· " + " · ".join(foot))
     return "\n".join(parts)
@@ -202,7 +208,7 @@ def parse_cost(raw: str) -> str | None:
     # 否则 re.search 抓到旧块 → 花费/用量显示陈旧值。guard: 找不到锚点就退回全文。
     _m = list(re.finditer(r"Settings\s+Status\s+Config\s+Usage\s+Stats", clean))
     if _m:
-        clean = clean[_m[-1].start():]
+        clean = clean[_m[-1].start() :]
     parts = ["💰 <b>用量与花费</b>"]
 
     sess_rows: list[list[str]] = []
@@ -217,13 +223,15 @@ def parse_cost(raw: str) -> str | None:
         sess_rows.append(["🌐 API 耗时", api_m.group(1)])
     code_m = re.search(
         r"Total\s+code\s+changes:?\s*([\d,]+)\s+lines?\s+added,?\s+([\d,]+)\s+lines?\s+removed",
-        clean, re.I,
+        clean,
+        re.I,
     )
     if code_m:
         sess_rows.append(["📝 代码改动", f"+{code_m.group(1)} / -{code_m.group(2)} 行"])
     usage_m = re.search(
         r"Usage:?\s*([\d,]+)\s+input,?\s+([\d,]+)\s+output,?\s+([\d,]+)\s+cache\s+read,?\s+([\d,]+)\s+cache\s+write",
-        clean, re.I,
+        clean,
+        re.I,
     )
     if usage_m:
         sess_rows.append(["📥 输入 token", usage_m.group(1)])
@@ -271,12 +279,15 @@ def parse_cost(raw: str) -> str | None:
         parts.extend(api_quota_lines)
     elif limit_rows:
         parts.append("📈 <b>限制窗口</b>")
-        parts.append(f"<pre>{html.escape(render_table(['窗口', '已用', '进度', '重置时间'], limit_rows))}</pre>")
+        parts.append(
+            f"<pre>{html.escape(render_table(['窗口', '已用', '进度', '重置时间'], limit_rows))}</pre>"
+        )
     else:
         # 旧版 /cost 兜底 (API + 屏幕 limit_rows 都没拿到)
         win_m = re.search(
             r"(\d+)\s*/\s*(\d+)\s+(?:premium\s+)?(?:message|prompt|request)s?",
-            clean, re.I,
+            clean,
+            re.I,
         )
         if win_m:
             used_n, lim_n = int(win_m.group(1)), int(win_m.group(2))
@@ -284,9 +295,8 @@ def parse_cost(raw: str) -> str | None:
             bar = "█" * bar_used + "░" * (10 - bar_used)
             parts.append("")
             parts.append(f"📦 5小时窗口 <b>{used_n}/{lim_n}</b>  <code>{bar}</code>")
-        reset_m = (
-            re.search(r"[Rr]esets?\s+in\s+([^\n]+?)\s*$", clean, re.M)
-            or re.search(r"[Rr]esets?\s+at\s+([^\n]+?)\s*$", clean, re.M)
+        reset_m = re.search(r"[Rr]esets?\s+in\s+([^\n]+?)\s*$", clean, re.M) or re.search(
+            r"[Rr]esets?\s+at\s+([^\n]+?)\s*$", clean, re.M
         )
         if reset_m:
             parts.append(f"⏰ 重置 <code>{html.escape(reset_m.group(1).strip())}</code>")
@@ -298,10 +308,10 @@ def parse_cost(raw: str) -> str | None:
 
 # OAuth /api/oauth/usage 返回的窗口 key → 中文标签 (key 顺序决定渲染顺序)
 _QUOTA_WINDOW_LABEL = {
-    "five_hour":          "🕔 5 小时",
-    "seven_day":          "📅 本周 (总)",
-    "seven_day_opus":     "📅 本周 Opus",
-    "seven_day_sonnet":   "📅 本周 Sonnet",
+    "five_hour": "🕔 5 小时",
+    "seven_day": "📅 本周 (总)",
+    "seven_day_opus": "📅 本周 Opus",
+    "seven_day_sonnet": "📅 本周 Sonnet",
     "seven_day_oauth_apps": "📅 本周 OAuth Apps",
 }
 
@@ -331,9 +341,7 @@ def _fmt_remaining(target_ts: float) -> str:
     return f"{d}d{h}h"
 
 
-def _fmt_quota_lines(
-    payload: dict | None, fetched_at: float, last_error: str | None
-) -> list[str]:
+def _fmt_quota_lines(payload: dict | None, fetched_at: float, last_error: str | None) -> list[str]:
     """把 /api/oauth/usage 的 payload 渲染成 /status 的配额章节 (HTML)。
     取不到 (无 OAuth 凭证 / 走中转的环境) → 返回 [] 整段省略, 不显示"无法读取"噪音,
     保证有订阅 (直连) 与无订阅 (中转) 两种环境的 /status·/cost 核心内容一致。"""
@@ -388,14 +396,20 @@ def parse_status(raw: str) -> str | None:
     # (Tab 栏定位), 否则 KV findall 会混进旧对话框的陈旧值。guard 找不到则退回全文。
     _m = list(re.finditer(r"Settings\s+Status\s+Config\s+Usage\s+Stats", clean))
     if _m:
-        clean = clean[_m[-1].start():]
+        clean = clean[_m[-1].start() :]
     kvs = re.findall(r"^[\s│├└]*([A-Z][A-Za-z ]+):\s*(.+)$", clean, re.M)
     if not kvs:
         return None
     STATUS_ZH = {
-        "Model": "模型", "Version": "版本", "Working directory": "工作目录",
-        "Account": "账号", "Project": "项目", "Session": "会话",
-        "Auto-update": "自动更新", "Memory": "记忆", "Permissions": "权限",
+        "Model": "模型",
+        "Version": "版本",
+        "Working directory": "工作目录",
+        "Account": "账号",
+        "Project": "项目",
+        "Session": "会话",
+        "Auto-update": "自动更新",
+        "Memory": "记忆",
+        "Permissions": "权限",
     }
     parts = ["ℹ️ <b>状态</b>"]
     for k, v in kvs[:20]:
@@ -467,11 +481,7 @@ def parse_resume(raw: str) -> str | None:
 
 
 def parse_rename(raw: str) -> str | None:
-    return (
-        "📝 <b>请发新名字</b>\n"
-        "· 下一条 TG 文本作为新对话名字\n"
-        "· 发 /esc 取消等待"
-    )
+    return "📝 <b>请发新名字</b>\n· 下一条 TG 文本作为新对话名字\n· 发 /esc 取消等待"
 
 
 # ────────── TUI 活跃指纹 (heartbeat 用) ──────────
@@ -529,6 +539,31 @@ class ClaudeCodeBackend(Backend):
             supports_usage=True,
             supports_interactive_pickers=True,
         )
+
+    def interactive_commands(self) -> dict[str, str]:
+        return {
+            "/add-dir": "添加工作目录，可能打开交互确认。",
+            "/agents": "打开 subagent 管理界面。",
+            "/allowed-tools": "打开权限规则管理界面。",
+            "/branch": "创建/切换会话分支，可能打开选择界面。",
+            "/code-review": "启动代码审查工作流。",
+            "/debug": "打开调试/诊断信息。",
+            "/diff": "显示当前 diff。",
+            "/doctor": "运行安装/运行时诊断。",
+            "/effort": "调整推理强度，无参数时打开滑条。",
+            "/mcp": "打开 MCP 状态/管理界面。",
+            "/memory": "打开记忆管理界面。",
+            "/model": "切换模型，无参数时打开模型 picker。",
+            "/permissions": "打开权限规则管理界面。",
+            "/plan": "进入计划模式并让后续计划输出正常回推。",
+            "/resume": "恢复历史会话，无参数时打开会话 picker。",
+            "/review": "启动代码审查工作流。",
+            "/security-review": "启动安全审查工作流。",
+            "/settings": "打开设置界面。",
+            "/tasks": "打开后台任务列表。",
+            "/ultraplan": "启动 ultraplan 工作流。",
+            "/workflows": "打开 workflow 进度界面。",
+        }
 
     def is_running_command(self, command: str) -> bool:
         return command == "claude"
@@ -616,9 +651,7 @@ class ClaudeCodeBackend(Backend):
                 in_project = pinned.parent.resolve() == d.resolve()
             except OSError:
                 in_project = False
-            id_matches = (
-                not b.provider_session_id or pinned.stem == b.provider_session_id
-            )
+            id_matches = not b.provider_session_id or pinned.stem == b.provider_session_id
             if in_project and id_matches and pinned.is_file():
                 return pinned
         if b.provider_session_id:
@@ -696,14 +729,10 @@ class ClaudeCodeBackend(Backend):
     def poll_provider_events(self, b: "Binding") -> list[ProviderEvent]:
         if b.name not in self._hook_offsets:
             self._hook_offsets[b.name] = (
-                self.hook_spool_path.stat().st_size
-                if self.hook_spool_path.is_file()
-                else 0
+                self.hook_spool_path.stat().st_size if self.hook_spool_path.is_file() else 0
             )
             return []
-        records, offset = read_hook_spool(
-            self.hook_spool_path, self._hook_offsets[b.name]
-        )
+        records, offset = read_hook_spool(self.hook_spool_path, self._hook_offsets[b.name])
         self._hook_offsets[b.name] = offset
         events: list[ProviderEvent] = []
         for payload in records:
@@ -823,11 +852,13 @@ class ClaudeCodeBackend(Backend):
         for f in sorted(tdir.glob("*.json")):
             try:
                 d = json.loads(f.read_text())
-                tasks.append({
-                    "id": int(d.get("id", 0)),
-                    "subject": d.get("subject", ""),
-                    "status": d.get("status", ""),
-                })
+                tasks.append(
+                    {
+                        "id": int(d.get("id", 0)),
+                        "subject": d.get("subject", ""),
+                        "status": d.get("status", ""),
+                    }
+                )
             except Exception:
                 continue
         tasks.sort(key=lambda t: t["id"])
@@ -845,8 +876,10 @@ class ClaudeCodeBackend(Backend):
             lines.append(f"🧮 <b>当前上下文</b> <code>{ctx / 1000:.1f}k</code> tokens")
         st = self.aggregate_usage(jl)
         if st:
+
             def _f(n: int) -> str:
                 return f"{n:,}"
+
             total_in = st["input"] + st["cache_create"] + st["cache_read"]
             lines.append(f"📊 <b>会话累计</b> · 助手 {st['count']} 条")
             lines.append(
@@ -857,9 +890,7 @@ class ClaudeCodeBackend(Backend):
             lines.append(f"  🎯 <b>缓存命中率 {st['cache_hit_rate'] * 100:.1f}%</b>")
         return ("\n" + "\n".join(lines)) if lines else ""
 
-    def parse_event(
-        self, line: str, provider_session_id: str | None = None
-    ) -> list[ProviderEvent]:
+    def parse_event(self, line: str, provider_session_id: str | None = None) -> list[ProviderEvent]:
         """Claude JSONL row → normalized provider events."""
         try:
             j = json.loads(line)
@@ -925,10 +956,7 @@ class ClaudeCodeBackend(Backend):
             if text_parts:
                 final_text = "\n".join(text_parts)
                 session_id = (
-                    provider_session_id
-                    or j.get("sessionId")
-                    or j.get("session_id")
-                    or "unknown"
+                    provider_session_id or j.get("sessionId") or j.get("session_id") or "unknown"
                 )
                 hook_key = (str(session_id), final_text)
                 if hook_key in self._hook_final_texts:
@@ -1027,11 +1055,11 @@ class ClaudeCodeBackend(Backend):
             # lines=250: /context 等输出很长(context 满时网格+全分类+MCP+记忆+技能+建议
             # 可达 80+ 行), 默认 80 行抓取会把顶部 token 总量行截掉 → parser 抓不到 → 回退原始屏。
             "/context": CmdOpts(parser=parse_context, lines=250),
-            "/cost":    CmdOpts(parser=parse_cost, lines=250),
-            "/usage":   CmdOpts(parser=parse_cost, lines=250),
-            "/stats":   CmdOpts(parser=parse_cost, lines=250),
-            "/status":  CmdOpts(parser=parse_status, lines=250),
-            "/help":    CmdOpts(parser=parse_help, lines=250),
+            "/cost": CmdOpts(parser=parse_cost, lines=250),
+            "/usage": CmdOpts(parser=parse_cost, lines=250),
+            "/stats": CmdOpts(parser=parse_cost, lines=250),
+            "/status": CmdOpts(parser=parse_status, lines=250),
+            "/help": CmdOpts(parser=parse_help, lines=250),
             "/compact": CmdOpts(
                 # ★ /compact 不切 session_id, 在同一个 jsonl 末尾 append 一条
                 # type=system + subtype=compact_boundary 事件 (含 compactMetadata
@@ -1043,15 +1071,22 @@ class ClaudeCodeBackend(Backend):
                 # flush 滞后 30-120s, 给到 360s 窗口 + 5s retry = 367s 总等待裕度;
                 # commands.py 已禁 expect_compact_done 时的 stable 早退 (屏幕静止 ≠
                 # jsonl flush, claude TUI 事务式 flush 会有 30-120s 滞后)。
-                init_delay=2.0, poll=1.0, max_iters=360, lines=120,
+                init_delay=2.0,
+                poll=1.0,
+                max_iters=360,
+                lines=120,
                 expect_compact_done=True,
                 notice="⏳ 压缩中…(可能 2-5 分钟,完成后会发通知)",
                 fallback_summary="✅ <b>上下文已压缩</b>\n📜 完整摘要 TUI 内 <code>ctrl+o</code> 查看",
             ),
-            "/clear": CmdOpts(parser=parse_clear, init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True),
-            "/new":   CmdOpts(parser=parse_new,   init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True),
-            "/resume":CmdOpts(parser=parse_resume,init_delay=0.5, poll=0.3, max_iters=6),
-            "/rename":CmdOpts(parser=parse_rename,init_delay=0.3, poll=0.3, max_iters=4),
+            "/clear": CmdOpts(
+                parser=parse_clear, init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True
+            ),
+            "/new": CmdOpts(
+                parser=parse_new, init_delay=0.5, poll=0.3, max_iters=15, expect_new_session=True
+            ),
+            "/resume": CmdOpts(parser=parse_resume, init_delay=0.5, poll=0.3, max_iters=6),
+            "/rename": CmdOpts(parser=parse_rename, init_delay=0.3, poll=0.3, max_iters=4),
         }
 
     def command_aliases(self) -> dict[str, str]:
@@ -1148,7 +1183,7 @@ class ClaudeCodeBackend(Backend):
         count = 0
         last_ts = None
         last_model = None
-        for line in all_lines[-last_n * 3:]:
+        for line in all_lines[-last_n * 3 :]:
             try:
                 j = json.loads(line)
             except Exception:
@@ -1157,10 +1192,10 @@ class ClaudeCodeBackend(Backend):
                 continue
             msg = j.get("message") or {}
             u = msg.get("usage") or {}
-            total_in   += int(u.get("input_tokens", 0) or 0)
-            total_out  += int(u.get("output_tokens", 0) or 0)
-            c_create   += int(u.get("cache_creation_input_tokens", 0) or 0)
-            c_read     += int(u.get("cache_read_input_tokens", 0) or 0)
+            total_in += int(u.get("input_tokens", 0) or 0)
+            total_out += int(u.get("output_tokens", 0) or 0)
+            c_create += int(u.get("cache_creation_input_tokens", 0) or 0)
+            c_read += int(u.get("cache_read_input_tokens", 0) or 0)
             count += 1
             last_ts = j.get("timestamp") or last_ts
             last_model = msg.get("model") or last_model

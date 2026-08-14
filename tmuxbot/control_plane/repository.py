@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tmuxbot.control_plane.migrations import MIGRATIONS
 from tmuxbot.control_plane.models import (
+    DISCOVERABLE_PROVIDER_BINARIES,
     ManagedSession,
     ProjectRecord,
     ProviderProfile,
@@ -158,10 +159,9 @@ class ControlPlaneRepository:
                     f"{maximum_supported}"
                 )
             pending = [(version, sql) for version, sql in MIGRATIONS if version not in applied]
-            # Migration 6 rebuilds provider_profiles to widen its CHECK constraint.
-            # SQLite cannot toggle foreign_keys after BEGIN, so disable it before
-            # the migration transaction and verify the rebuilt graph before commit.
-            rebuilds_provider_profiles = any(version == 6 for version, _sql in pending)
+            # Provider profile CHECK rebuilds require foreign_keys to be disabled
+            # before BEGIN. Verify the complete graph before committing either migration.
+            rebuilds_provider_profiles = any(version in {6, 7} for version, _sql in pending)
             if rebuilds_provider_profiles:
                 db.execute("PRAGMA foreign_keys = OFF")
             db.execute("BEGIN IMMEDIATE")
@@ -1300,8 +1300,17 @@ class ControlPlaneRepository:
             cursor = db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
             return cursor.rowcount == 1
 
+    @staticmethod
+    def _require_discoverable_provider(db: sqlite3.Connection, provider_id: str) -> None:
+        row = db.execute(
+            "SELECT binary_name FROM provider_profiles WHERE id = ?", (provider_id,)
+        ).fetchone()
+        if row is None or row["binary_name"] not in DISCOVERABLE_PROVIDER_BINARIES:
+            raise ValueError("managed sessions require a discoverable provider")
+
     def create_managed_session(self, session: ManagedSession) -> None:
         with self._connection() as db:
+            self._require_discoverable_provider(db, session.provider_id)
             db.execute(
                 "INSERT INTO managed_sessions "
                 "(id, project_id, provider_id, name, tmux_session, tmux_window, "
@@ -1333,6 +1342,7 @@ class ControlPlaneRepository:
 
     def update_managed_session(self, session: ManagedSession) -> bool:
         with self._connection() as db:
+            self._require_discoverable_provider(db, session.provider_id)
             cursor = db.execute(
                 "UPDATE managed_sessions SET project_id = ?, provider_id = ?, name = ?, "
                 "tmux_session = ?, tmux_window = ?, tmux_pane = ?, status = ? WHERE id = ?",
@@ -1372,10 +1382,7 @@ class ControlPlaneRepository:
                 ") AS active ON active.managed_session_id = session.id "
                 "WHERE active.run_state IN ('draft', 'running', 'paused', 'operator_required')"
             ).fetchall()
-        return {
-            f"{row['tmux_session']}:{row['tmux_window']}.{row['tmux_pane']}"
-            for row in rows
-        }
+        return {f"{row['tmux_session']}:{row['tmux_window']}.{row['tmux_pane']}" for row in rows}
 
     def has_active_teamrun_for_managed_session(self, session_id: str) -> bool:
         """A non-terminal plan retains both role and isolated worktree CLI identities."""

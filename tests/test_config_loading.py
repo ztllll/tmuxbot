@@ -90,7 +90,7 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
             "thread_root_message_id": "om_root_old",
             "tmux_session": "feishu-topic",
             "cwd": "/tmp/feishu-topic",
-            "backend": "pi",
+            "backend": "omp",
             "bot_token_env": "FEISHU",
             "channel": "feishu",
         }
@@ -115,11 +115,13 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
     assert bindings_file.stat().st_mode & 0o777 == 0o600
 
 
-def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi(monkeypatch, tmp_path):
+def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_omp(
+    monkeypatch, tmp_path
+):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     env_file = tmp_path / "runtime.env"
     env_file.write_text(
         "\n".join(
@@ -127,7 +129,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi
                 "BOSS_USER_ID=123",
                 "TMUXBOT_ADMIN_ENABLED=1",
                 "TMUXBOT_ADMIN_TMUX=tmuxbot-admin",
-                "TMUXBOT_ADMIN_CLI=pi",
+                "TMUXBOT_ADMIN_CLI=omp",
             )
         )
         + "\n",
@@ -154,7 +156,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi
     assert (admin.cwd / "AGENTS.md").is_file()
     assert (admin.cwd / "ADMIN-RUNBOOK.md").is_file()
     assert (admin.cwd / "tmuxbot-admin-context.json").is_file()
-    assert admin.backend == "pi"
+    assert admin.backend == "omp"
     assert admin.bot_token_env == "TG_BOT_TOKEN"
 
 
@@ -170,7 +172,7 @@ def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, 
         "tmux_window": 0,
         "tmux_pane": 0,
         "cwd": str(tmp_path / "old-admin"),
-        "backend": "pi",
+        "backend": "omp",
         "admin": True,
         "provider_session_id": "old-session",
     }
@@ -187,7 +189,7 @@ def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, 
         tmux_window=0,
         tmux_pane=0,
         cwd=new_cwd,
-        backend="pi",
+        backend="omp",
         bot_token_env="TG_CODEX_BOT_TOKEN",
         channel="telegram",
         mention_required=False,
@@ -207,7 +209,7 @@ def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, 
 def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     bindings_file = tmp_path / "bindings.yaml"
     bindings_file.write_text(
         yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
@@ -215,19 +217,21 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     )
     load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
     admin = next(binding for binding in S.bindings if binding.admin)
-    admin.provider_session_id = "pi-session"
-    admin.last_session_id = "pi-session"
+    admin.provider_session_id = "omp-session"
+    admin.last_session_id = "omp-session"
     admin.transcript_path = tmp_path / "session.jsonl"
 
     save_binding_identity(bindings_file, admin)
     saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"]
     assert bindings_file.stat().st_mode & 0o777 == 0o600
     assert [entry["name"] for entry in saved].count("tmuxbot-admin") == 1
-    assert next(entry for entry in saved if entry.get("admin"))["provider_session_id"] == "pi-session"
+    assert (
+        next(entry for entry in saved if entry.get("admin"))["provider_session_id"] == "omp-session"
+    )
 
     load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
     reloaded = next(binding for binding in S.bindings if binding.admin)
-    assert reloaded.provider_session_id == "pi-session"
+    assert reloaded.provider_session_id == "omp-session"
     assert reloaded.transcript_path == tmp_path / "session.jsonl"
 
 
@@ -238,9 +242,9 @@ def test_persisted_admin_identity_does_not_enable_admin_without_env(tmp_path):
             "chat_id": 123,
             "tmux_session": "tmuxbot-admin",
             "cwd": "/home/admin",
-            "backend": "pi",
+            "backend": "omp",
             "admin": True,
-            "provider_session_id": "pi-session",
+            "provider_session_id": "omp-session",
         }
     )
     bindings_file = tmp_path / "bindings.yaml"
@@ -302,7 +306,7 @@ def test_admin_dm_route_can_override_channel_credential_endpoint_and_cwd(monkeyp
 def test_admin_dm_route_creates_configured_private_cwd(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     admin_cwd = tmp_path / "missing" / "admin"
     monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(admin_cwd))
     bindings_file = tmp_path / "bindings.yaml"
@@ -322,7 +326,7 @@ def test_admin_dm_route_creates_configured_private_cwd(monkeypatch, tmp_path):
 def test_admin_dm_route_rejects_non_private_telegram_endpoint(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     monkeypatch.setenv("TMUXBOT_ADMIN_CHAT_ID", "-100123")
     bindings_file = tmp_path / "bindings.yaml"
     bindings_file.write_text(
@@ -338,11 +342,11 @@ def test_admin_dm_route_requires_explicit_feishu_endpoint(monkeypatch, tmp_path)
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_CHANNEL", "feishu")
-    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     env_file = tmp_path / "runtime.env"
     env_file.write_text(
         "BOSS_USER_ID=123\nTMUXBOT_ADMIN_ENABLED=1\n"
-        "TMUXBOT_ADMIN_CHANNEL=feishu\nTMUXBOT_ADMIN_CLI=pi\n",
+        "TMUXBOT_ADMIN_CHANNEL=feishu\nTMUXBOT_ADMIN_CLI=omp\n",
         encoding="utf-8",
     )
     bindings_file = tmp_path / "bindings.yaml"
@@ -372,7 +376,9 @@ def test_failed_reload_does_not_partially_mutate_global_state(tmp_path: Path):
     env_file = tmp_path / "runtime.env"
     env_file.write_text("BOSS_USER_ID=123\n", encoding="utf-8")
     bindings_file = tmp_path / "bindings.yaml"
-    bindings_file.write_text(yaml.safe_dump({"bindings": [_binding(), _binding()]}), encoding="utf-8")
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding(), _binding()]}), encoding="utf-8"
+    )
 
     with pytest.raises(ConfigValidationError):
         load_config(env_file, bindings_file, tmp_path / "offsets.json")

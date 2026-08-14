@@ -4,6 +4,7 @@
      指纹变了/刚出现 → 更新 last_active;
      ACTIVE_WINDOW (10s) 内活跃过 → 发 typing。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +20,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-HEARTBEAT_INTERVAL = 4   # typing TG 端显示 ~5s, 每 4s 刷新
-ACTIVE_WINDOW = 10       # 距上次活跃小于这个秒数才发 typing
+HEARTBEAT_INTERVAL = 4  # typing TG 端显示 ~5s, 每 4s 刷新
+ACTIVE_WINDOW = 10  # 距上次活跃小于这个秒数才发 typing
 
 
 async def heartbeat_typing_loop(state: "State", frontend) -> None:
@@ -41,8 +42,8 @@ async def heartbeat_typing_loop(state: "State", frontend) -> None:
                 except Exception as e:
                     log.debug(f"[{b.name}] heartbeat capture err: {e}")
                     pane = ""
-                if backend.name == "pi":
-                    await _sync_pi_compaction_status(state, frontend, b, backend, pane, now)
+                if backend.name == "omp":
+                    await _sync_omp_compaction_status(state, frontend, b, backend, pane, now)
                 fp = backend.find_tui_activity_fp(pane)
                 last_fp = state.tui_fp.get(b.name)
                 if fp:
@@ -62,7 +63,7 @@ async def heartbeat_typing_loop(state: "State", frontend) -> None:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
-async def _sync_pi_compaction_status(state, frontend, b, backend, pane: str, now: float) -> None:
+async def _sync_omp_compaction_status(state, frontend, b, backend, pane: str, now: float) -> None:
     status = backend.parse_terminal_status(pane)
     label = status.label.lower() if status is not None else ""
     compacting = "compacting" in label
@@ -97,10 +98,10 @@ async def _sync_pi_compaction_status(state, frontend, b, backend, pane: str, now
                 return
             state.compaction_status.pop(b.name, None)
             body = (
-                "⚠️ <b>Pi 自动压缩状态已结束，但未观察到压缩完成记录</b>\n"
+                "⚠️ <b>OMP 自动压缩状态已结束，但未观察到压缩完成记录</b>\n"
                 "· 任务可能没有自动续跑；请发送 <code>继续</code> 或用 <code>/screen</code> 检查 TUI"
             )
-            footer = _pi_footer(b, backend)
+            footer = _omp_footer(b, backend)
             if footer:
                 body += f"\n\n{footer}"
             if current.get("msg_id") is not None:
@@ -141,17 +142,13 @@ def _compaction_body(b, backend, *, elapsed: int, estimate: int) -> str:
         timing = f"已进行 <code>{elapsed}s</code> · 预计剩余约 <code>{remaining}s</code>"
     else:
         timing = f"已进行 <code>{elapsed}s</code> · 已超过历史估算，仍在等待 provider"
-    footer = _pi_footer(b, backend)
-    body = (
-        "🗜 <b>Pi 正在自动压缩上下文</b>\n"
-        f"· {timing}\n"
-        "· 新消息仍可发送，会排队到压缩结束后处理"
-    )
+    footer = _omp_footer(b, backend)
+    body = f"🗜 <b>OMP 正在自动压缩上下文</b>\n· {timing}\n· 新消息仍可发送，会排队到压缩结束后处理"
     return f"{body}\n\n{footer}" if footer else body
 
 
-def _pi_footer(b, backend) -> str:
+def _omp_footer(b, backend) -> str:
     render_extension = getattr(backend, "render_extension_footer", None)
     extension_footer = render_extension(b) if callable(render_extension) else ""
-    task_footer = render_task_footer(backend.read_tasks(b), style="pi")
+    task_footer = render_task_footer(backend.read_tasks(b), style="omp")
     return "\n\n".join(part for part in (extension_footer, task_footer) if part)

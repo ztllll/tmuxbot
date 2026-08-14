@@ -112,7 +112,7 @@ class TmuxRuntime:
                     await self._sleep(self.post_render_delay)
                 for attempt in range(self.max_submit_attempts):
                     # The provider may become busy after the initial readiness
-                    # check but before Enter (for example a queued Pi tool/run).
+                    # check but before Enter (for example a queued OMP tool/run).
                     # Keep the rendered draft intact and wait; do not consume
                     # bounded Enter attempts while the TUI cannot submit it.
                     if not allow_busy_submission:
@@ -183,8 +183,7 @@ class TmuxRuntime:
             pane = self._capture(target, self.capture_lines)
             current = self._input_reader(pane) if self._input_reader else None
             if current and (
-                not self._same_draft(baseline or "", current)
-                or self._same_draft(original, current)
+                not self._same_draft(baseline or "", current) or self._same_draft(original, current)
             ):
                 return current
             if elapsed >= self.paste_render_timeout:

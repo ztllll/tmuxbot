@@ -33,11 +33,33 @@ def test_missing_optional_providers_are_warnings(tmp_path: Path) -> None:
     providers = [
         item
         for item in report.checks
-        if item.name in {"provider:claude", "provider:codex", "provider:pi"}
+        if item.name in {"provider:claude", "provider:codex", "provider:omp"}
     ]
     assert providers
     assert all(item.status == "warning" for item in providers)
     assert isinstance(report, DoctorReport)
+
+
+def test_doctor_uses_omp_binary_override(tmp_path, monkeypatch):
+    executable = tmp_path / "custom-omp"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "tmuxbot.doctor.subprocess.run",
+        lambda argv, **kwargs: type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "omp 17.3.2\n", "stderr": ""},
+        )(),
+    )
+
+    report = run_doctor(
+        RuntimePaths.discover({}, home=tmp_path),
+        {"PATH": "", "OMP_BIN": str(executable)},
+    )
+
+    check = next(item for item in report.checks if item.name == "provider:omp")
+    assert check.status == "ok"
+    assert check.details["path"] == str(executable)
 
 
 def test_doctor_warns_when_tmux_extended_keys_are_disabled(tmp_path, monkeypatch):
@@ -67,11 +89,11 @@ def test_doctor_warns_when_tmux_extended_keys_are_disabled(tmp_path, monkeypatch
 
     check = next(item for item in report.checks if item.name == "tmux:extended_keys")
     assert check.status == "warning"
-    assert "Pi" in check.summary
+    assert "OMP" in check.summary
     assert check.details == {"value": "off", "format": "xterm"}
 
 
-def test_doctor_accepts_pi_extended_key_pair(tmp_path, monkeypatch):
+def test_doctor_accepts_omp_extended_key_pair(tmp_path, monkeypatch):
     paths = RuntimePaths.discover({}, home=tmp_path)
 
     def run(argv, **kwargs):

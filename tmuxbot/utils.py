@@ -1,4 +1,5 @@
 """通用工具:路径编码、ANSI 装饰清理、CJK 等宽渲染、offsets 持久化。"""
+
 from __future__ import annotations
 
 import html
@@ -27,14 +28,13 @@ def strip_handwritten_footer(text: str) -> str:
 def render_task_footer(todos: "list | None", *, style: str = "summary") -> str:
     """任务列表 → HTML footer。无任务返回 ``""``。
 
-    ``summary`` 保持 Claude harness 的历史折叠语义；``pi`` 镜像
-    rpiv-todo 当前 branch 的 persistent overlay，只要存在非 deleted task
-    就渲染完整快照，包括 completed-only 状态。
+    ``summary`` 保持 Claude harness 的历史折叠语义；``omp`` 按 OMP v3
+    phase/content/status/blocker 快照分组渲染，并保留 completed-only 状态。
     """
     if not todos:
         return ""
-    if style == "pi":
-        return _render_pi_task_footer(todos)
+    if style == "omp":
+        return _render_omp_task_footer(todos)
     done = [t for t in todos if t.get("status") == "completed"]
     in_prog = [t for t in todos if t.get("status") == "in_progress"]
     pending = [t for t in todos if t.get("status") == "pending"]
@@ -71,39 +71,37 @@ def render_task_footer(todos: "list | None", *, style: str = "summary") -> str:
     return "\n".join(lines)
 
 
-def _render_pi_task_footer(todos: list) -> str:
-    visible = [task for task in todos if task.get("status") != "deleted"]
+def _render_omp_task_footer(todos: list) -> str:
+    visible = [task for task in todos if task.get("status") != "abandoned"]
     if not visible:
         return ""
     completed = sum(task.get("status") == "completed" for task in visible)
-    has_active = any(
-        task.get("status") in {"pending", "in_progress"} for task in visible
-    )
-    show_ids = any(task.get("blockedBy") for task in visible)
-    work_title = html.escape(str(getattr(todos, "work_title", "") or "").strip())
-    heading = f"{work_title} · " if work_title else ""
-    lines = [
-        f"{'●' if has_active else '○'} "
-        f"<b>{heading}Todos ({completed}/{len(visible)})</b>"
-    ]
-    for index, task in enumerate(visible):
-        status = task.get("status")
-        glyph = {"pending": "○", "in_progress": "◐", "completed": "✓"}.get(
-            status, "?"
-        )
-        subject = html.escape(str(task.get("subject") or task.get("content") or ""))
-        if status == "completed":
-            subject = f"<s>{subject}</s>"
-        elif status == "in_progress":
-            subject = f"<b>{subject}</b>"
-        task_id = task.get("id")
-        label = f"#{task_id} {subject}" if show_ids and task_id is not None else subject
-        active = html.escape(str(task.get("activeForm") or "").strip())
-        active_text = f" <i>({active})</i>" if status == "in_progress" and active else ""
-        blocked = task.get("blockedBy") or []
-        deps = f" ⛓ {','.join(f'#{item}' for item in blocked)}" if blocked else ""
-        branch = "└─" if index == len(visible) - 1 else "├─"
-        lines.append(f"{branch} {glyph} {label}{active_text}{deps}")
+    has_open = any(task.get("status") != "completed" for task in visible)
+    lines = [f"{'●' if has_open else '○'} <b>Todos ({completed}/{len(visible)})</b>"]
+    phases: dict[str, list[dict]] = {}
+    for task in visible:
+        phase = str(task.get("phase") or "Tasks")
+        phases.setdefault(phase, []).append(task)
+    glyphs = {
+        "pending": "○",
+        "in_progress": "◐",
+        "completed": "✓",
+        "blocked": "⛔",
+    }
+    for phase, tasks in phases.items():
+        phase_done = sum(task.get("status") == "completed" for task in tasks)
+        lines.append(f"▾ <b>{html.escape(phase)}</b> ({phase_done}/{len(tasks)})")
+        for index, task in enumerate(tasks):
+            status = task.get("status")
+            content = html.escape(str(task.get("content") or ""))
+            if status == "completed":
+                content = f"<s>{content}</s>"
+            elif status == "in_progress":
+                content = f"<b>{content}</b>"
+            blocker = html.escape(str(task.get("blocker") or "").strip())
+            blocker_text = f" — <i>{blocker}</i>" if status == "blocked" and blocker else ""
+            branch = "└─" if index == len(tasks) - 1 else "├─"
+            lines.append(f"{branch} {glyphs.get(status, '?')} {content}{blocker_text}")
     return "\n".join(lines)
 
 

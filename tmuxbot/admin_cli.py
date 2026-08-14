@@ -4,6 +4,7 @@ The Admin LLM supplies intent parameters.  This module owns preflight checks,
 validated atomic route writes, supervised bridge restart, rollback, and runtime
 verification so callers do not need to reproduce deployment mechanics.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,6 +23,7 @@ from typing import Any, Mapping, Sequence
 
 from dotenv import dotenv_values
 
+from tmuxbot.runtime.omp_handoff import read_handoff
 from tmuxbot.paths import default_admin_cwd
 from tmuxbot.route_cli import (
     RouteStore,
@@ -132,9 +134,7 @@ class AdminRuntime:
             raise AdminOperationError(
                 f"tmux session {target.session!r} already exists but target {target.value} is missing"
             )
-        created = self.run(
-            ["tmux", "new-session", "-d", "-s", target.session, "-c", str(cwd)]
-        )
+        created = self.run(["tmux", "new-session", "-d", "-s", target.session, "-c", str(cwd)])
         if created.returncode != 0:
             raise AdminOperationError(
                 f"unable to create tmux target {target.value}: {created.stderr.strip()}"
@@ -157,9 +157,7 @@ class AdminRuntime:
             )
 
     def respawn_target(self, target: TmuxTarget, cwd: Path) -> None:
-        respawned = self.run(
-            ["tmux", "respawn-pane", "-k", "-t", target.value, "-c", str(cwd)]
-        )
+        respawned = self.run(["tmux", "respawn-pane", "-k", "-t", target.value, "-c", str(cwd)])
         if respawned.returncode != 0:
             raise AdminOperationError(
                 f"unable to respawn tmux target {target.value}: {respawned.stderr.strip()}"
@@ -168,9 +166,7 @@ class AdminRuntime:
     def restart_service(self, service: str) -> None:
         restarted = self.run(["systemctl", "--user", "restart", service])
         if restarted.returncode != 0:
-            raise AdminOperationError(
-                f"unable to restart {service}: {restarted.stderr.strip()}"
-            )
+            raise AdminOperationError(f"unable to restart {service}: {restarted.stderr.strip()}")
         active = self.run(["systemctl", "--user", "is-active", service])
         if active.returncode != 0 or active.stdout.strip() != "active":
             raise AdminOperationError(f"service {service} did not become active")
@@ -187,9 +183,7 @@ class AdminRuntime:
 def parse_tmux_target(value: str) -> TmuxTarget:
     match = _TARGET_RE.fullmatch(value.strip())
     if match is None:
-        raise AdminOperationError(
-            "tmux target must use the exact form SESSION:WINDOW.PANE"
-        )
+        raise AdminOperationError("tmux target must use the exact form SESSION:WINDOW.PANE")
     return TmuxTarget(
         session=match.group("session"),
         window=int(match.group("window")),
@@ -202,9 +196,7 @@ def _parse_identifier(value: str, *, channel: str) -> int | str:
         try:
             return int(value)
         except ValueError as exc:
-            raise AdminOperationError(
-                "Telegram chat_id and thread_id must be integers"
-            ) from exc
+            raise AdminOperationError("Telegram chat_id and thread_id must be integers") from exc
     value = value.strip()
     if not value:
         raise AdminOperationError("Feishu chat_id and thread_id must not be empty")
@@ -249,7 +241,9 @@ def parse_telegram_topic_link(value: str) -> dict[str, Any]:
     if message_id is not None:
         identifiers.append(message_id)
     if not all(part.isdigit() and int(part) > 0 for part in identifiers):
-        raise AdminOperationError("Telegram link chat/thread/message identifiers must be positive integers")
+        raise AdminOperationError(
+            "Telegram link chat/thread/message identifiers must be positive integers"
+        )
     return {
         "channel": "telegram",
         "chat_id": int(f"-100{internal_chat_id}"),
@@ -335,9 +329,7 @@ def delete_telegram_topic(
 def _feishu_credentials(env_file: Path, credential: str) -> tuple[str, str]:
     values = dotenv_values(env_file)
     app_id = values.get(f"{credential}_APP_ID") or os.getenv(f"{credential}_APP_ID")
-    app_secret = values.get(f"{credential}_APP_SECRET") or os.getenv(
-        f"{credential}_APP_SECRET"
-    )
+    app_secret = values.get(f"{credential}_APP_SECRET") or os.getenv(f"{credential}_APP_SECRET")
     if not app_id or not app_secret:
         raise AdminOperationError(
             f"missing {credential}_APP_ID/{credential}_APP_SECRET in {env_file}"
@@ -619,11 +611,11 @@ def _apply_route_transaction(
         raise
 
 
-def _pi_session_identity(path: Path, cwd: Path) -> tuple[str, Path]:
-    """Validate an exact Pi transcript supplied for a controlled route recovery."""
+def _omp_session_identity(path: Path, cwd: Path) -> tuple[str, Path]:
+    """Validate an exact OMP transcript supplied for a controlled route recovery."""
     transcript = path.expanduser().resolve()
     if not transcript.is_file():
-        raise AdminOperationError(f"Pi session file does not exist: {transcript}")
+        raise AdminOperationError(f"OMP session file does not exist: {transcript}")
     try:
         with transcript.open("r", encoding="utf-8", errors="replace") as stream:
             header = None
@@ -640,22 +632,20 @@ def _pi_session_identity(path: Path, cwd: Path) -> tuple[str, Path]:
                     break
     except OSError as exc:
         raise AdminOperationError(
-            f"unable to read Pi session header from {transcript}: {exc}"
+            f"unable to read OMP session header from {transcript}: {exc}"
         ) from exc
     if header is None:
-        raise AdminOperationError(f"Pi session file has no session header: {transcript}")
+        raise AdminOperationError(f"OMP session file has no session header: {transcript}")
     session_id = str(header.get("id") or "").strip()
     if not session_id:
-        raise AdminOperationError(f"Pi session file has no session id: {transcript}")
+        raise AdminOperationError(f"OMP session file has no session id: {transcript}")
     try:
         actual_cwd = Path(str(header.get("cwd") or "")).expanduser().resolve()
     except OSError as exc:
-        raise AdminOperationError(
-            f"Pi session file has an invalid cwd: {transcript}"
-        ) from exc
+        raise AdminOperationError(f"OMP session file has an invalid cwd: {transcript}") from exc
     if actual_cwd != cwd.expanduser().resolve():
         raise AdminOperationError(
-            f"Pi session cwd mismatch: {actual_cwd} != {cwd.expanduser().resolve()}"
+            f"OMP session cwd mismatch: {actual_cwd} != {cwd.expanduser().resolve()}"
         )
     return session_id, transcript
 
@@ -697,7 +687,7 @@ def render_contract(*, bindings_file: Path, service: str) -> str:
 
 You are the dedicated tmuxbot Admin DM management agent, not an ordinary project
 assistant. The authenticated operator's private IM messages are injected into a
-real interactive Pi, Claude Code, or Codex TUI in this exact tmux pane. tmuxbot
+real interactive OMP, Claude Code, or Codex TUI in this exact tmux pane. tmuxbot
 reads that provider's local transcript and returns your output to the same exact
 DM endpoint; it does not call a separate headless model API.
 
@@ -726,7 +716,7 @@ Admin commands; do not reconstruct YAML/systemd/tmux transactions by hand.
 Canonical objects:
 - endpoint = channel + credential + chat_id + thread_id
 - target = tmux SESSION:WINDOW.PANE + cwd
-- adapter = claude_code | codex | pi
+- adapter = claude_code | codex | omp
 - route = one exact endpoint mapped to one exact target and adapter
 
 Hard rules:
@@ -748,8 +738,8 @@ Hard rules:
 9. `provision-project` is the normal high-level interface for Telegram and
    Feishu, whether the topic already exists or must be created. `create-topic`,
    `bind-topic`, and discovery commands are low-level recovery/diagnostic tools.
-10. If Pi was switched outside the channel command flow and replies stop, use
-   `adopt-pi-session` with the exact new JSONL path: run its plan, then `--apply`.
+10. If OMP was switched outside the channel command flow and replies stop, use
+   `adopt-omp-session` with the exact new JSONL path: run its plan, then `--apply`.
    It verifies the session header and exact cwd; never guess or select by mtime.
 11. Telegram topic routes need only chat_id + thread_id. Accept either
     https://t.me/c/CHAT/THREAD or a full message link; never demand a message ID
@@ -776,7 +766,7 @@ Required normal workflow:
 tmuxbot admin --file {bindings_file} --service {service} provision-project \
   --name ROUTE --channel telegram --credential TG_CODEX_BOT_TOKEN \
   --topic-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID \
-  --cwd /absolute/project --backend pi
+  --cwd /absolute/project --backend omp
 # New Telegram or Feishu topic: replace --topic-link with exact --chat-id and
 # --topic-title. tmux target defaults to NAME:0.0. Review the plan, then repeat
 # the same command with --apply.
@@ -795,14 +785,14 @@ tmuxbot admin --file {bindings_file} --service {service} feishu-topics \\
 tmuxbot admin --file {bindings_file} --service {service} create-topic \\
   --env-file {env_file} --name ROUTE --channel feishu \\
   --credential FEISHU_CODEX --chat-id oc_xxx --topic-title "Project topic" \\
-  --tmux-target project:0.0 --cwd /absolute/project --backend pi \\
+  --tmux-target project:0.0 --cwd /absolute/project --backend omp \\
   --mention-required false --create-target
 
 tmuxbot admin --file {bindings_file} --service {service} bind-topic \\
   --name ROUTE --channel feishu --credential FEISHU_CODEX \\
   --chat-id oc_xxx --thread-id omt_xxx --thread-root-message-id om_xxx \\
   --tmux-target project:0.0 \\
-  --cwd /absolute/project --backend pi --mention-required false
+  --cwd /absolute/project --backend omp --mention-required false
 # Inspect the plan, then repeat with --apply.
 
 tmuxbot admin --file {bindings_file} --service {service} move-topic ROUTE \\
@@ -810,9 +800,9 @@ tmuxbot admin --file {bindings_file} --service {service} move-topic ROUTE \\
   --thread-root-message-id om_xxx
 # Inspect the plan, then repeat with --apply.
 
-# Recovery after a direct Pi TUI session switch: inspect the plan, then add --apply.
-tmuxbot admin --file {bindings_file} --service {service} adopt-pi-session ROUTE \\
-  --session-file /absolute/pi-session.jsonl
+# Recovery after a direct OMP TUI session switch: inspect the plan, then add --apply.
+tmuxbot admin --file {bindings_file} --service {service} adopt-omp-session ROUTE \\
+  --session-file /absolute/omp-session.jsonl
 tmuxbot admin --file {bindings_file} --service {service} verify ROUTE --json
 ```
 
@@ -842,7 +832,7 @@ after changing the deployment, bindings path, service name, or Admin workspace.
 
 1. The authenticated Boss sends a private Telegram or Feishu message.
 2. tmuxbot resolves the exact Admin endpoint and injects text into this real tmux pane.
-3. Pi, Claude Code, or Codex runs interactively with the Unix account's permissions.
+3. OMP, Claude Code, or Codex runs interactively with the Unix account's permissions.
 4. tmuxbot tails the exact provider transcript and returns output to the same DM.
 5. Project topics are separate endpoint -> pane routes; an unbound endpoint is silent.
 
@@ -884,7 +874,7 @@ tmuxbot admin --file {bindings} --service {service} feishu-topics \\
   --env-file {env_file} --credential FEISHU_CODEX --chat-id oc_xxx --json
 ```
 
-Use `adopt-pi-session` only after an operator switches the live Pi TUI outside
+Use `adopt-omp-session` only after an operator switches the live OMP TUI outside
 tmuxbot's channel command flow. Require the exact JSONL path; never select one by
 mtime. Lower-level `create-topic`, `bind-topic`, and discovery commands are for
 recovery or diagnosis when `provision-project` does not cover the operation.
@@ -1004,9 +994,7 @@ def install_admin_context(*, cwd: Path, bindings_file: Path, service: str) -> li
             f"unable to prepare private Admin context cwd {resolved_cwd}: {exc}"
         ) from exc
     block = _managed_contract_block(bindings_file=bindings_file, service=service)
-    runbook = render_admin_runbook(
-        bindings_file=bindings_file, service=service, cwd=resolved_cwd
-    )
+    runbook = render_admin_runbook(bindings_file=bindings_file, service=service, cwd=resolved_cwd)
     installed = [resolved_cwd / "AGENTS.md", resolved_cwd / "CLAUDE.md"]
     for path in installed:
         _install_managed_block(path, block)
@@ -1092,9 +1080,7 @@ def build_admin_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="admin_command", required=True)
 
     subparsers.add_parser("contract", help="print the Admin Operations Contract")
-    inventory = subparsers.add_parser(
-        "inventory", help="list current routes and real tmux panes"
-    )
+    inventory = subparsers.add_parser("inventory", help="list current routes and real tmux panes")
     inventory.add_argument("--json", action="store_true", dest="as_json")
     telegram_topic = subparsers.add_parser(
         "telegram-topic", help="parse an exact private Telegram forum message link"
@@ -1116,17 +1102,13 @@ def build_admin_parser() -> argparse.ArgumentParser:
     )
     create_topic.add_argument("--env-file", type=Path, required=True)
     create_topic.add_argument("--name", required=True)
-    create_topic.add_argument(
-        "--channel", choices=("telegram", "feishu"), default="feishu"
-    )
+    create_topic.add_argument("--channel", choices=("telegram", "feishu"), default="feishu")
     create_topic.add_argument("--credential", required=True)
     create_topic.add_argument("--chat-id", required=True)
     create_topic.add_argument("--topic-title", required=True)
     create_topic.add_argument("--tmux-target", required=True)
     create_topic.add_argument("--cwd", required=True)
-    create_topic.add_argument(
-        "--backend", choices=("claude_code", "codex", "pi"), required=True
-    )
+    create_topic.add_argument("--backend", choices=("claude_code", "codex", "omp"), required=True)
     create_topic.add_argument("--mention-required", type=_parse_bool, default=False)
     create_topic.add_argument("--create-target", action="store_true")
     create_topic.add_argument("--apply", action="store_true")
@@ -1145,9 +1127,7 @@ def build_admin_parser() -> argparse.ArgumentParser:
     provision.add_argument("--topic-title")
     provision.add_argument("--tmux-target")
     provision.add_argument("--cwd", required=True)
-    provision.add_argument(
-        "--backend", choices=("claude_code", "codex", "pi"), required=True
-    )
+    provision.add_argument("--backend", choices=("claude_code", "codex", "omp"), required=True)
     provision.add_argument("--mention-required", type=_parse_bool, default=False)
     provision.add_argument("--apply", action="store_true")
     install = subparsers.add_parser(
@@ -1170,7 +1150,7 @@ def build_admin_parser() -> argparse.ArgumentParser:
     bind.add_argument("--thread-root-message-id")
     bind.add_argument("--tmux-target", required=True)
     bind.add_argument("--cwd", required=True)
-    bind.add_argument("--backend", choices=("claude_code", "codex", "pi"), required=True)
+    bind.add_argument("--backend", choices=("claude_code", "codex", "omp"), required=True)
     bind.add_argument("--mention-required", type=_parse_bool, default=False)
     bind.add_argument("--create-target", action="store_true")
     bind.add_argument("--apply", action="store_true")
@@ -1194,22 +1174,20 @@ def build_admin_parser() -> argparse.ArgumentParser:
     rename_project.add_argument("--new-cwd", type=Path, required=True)
     rename_project.add_argument("--apply", action="store_true")
 
-    adopt_pi = subparsers.add_parser(
-        "adopt-pi-session",
-        help="plan or adopt one exact Pi session file after an out-of-band Pi session switch",
+    adopt_omp = subparsers.add_parser(
+        "adopt-omp-session",
+        help="plan or adopt one exact OMP session file after an out-of-band OMP session switch",
     )
-    adopt_pi.add_argument("name")
-    adopt_pi.add_argument("--session-file", type=Path, required=True)
-    adopt_pi.add_argument("--apply", action="store_true")
+    adopt_omp.add_argument("name")
+    adopt_omp.add_argument("--session-file", type=Path, required=True)
+    adopt_omp.add_argument("--apply", action="store_true")
     verify = subparsers.add_parser("verify", help="verify route, tmux target, and bridge")
     verify.add_argument("name")
     verify.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
-def run_admin_command(
-    argv: Sequence[str], *, runtime: AdminRuntime | None = None
-) -> int:
+def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = None) -> int:
     args = build_admin_parser().parse_args(list(argv))
     runtime = runtime or AdminRuntime()
     store = RouteStore(args.bindings_file)
@@ -1265,9 +1243,7 @@ def run_admin_command(
                 raise AdminOperationError(f"route name already exists: {args.name!r}")
             if any(binding.tmux_target == target.value for binding in store.list()):
                 raise AdminOperationError(f"duplicate tmux target: {target.value}")
-            target_status = _preflight_target(
-                runtime, target, cwd, create_target=False
-            )
+            target_status = _preflight_target(runtime, target, cwd, create_target=False)
             plan = {
                 "operation": "create-topic",
                 "apply": args.apply,
@@ -1420,9 +1396,7 @@ def run_admin_command(
                 raise AdminOperationError(f"route name already exists: {args.name!r}")
             if any(binding.tmux_target == target.value for binding in store.list()):
                 raise AdminOperationError(f"duplicate tmux target: {target.value}")
-            target_status = _preflight_target(
-                runtime, target, cwd, create_target=False
-            )
+            target_status = _preflight_target(runtime, target, cwd, create_target=False)
             item_base = {
                 "name": args.name,
                 "channel": args.channel,
@@ -1459,9 +1433,7 @@ def run_admin_command(
                     "mention_required": args.mention_required,
                 },
                 "tmux": target_status,
-                "target_action": (
-                    "create" if target_status["state"] == "stopped" else "reuse"
-                ),
+                "target_action": ("create" if target_status["state"] == "stopped" else "reuse"),
                 "service": args.service,
                 "fixed_flow": [
                     "resolve exact endpoint",
@@ -1560,9 +1532,7 @@ def run_admin_command(
             item = _route_item(args, target, cwd)
             candidate = [*store.list(), binding_from_mapping(item)]
             validate_bindings(candidate)
-            target_status = _preflight_target(
-                runtime, target, cwd, create_target=False
-            )
+            target_status = _preflight_target(runtime, target, cwd, create_target=False)
             plan = {
                 "operation": "bind-topic",
                 "apply": args.apply,
@@ -1605,11 +1575,15 @@ def run_admin_command(
             old_target = parse_tmux_target(existing.tmux_target)
             new_name = args.new_name.strip()
             if not new_name or ":" in new_name:
-                raise AdminOperationError("new route/session name must be non-empty and contain no colon")
+                raise AdminOperationError(
+                    "new route/session name must be non-empty and contain no colon"
+                )
             if new_name == existing.name:
                 raise AdminOperationError("new route name must differ from the existing name")
             if old_target.window != 0 or old_target.pane != 0:
-                raise AdminOperationError("rename-project supports only a single-session target at 0.0")
+                raise AdminOperationError(
+                    "rename-project supports only a single-session target at 0.0"
+                )
             if any(binding.name == new_name for binding in store.list()):
                 raise AdminOperationError(f"route name already exists: {new_name!r}")
             if any(
@@ -1631,7 +1605,8 @@ def run_admin_command(
             if old_status["state"] != "running":
                 raise AdminOperationError(f"tmux target is not running: {old_target.value}")
             session_targets = [
-                item for item in runtime.list_targets()
+                item
+                for item in runtime.list_targets()
                 if str(item.get("target", "")).split(":", 1)[0] == old_target.session
             ]
             if len(session_targets) != 1 or session_targets[0].get("target") != old_target.value:
@@ -1737,8 +1712,7 @@ def run_admin_command(
             replacement_item["thread_root_message_id"] = args.thread_root_message_id
             replacement = binding_from_mapping(replacement_item)
             candidate = [
-                replacement if binding.name == args.name else binding
-                for binding in store.list()
+                replacement if binding.name == args.name else binding for binding in store.list()
             ]
             validate_bindings(candidate)
             plan = {
@@ -1774,45 +1748,42 @@ def run_admin_command(
             )
             print(json.dumps(verification, ensure_ascii=False))
             return 0
-        if args.admin_command == "adopt-pi-session":
+        if args.admin_command == "adopt-omp-session":
             existing = store.inspect(args.name)
-            if existing.backend != "pi":
-                raise AdminOperationError(
-                    f"route {args.name!r} uses {existing.backend!r}, not Pi"
-                )
+            if existing.backend != "omp":
+                raise AdminOperationError(f"route {args.name!r} uses {existing.backend!r}, not OMP")
             target = parse_tmux_target(existing.tmux_target)
-            target_status = _preflight_target(
-                runtime, target, existing.cwd, create_target=False
-            )
+            target_status = _preflight_target(runtime, target, existing.cwd, create_target=False)
+            if target_status["state"] != "running" or target_status.get("command") != "omp":
+                raise AdminOperationError(f"OMP target is not running at {existing.tmux_target}")
+            session_id, transcript = _omp_session_identity(args.session_file, existing.cwd)
+            handoff = read_handoff(existing.tmux_target, existing.cwd)
             if (
-                target_status["state"] != "running"
-                or target_status.get("command") != "pi"
+                handoff is None
+                or handoff.session_id != session_id
+                or handoff.transcript_path != transcript
             ):
                 raise AdminOperationError(
-                    f"Pi target is not running at {existing.tmux_target}"
+                    "OMP target has no matching managed identity sidecar; restart it through "
+                    "tmuxbot before adopting the session"
                 )
-            session_id, transcript = _pi_session_identity(
-                args.session_file, existing.cwd
-            )
             replacement_item = binding_to_mapping(existing)
             replacement_item["provider_session_id"] = session_id
             replacement_item["transcript_path"] = str(transcript)
             replacement = binding_from_mapping(replacement_item)
             candidate = [
-                replacement if binding.name == args.name else binding
-                for binding in store.list()
+                replacement if binding.name == args.name else binding for binding in store.list()
             ]
             validate_bindings(candidate)
             plan = {
-                "operation": "adopt-pi-session",
+                "operation": "adopt-omp-session",
                 "apply": args.apply,
                 "route": args.name,
                 "tmux": target_status,
                 "before": {
                     "provider_session_id": existing.provider_session_id,
                     "transcript_path": (
-                        str(existing.transcript_path)
-                        if existing.transcript_path else None
+                        str(existing.transcript_path) if existing.transcript_path else None
                     ),
                 },
                 "after": {

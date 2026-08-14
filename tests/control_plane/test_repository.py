@@ -100,9 +100,7 @@ def test_repository_secures_wal_and_shm_files_while_connection_is_open(tmp_path)
     assert observed_modes == {"-wal": 0o600, "-shm": 0o600}
 
 
-def test_repository_raises_clear_error_when_permissions_cannot_be_secured(
-    tmp_path, monkeypatch
-):
+def test_repository_raises_clear_error_when_permissions_cannot_be_secured(tmp_path, monkeypatch):
     path = tmp_path / "control.sqlite3"
     path.touch(mode=0o644)
     database_inode = path.stat().st_ino
@@ -286,7 +284,9 @@ def test_repository_permission_failure_before_commit_rolls_back_write(tmp_path):
         repo.set_setting("must.rollback", "unsafe")
 
     with sqlite3.connect(path) as db:
-        assert db.execute("SELECT value FROM settings WHERE key = 'must.rollback'").fetchone() is None
+        assert (
+            db.execute("SELECT value FROM settings WHERE key = 'must.rollback'").fetchone() is None
+        )
 
 
 def test_repository_preserves_original_sqlite_error_when_permission_check_would_fail(
@@ -446,20 +446,13 @@ def test_repository_upgrades_v1_database_with_provider_control_plane_tables(tmp_
             "CREATE TABLE schema_migrations "
             "(version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)"
         )
-        db.execute(
-            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1)"
-        )
+        db.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (1, 1)")
 
     ControlPlaneRepository(path).migrate()
 
     with sqlite3.connect(path) as db:
-        versions = db.execute(
-            "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall()
-        tables = {
-            row[0]
-            for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        versions = db.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert versions == [(version,) for version, _sql in repository_module.MIGRATIONS]
     assert {
         "provider_profiles",
@@ -469,13 +462,11 @@ def test_repository_upgrades_v1_database_with_provider_control_plane_tables(tmp_
     } <= tables
 
 
-def test_existing_provider_graph_survives_pi_allowlist_migration(tmp_path):
+def test_existing_provider_graph_survives_omp_allowlist_migration(tmp_path):
     path = tmp_path / "control.sqlite3"
     original_migrations = repository_module.MIGRATIONS
     try:
-        repository_module.MIGRATIONS = tuple(
-            item for item in original_migrations if item[0] <= 5
-        )
+        repository_module.MIGRATIONS = tuple(item for item in original_migrations if item[0] <= 5)
         repo = ControlPlaneRepository(path)
         repo.migrate()
         provider = ProviderProfile(
@@ -535,14 +526,88 @@ def test_existing_provider_graph_survives_pi_allowlist_migration(tmp_path):
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def test_historical_pi_profile_survives_omp_migration_but_cannot_be_managed(tmp_path):
+    path = tmp_path / "control.sqlite3"
+    original_migrations = repository_module.MIGRATIONS
+    try:
+        repository_module.MIGRATIONS = tuple(item for item in original_migrations if item[0] <= 6)
+        repo = ControlPlaneRepository(path)
+        repo.migrate()
+        provider = ProviderProfile(
+            id="provider-pi",
+            binary_name="pi",
+            executable_path="/opt/bin/pi",
+            version="pi 0.84.1",
+            device=8,
+            inode=201,
+            mtime_ns=302,
+            discovered_at=1_700_000_000,
+        )
+        project = ProjectRecord(
+            id="project-pi",
+            name="Historical Pi",
+            root_path="/srv/pi",
+            device=8,
+            inode=303,
+            mtime_ns=404,
+            created_at=1_700_000_001,
+        )
+        session = ManagedSession(
+            id="session-pi",
+            project_id=project.id,
+            provider_id=provider.id,
+            name="Historical Pi",
+            tmux_session="pi-old",
+            tmux_window=0,
+            tmux_pane=0,
+            status="stopped",
+            created_at=1_700_000_002,
+        )
+        repo.upsert_provider_profile(provider)
+        repo.create_project(project)
+        with repo._connection() as db:
+            db.execute(
+                "INSERT INTO managed_sessions "
+                "(id, project_id, provider_id, name, tmux_session, tmux_window, "
+                "tmux_pane, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session.id,
+                    session.project_id,
+                    session.provider_id,
+                    session.name,
+                    session.tmux_session,
+                    session.tmux_window,
+                    session.tmux_pane,
+                    session.status,
+                    session.created_at,
+                ),
+            )
+    finally:
+        repository_module.MIGRATIONS = original_migrations
+
+    repo.migrate()
+
+    assert repo.get_provider_profile(provider.id) == provider
+    assert repo.get_managed_session(session.id) == session
+    with pytest.raises(ValueError, match="discoverable provider"):
+        repo.create_managed_session(replace(session, id="session-pi-new"))
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+        check_sql = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='provider_profiles'"
+        ).fetchone()[0]
+    assert "'pi'" in check_sql
+    assert "'omp'" in check_sql
+
+
 def test_active_teamrun_tmux_targets_returns_concrete_protected_targets(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
     provider = ProviderProfile(
-        id="provider-pi",
-        binary_name="pi",
-        executable_path="/opt/bin/pi",
-        version="pi 0.84.1",
+        id="provider-omp",
+        binary_name="omp",
+        executable_path="/opt/bin/omp",
+        version="omp 0.84.1",
         device=8,
         inode=201,
         mtime_ns=302,
@@ -585,14 +650,14 @@ def test_active_teamrun_tmux_targets_returns_concrete_protected_targets(tmp_path
     assert repo.active_teamrun_tmux_targets() == {"team-alpha:1.2"}
 
 
-def test_repository_accepts_pi_provider_after_schema_migration(tmp_path):
+def test_repository_accepts_omp_provider_after_schema_migration(tmp_path):
     repo = ControlPlaneRepository(tmp_path / "control.sqlite3")
     repo.migrate()
     provider = ProviderProfile(
-        id="provider-pi",
-        binary_name="pi",
-        executable_path="/opt/bin/pi",
-        version="pi 0.84.1",
+        id="provider-omp",
+        binary_name="omp",
+        executable_path="/opt/bin/omp",
+        version="omp 0.84.1",
         device=8,
         inode=201,
         mtime_ns=302,
@@ -752,9 +817,7 @@ def test_provider_records_do_not_store_probe_output_or_secret_fields(tmp_path):
     repo.migrate()
 
     with sqlite3.connect(repo.path) as db:
-        provider_columns = {
-            row[1] for row in db.execute("PRAGMA table_info(provider_profiles)")
-        }
+        provider_columns = {row[1] for row in db.execute("PRAGMA table_info(provider_profiles)")}
         probe_columns = {row[1] for row in db.execute("PRAGMA table_info(probe_results)")}
 
     forbidden = {"token", "secret", "password", "stdout", "stderr", "command", "argv"}
@@ -776,8 +839,7 @@ def test_repository_rolls_back_failed_migration_and_can_retry(tmp_path, monkeypa
 
     with sqlite3.connect(path) as db:
         tables = {
-            row[0]
-            for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
     assert "partial" not in tables
     assert "schema_migrations" not in tables
@@ -842,8 +904,7 @@ def test_repository_serializes_concurrent_migrations(tmp_path, monkeypatch):
     with sqlite3.connect(path) as db:
         assert db.execute("SELECT version FROM schema_migrations").fetchall() == [(1,)]
         assert db.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name = 'concurrent_migration'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'concurrent_migration'"
         ).fetchone() == ("concurrent_migration",)
 
 

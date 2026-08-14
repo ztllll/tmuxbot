@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Literal
 
+from tmuxbot.control_plane.models import DISCOVERABLE_PROVIDER_BINARIES
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.supervisor import inspect_bridge_readiness
 
@@ -27,11 +28,15 @@ class DoctorReport:
 
 
 def _binary_check(name: str, environ: Mapping[str, str]) -> CheckResult:
-    path = shutil.which(name, path=environ.get("PATH"))
+    override_name = {
+        "claude": "CLAUDE_BIN",
+        "codex": "CODEX_BIN",
+        "omp": "OMP_BIN",
+    }.get(name)
+    path = environ.get(override_name, "") if override_name else ""
+    path = path or shutil.which(name, path=environ.get("PATH"))
     if path is None:
-        status: Literal["ok", "warning", "error"] = (
-            "error" if name == "tmux" else "warning"
-        )
+        status: Literal["ok", "warning", "error"] = "error" if name == "tmux" else "warning"
         return CheckResult(f"provider:{name}", status, "未发现", {})
     try:
         completed = subprocess.run(
@@ -49,11 +54,14 @@ def _binary_check(name: str, environ: Mapping[str, str]) -> CheckResult:
         )
     status = "ok" if completed.returncode == 0 else "warning"
     return CheckResult(
-        f"provider:{name}", status, "可用" if status == "ok" else "返回异常", {
+        f"provider:{name}",
+        status,
+        "可用" if status == "ok" else "返回异常",
+        {
             "path": path,
             "version": output,
             "returncode": completed.returncode,
-        }
+        },
     )
 
 
@@ -100,7 +108,7 @@ def _tmux_extended_keys_check(environ: Mapping[str, str]) -> CheckResult:
     return CheckResult(
         "tmux:extended_keys",
         "warning",
-        "Pi 建议开启 extended-keys 与 csi-u；doctor 不会自动重启 tmux server",
+        "OMP 建议开启 extended-keys 与 csi-u；doctor 不会自动重启 tmux server",
         {"value": value or "unknown", "format": format_value or "unknown"},
     )
 
@@ -123,7 +131,7 @@ def run_doctor(paths: RuntimePaths, environ: Mapping[str, str]) -> DoctorReport:
         checks.append(
             CheckResult("runtime_paths", "error", "目录不可用", {"error": type(exc).__name__})
         )
-    for name in ("tmux", "claude", "codex", "pi"):
+    for name in sorted(DISCOVERABLE_PROVIDER_BINARIES):
         checks.append(_binary_check(name, environ))
     checks.append(_tmux_extended_keys_check(environ))
     readiness = inspect_bridge_readiness(paths, environ)
@@ -157,4 +165,3 @@ def render_report(report: DoctorReport, *, as_json: bool) -> str:
     return "\n".join(
         f"[{labels[item.status]}] {item.name}: {item.summary}" for item in report.checks
     )
-

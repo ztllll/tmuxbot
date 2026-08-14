@@ -3,6 +3,8 @@ from types import SimpleNamespace
 import asyncio
 import json
 
+from tmuxbot.backends.codex import CodexBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.command_adapter import binding_token
 from tmuxbot.frontends.feishu import FeishuFrontend
 from tmuxbot.state import Binding
@@ -33,9 +35,7 @@ def event(
     return SimpleNamespace(
         event=SimpleNamespace(
             operator=SimpleNamespace(open_id=open_id),
-            action=SimpleNamespace(
-                value={"token": binding_token(b.name), "action": action}
-            ),
+            action=SimpleNamespace(value={"token": binding_token(b.name), "action": action}),
             context=SimpleNamespace(
                 open_chat_id=chat_id or str(b.chat_id),
                 open_message_id=message_id,
@@ -48,6 +48,7 @@ def frontend(b: Binding):
     instance = FeishuFrontend.__new__(FeishuFrontend)
     instance.bindings = [b]
     instance.boss_open_ids = {"ou_boss"}
+    instance.backends = {"codex": CodexBackend(), "omp": OmpBackend()}
     instance.backend = SimpleNamespace(format_status_footer=lambda status: None)
     instance._outbound_message_ids = set()
     instance._outbound_routes = {}
@@ -70,13 +71,13 @@ def test_feishu_card_action_validates_and_schedules_tmux_action(tmp_path):
     assert scheduled == [(b, "oc_alpha", "refresh")]
 
 
-def test_feishu_old_pi_card_action_is_rejected_and_sends_ssh_notice(tmp_path):
+def test_feishu_old_omp_card_action_is_rejected_and_sends_ssh_notice(tmp_path):
     b = binding(tmp_path)
-    b.backend = "pi"
+    b.backend = "omp"
     instance, scheduled = frontend(b)
     notices = []
-    instance._schedule_static_notice = (
-        lambda route, chat_id, text: notices.append((route, chat_id, text))
+    instance._schedule_static_notice = lambda route, chat_id, text: notices.append(
+        (route, chat_id, text)
     )
 
     response = instance._on_card_action(event(b, "down"))
@@ -120,9 +121,7 @@ def test_feishu_interrupt_action_returns_confirmation_card_before_ctrl_c(tmp_pat
 
     assert response.toast.type == "warning"
     assert response.card.type == "raw"
-    buttons = [
-        item for item in response.card.data["body"]["elements"] if item["tag"] == "button"
-    ]
+    buttons = [item for item in response.card.data["body"]["elements"] if item["tag"] == "button"]
     assert [button["behaviors"][0]["value"]["action"] for button in buttons] == [
         "ctrl_c",
         "refresh",

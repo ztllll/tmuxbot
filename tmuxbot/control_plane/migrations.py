@@ -226,4 +226,28 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         ALTER TABLE provider_profiles_v2 RENAME TO provider_profiles;
         """,
     ),
+    (
+        7,
+        """
+        CREATE TABLE provider_profiles_v3 (
+            id TEXT PRIMARY KEY,
+            binary_name TEXT NOT NULL CHECK(
+                binary_name IN ('tmux', 'claude', 'codex', 'pi', 'omp')
+            ),
+            executable_path TEXT NOT NULL,
+            version TEXT,
+            device INTEGER NOT NULL,
+            inode INTEGER NOT NULL,
+            mtime_ns INTEGER NOT NULL,
+            discovered_at INTEGER NOT NULL,
+            UNIQUE(binary_name, executable_path)
+        );
+        INSERT INTO provider_profiles_v3
+            (id, binary_name, executable_path, version, device, inode, mtime_ns, discovered_at)
+        SELECT id, binary_name, executable_path, version, device, inode, mtime_ns, discovered_at
+        FROM provider_profiles;
+        DROP TABLE provider_profiles;
+        ALTER TABLE provider_profiles_v3 RENAME TO provider_profiles;
+        """,
+    ),
 )

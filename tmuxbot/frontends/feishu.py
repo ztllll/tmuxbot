@@ -12,6 +12,7 @@
 
 依赖: lark-oapi>=1.4 (可选, 没装时 FeishuFrontend 实例化会 ImportError + 清晰报错)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -67,7 +68,6 @@ from tmuxbot.frontends.feishu_cards import html_to_feishu_markdown
 from tmuxbot.frontends.feishu_streaming import FeishuStreamingSession, StreamingPrefixError
 from tmuxbot.lifecycle import ensure_binding_running
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
-from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -95,11 +95,10 @@ def _persisted_thread_anchors(
 def _get_lark():
     try:
         import lark_oapi as lark
+
         return lark
     except ImportError:
-        raise ImportError(
-            "飞书前端需要 lark-oapi>=1.4, 请先安装: pip install lark-oapi"
-        )
+        raise ImportError("飞书前端需要 lark-oapi>=1.4, 请先安装: pip install lark-oapi")
 
 
 def _isolated_lark_ws_client_module(credential_scope: str) -> Any:
@@ -266,8 +265,10 @@ def _coerce_card_json(content: str) -> str:
 
 def _make_fake_msg(message_id: str) -> Any:
     """返回带 .message_id 属性的轻量对象, 供 aggregator 后续 edit 用"""
+
     class _Msg:
         pass
+
     obj = _Msg()
     obj.message_id = message_id
     return obj
@@ -309,6 +310,7 @@ def feishu_message_addresses_bot(
 
 # ────────── FeishuFrontend ──────────
 
+
 class FeishuFrontend(Frontend):
     """飞书 bot 前端。通过 lark-oapi WebSocket 长连接收发消息。"""
 
@@ -333,11 +335,11 @@ class FeishuFrontend(Frontend):
         state: "State",
         backend: "Backend",
         bindings: list["Binding"],
-        boss_open_ids: list[str],           # 飞书 open_id 白名单 (对应 TG BOSS_USER_ID)
+        boss_open_ids: list[str],  # 飞书 open_id 白名单 (对应 TG BOSS_USER_ID)
         group_only_when_mentioned: bool = True,  # 群消息仅 @bot 时才响应
-        offsets_file: "Path | None" = None,      # offsets.json 路径 (auto-provision 起 tailer 用)
-        bindings_file: "Path | None" = None,     # bindings.yaml 路径 (auto-provision 持久化用)
-        bot_token_env: str = "FEISHU",           # 本 frontend 的 token env key (持久化写回用)
+        offsets_file: "Path | None" = None,  # offsets.json 路径 (auto-provision 起 tailer 用)
+        bindings_file: "Path | None" = None,  # bindings.yaml 路径 (auto-provision 持久化用)
+        bot_token_env: str = "FEISHU",  # 本 frontend 的 token env key (持久化写回用)
         project_base: str = os.path.expanduser("~/projects"),  # 新项目目录的父目录
         backends: dict[str, "Backend"] | None = None,
     ) -> None:
@@ -387,9 +389,7 @@ class FeishuFrontend(Frontend):
 
     # ────────── binding 查找 ──────────
 
-    def find_binding(
-        self, chat_id: str, thread_id: int | str | None = None
-    ) -> "Binding | None":
+    def find_binding(self, chat_id: str, thread_id: int | str | None = None) -> "Binding | None":
         """按飞书 chat + thread 精确匹配本 credential 的 route。"""
         for b in self.bindings:
             if str(b.chat_id) == str(chat_id) and b.thread_id == thread_id:
@@ -397,7 +397,11 @@ class FeishuFrontend(Frontend):
         return None
 
     def normalize_incoming(
-        self, message: Any, *, sender_id: str = "", chat_type: str | None = None,
+        self,
+        message: Any,
+        *,
+        sender_id: str = "",
+        chat_type: str | None = None,
         attachments=(),
     ):
         adapter = FeishuChannelAdapter(
@@ -472,19 +476,19 @@ class FeishuFrontend(Frontend):
             return False
         if is_control_command(incoming.text):
             return True
-        required = effective_mention_required(
-            b,
-            self.group_only_when_mentioned,
-        ) if b is not None else self.group_only_when_mentioned
-        return incoming_message_is_addressed(
-            incoming, require_addressing=required
+        required = (
+            effective_mention_required(
+                b,
+                self.group_only_when_mentioned,
+            )
+            if b is not None
+            else self.group_only_when_mentioned
         )
+        return incoming_message_is_addressed(incoming, require_addressing=required)
 
     # ────────── 飞书 REST 发送 (同步, 在 asyncio.to_thread 里调) ──────────
 
-    def _create_message_sync(
-        self, chat_id: str, msg_type: str, content: str
-    ) -> str | None:
+    def _create_message_sync(self, chat_id: str, msg_type: str, content: str) -> str | None:
         lark = self._lark
         import lark_oapi.api.im.v1 as im_v1
 
@@ -513,9 +517,7 @@ class FeishuFrontend(Frontend):
             return None
         return response.data.message_id
 
-    def _reply_message_sync(
-        self, message_id: str, msg_type: str, content: str
-    ) -> str | None:
+    def _reply_message_sync(self, message_id: str, msg_type: str, content: str) -> str | None:
         lark = self._lark
         import lark_oapi.api.im.v1 as im_v1
 
@@ -528,10 +530,7 @@ class FeishuFrontend(Frontend):
             .build()
         )
         request = (
-            im_v1.ReplyMessageRequest.builder()
-            .message_id(message_id)
-            .request_body(body)
-            .build()
+            im_v1.ReplyMessageRequest.builder().message_id(message_id).request_body(body).build()
         )
         response = client.im.v1.message.reply(request)
         if not response.success():
@@ -554,9 +553,7 @@ class FeishuFrontend(Frontend):
     ) -> str | None:
         if thread_id is None:
             return self._create_message_sync(chat_id, msg_type, content)
-        anchor = getattr(self, "_thread_reply_anchors", {}).get(
-            (str(chat_id), str(thread_id))
-        )
+        anchor = getattr(self, "_thread_reply_anchors", {}).get((str(chat_id), str(thread_id)))
         if not anchor:
             raise FeishuThreadAnchorMissing(
                 f"no reply anchor for Feishu thread {thread_id!r} in chat {chat_id!r}"
@@ -626,17 +623,8 @@ class FeishuFrontend(Frontend):
         client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
         card_json = _coerce_card_json(md_text)
         # PATCH 接口只更新 content (不接受 msg_type, builder 也没这属性)
-        body = (
-            im_v1.PatchMessageRequestBody.builder()
-            .content(card_json)
-            .build()
-        )
-        req = (
-            im_v1.PatchMessageRequest.builder()
-            .message_id(message_id)
-            .request_body(body)
-            .build()
-        )
+        body = im_v1.PatchMessageRequestBody.builder().content(card_json).build()
+        req = im_v1.PatchMessageRequest.builder().message_id(message_id).request_body(body).build()
         resp = client.im.v1.message.patch(req)
         if not resp.success():
             log.warning(f"feishu patch_card err: code={resp.code} msg={resp.msg} mid={message_id}")
@@ -654,12 +642,7 @@ class FeishuFrontend(Frontend):
         import lark_oapi.api.cardkit.v1 as cardkit_v1
 
         client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
-        body = (
-            cardkit_v1.CreateCardRequestBody.builder()
-            .type("card_json")
-            .data(card_json)
-            .build()
-        )
+        body = cardkit_v1.CreateCardRequestBody.builder().type("card_json").data(card_json).build()
         request = cardkit_v1.CreateCardRequest.builder().request_body(body).build()
         response = client.cardkit.v1.card.create(request)
         if not response.success() or response.data is None or not response.data.card_id:
@@ -735,12 +718,7 @@ class FeishuFrontend(Frontend):
             .sequence(sequence)
             .build()
         )
-        request = (
-            cardkit_v1.UpdateCardRequest.builder()
-            .card_id(card_id)
-            .request_body(body)
-            .build()
-        )
+        request = cardkit_v1.UpdateCardRequest.builder().card_id(card_id).request_body(body).build()
         response = client.cardkit.v1.card.update(request)
         if not response.success():
             log.warning(
@@ -762,9 +740,7 @@ class FeishuFrontend(Frontend):
         client = lark.Client.builder().app_id(self.app_id).app_secret(self.app_secret).build()
         body = (
             im_v1.CreateMessageReactionRequestBody.builder()
-            .reaction_type(
-                im_v1.Emoji.builder().emoji_type(emoji_type).build()
-            )
+            .reaction_type(im_v1.Emoji.builder().emoji_type(emoji_type).build())
             .build()
         )
         req = (
@@ -775,13 +751,13 @@ class FeishuFrontend(Frontend):
         )
         resp = client.im.v1.message_reaction.create(req)
         if not resp.success():
-            log.debug(
-                f"feishu add_reaction err: code={resp.code} msg={resp.msg} mid={message_id}"
-            )
+            log.debug(f"feishu add_reaction err: code={resp.code} msg={resp.msg} mid={message_id}")
 
     # ────────── Frontend 接口实现 ──────────
 
-    async def send_html(self, chat_id: int | str, thread_id: int | str | None, html_text: str) -> Any:
+    async def send_html(
+        self, chat_id: int | str, thread_id: int | str | None, html_text: str
+    ) -> Any:
         """发送 Card JSON 2.0；不可用时降级旧版 interactive card。"""
         return await self.send_status_html(
             chat_id,
@@ -854,9 +830,9 @@ class FeishuFrontend(Frontend):
                         body=html_text,
                         footer=getattr(self, "_v2_message_footers", {}).get(message_id),
                         metadata={
-                            "display_state": getattr(
-                                self, "_v2_message_states", {}
-                            ).get(message_id, "unknown")
+                            "display_state": getattr(self, "_v2_message_states", {}).get(
+                                message_id, "unknown"
+                            )
                         },
                     ),
                     footer_text=self._status_footer_text(
@@ -929,7 +905,9 @@ class FeishuFrontend(Frontend):
             return backend.format_status_footer(footer)
         return " ".join(v for v in (footer.model, footer.effort) if v) or None
 
-    async def send_pre(self, chat_id: int | str, thread_id: int | str | None, raw_text: str) -> None:
+    async def send_pre(
+        self, chat_id: int | str, thread_id: int | str | None, raw_text: str
+    ) -> None:
         """raw_text 用代码块包裹后发 card"""
         if not raw_text.strip():
             return
@@ -963,7 +941,10 @@ class FeishuFrontend(Frontend):
                 await self.send_file(chat_id, thread_id, attachment.path)
 
     async def send_image(
-        self, chat_id: int | str, thread_id: int | str | None, path: str | Path,
+        self,
+        chat_id: int | str,
+        thread_id: int | str | None,
+        path: str | Path,
         caption: str | None = None,
     ) -> Any:
         """上传本地图片并以飞书 image 消息发送。"""
@@ -989,7 +970,10 @@ class FeishuFrontend(Frontend):
         return _make_fake_msg(message_id)
 
     async def send_file(
-        self, chat_id: int | str, thread_id: int | str | None, path: str | Path,
+        self,
+        chat_id: int | str,
+        thread_id: int | str | None,
+        path: str | Path,
         caption: str | None = None,
     ) -> Any:
         """上传本地文件并以飞书 file 消息发送。"""
@@ -1200,7 +1184,9 @@ class FeishuFrontend(Frontend):
             self._streaming_cards.pop(str(message_id), None)
             await self.edit_html(b.chat_id, str(message_id), html_text)
 
-    async def send_chat_action(self, chat_id: int | str, thread_id: int | str | None, action: str) -> None:
+    async def send_chat_action(
+        self, chat_id: int | str, thread_id: int | str | None, action: str
+    ) -> None:
         """飞书无 typing 状态 API → no-op"""
         return
 
@@ -1236,10 +1222,15 @@ class FeishuFrontend(Frontend):
             None,
         )
         interaction_backend = (
-            self.backend_for(binding)
-            if binding is not None
-            else getattr(self, "backend", None)
+            self.backend_for(binding) if binding is not None else getattr(self, "backend", None)
         )
+        if (
+            binding is not None
+            and interaction_backend is not None
+            and not interaction_backend.remote_tui_actions_allowed
+        ):
+            notice = interaction_backend.format_remote_interaction_notice(binding, "交互界面")
+            return await self.send_html(chat_id, thread_id, notice or html_text)
         content = serialize_feishu_card(
             build_feishu_interaction_card(
                 html_to_feishu_markdown(html_text),
@@ -1266,6 +1257,8 @@ class FeishuFrontend(Frontend):
         chat_id: int | str,
         thread_id: int | str | None,
     ) -> Any:
+        backend = self.backend_for(b)
+        include_plan = any(command == "plan" for command, _ in backend.bot_commands)
         text = render_panel_text(
             b,
             frontend_default=self.group_only_when_mentioned,
@@ -1275,7 +1268,7 @@ class FeishuFrontend(Frontend):
             build_feishu_control_panel(
                 html_to_feishu_markdown(text),
                 binding_token(b.name),
-                include_plan=b.backend == "pi",
+                include_plan=include_plan,
             )
         )
         message_id = await asyncio.to_thread(
@@ -1322,6 +1315,8 @@ class FeishuFrontend(Frontend):
         if b.thread_id is not None and expected_route != (chat_id, b.thread_id):
             return _card_action_response("error", "卡片与话题不匹配")
 
+        action_backend = self.backend_for(b)
+        include_plan = any(command == "plan" for command, _ in action_backend.bot_commands)
         panel_actions = {
             "mention_on",
             "mention_off",
@@ -1341,19 +1336,36 @@ class FeishuFrontend(Frontend):
             "cmd_stop",
         }
         allowed_actions = {
-            "refresh", "status", "esc", "confirm_ctrl_c", "ctrl_c",
-            "up", "down", "left", "right", "enter", "model_session",
+            "refresh",
+            "status",
+            "esc",
+            "confirm_ctrl_c",
+            "ctrl_c",
+            "up",
+            "down",
+            "left",
+            "right",
+            "enter",
+            "model_session",
         } | panel_actions
         if action not in allowed_actions:
             return _card_action_response("error", "未知操作")
-        if b.backend == "pi" and action in {
-            "refresh", "esc", "confirm_ctrl_c", "ctrl_c", "up", "down",
-            "left", "right", "enter", "model_session",
+        if not action_backend.remote_tui_actions_allowed and action in {
+            "refresh",
+            "esc",
+            "confirm_ctrl_c",
+            "ctrl_c",
+            "up",
+            "down",
+            "left",
+            "right",
+            "enter",
+            "model_session",
         }:
-            self._schedule_static_notice(
-                b, chat_id, pi_ssh_interaction_notice(b)
-            )
-            return _card_action_response("warning", "Pi 交互请通过 SSH 处理")
+            notice = action_backend.format_remote_interaction_notice(b, "交互界面")
+            if notice:
+                self._schedule_static_notice(b, chat_id, notice)
+            return _card_action_response("warning", "交互请通过 SSH 处理")
         if action in {"mention_on", "mention_off", "mention_default"}:
             value = {
                 "mention_on": False,
@@ -1374,7 +1386,7 @@ class FeishuFrontend(Frontend):
                     )
                 ),
                 token,
-                include_plan=b.backend == "pi",
+                include_plan=include_plan,
             )
             return _card_action_response("success", "@ 策略已更新", card=card)
         if action == "refresh_panel":
@@ -1387,7 +1399,7 @@ class FeishuFrontend(Frontend):
                     )
                 ),
                 token,
-                include_plan=b.backend == "pi",
+                include_plan=include_plan,
             )
             return _card_action_response("success", "面板已刷新", card=card)
         if action == "close_panel":
@@ -1422,9 +1434,7 @@ class FeishuFrontend(Frontend):
         if loop is None or loop.is_closed():
             log.warning("feishu static notice dropped: main loop unavailable")
             return
-        future = asyncio.run_coroutine_threadsafe(
-            self.send_html(chat_id, b.thread_id, text), loop
-        )
+        future = asyncio.run_coroutine_threadsafe(self.send_html(chat_id, b.thread_id, text), loop)
 
         def done(result) -> None:
             try:
@@ -1506,6 +1516,7 @@ class FeishuFrontend(Frontend):
             return tok
         else:
             import urllib.request
+
             req = urllib.request.Request(
                 token_url,
                 data=json.dumps(token_body).encode("utf-8"),
@@ -1542,6 +1553,7 @@ class FeishuFrontend(Frontend):
             return data.get("name") or None
         else:
             import urllib.request
+
             creq = urllib.request.Request(
                 chat_url, headers={"Authorization": f"Bearer {tok}"}, method="GET"
             )
@@ -1581,9 +1593,7 @@ class FeishuFrontend(Frontend):
 
         try:
             if requests is not None:
-                r = requests.get(
-                    url, headers={"Authorization": f"Bearer {tok}"}, timeout=30
-                )
+                r = requests.get(url, headers={"Authorization": f"Bearer {tok}"}, timeout=30)
                 if r.status_code != 200:
                     log.warning(
                         f"feishu download_{resource_type} err: status={r.status_code} "
@@ -1594,6 +1604,7 @@ class FeishuFrontend(Frontend):
                     f.write(r.content)
             else:
                 import urllib.request
+
                 req = urllib.request.Request(
                     url, headers={"Authorization": f"Bearer {tok}"}, method="GET"
                 )
@@ -1603,16 +1614,13 @@ class FeishuFrontend(Frontend):
             return str(save_path)
         except Exception as e:
             log.warning(
-                f"feishu download_{resource_type} err: {e} "
-                f"mid={message_id} key={file_key[:12]}"
+                f"feishu download_{resource_type} err: {e} mid={message_id} key={file_key[:12]}"
             )
             return None
 
     def _download_image_sync(self, message_id: str, file_key: str) -> str | None:
         """同步下载消息里的图片资源。"""
-        return self._download_resource_sync(
-            message_id, file_key, "image", f"{file_key[:8]}.jpg"
-        )
+        return self._download_resource_sync(message_id, file_key, "image", f"{file_key[:8]}.jpg")
 
     def _download_file_sync(
         self, message_id: str, file_key: str, filename: str | None
@@ -1646,8 +1654,7 @@ class FeishuFrontend(Frontend):
             data = r.json() or {}
             if r.status_code != 200 or data.get("code", 0) != 0:
                 log.warning(
-                    f"feishu upload_image err: status={r.status_code} "
-                    f"body={r.text[:200]} path={p}"
+                    f"feishu upload_image err: status={r.status_code} body={r.text[:200]} path={p}"
                 )
                 return None
             return ((data.get("data") or {}).get("image_key")) or None
@@ -1679,8 +1686,7 @@ class FeishuFrontend(Frontend):
             data = r.json() or {}
             if r.status_code != 200 or data.get("code", 0) != 0:
                 log.warning(
-                    f"feishu upload_file err: status={r.status_code} "
-                    f"body={r.text[:200]} path={p}"
+                    f"feishu upload_file err: status={r.status_code} body={r.text[:200]} path={p}"
                 )
                 return None
             return ((data.get("data") or {}).get("file_key")) or None
@@ -1692,10 +1698,7 @@ class FeishuFrontend(Frontend):
         """列 project_base 下的直接子目录, 返回飞书 HTML 文本 (供 /projects 用)"""
         base = self.project_base
         try:
-            dirs = sorted(
-                d for d in os.listdir(base)
-                if os.path.isdir(os.path.join(base, d))
-            )
+            dirs = sorted(d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
         except OSError:
             dirs = []
         body = "\n".join(f"• {html_mod.escape(d)}" for d in dirs) if dirs else "（空）"
@@ -1705,7 +1708,9 @@ class FeishuFrontend(Frontend):
             "用法: <code>/init &lt;目录名&gt;</code> 绑定; <code>/init</code> 自动用群名新建"
         )
 
-    async def _auto_provision(self, chat_id: str, chat_type: str, target_dir: str | None = None) -> None:
+    async def _auto_provision(
+        self, chat_id: str, chat_type: str, target_dir: str | None = None
+    ) -> None:
         """飞书 /init: 取群名 → 调公共 provision_chat → 回确认 / 失败卡片。
 
         provision 逻辑 (建目录 / 信任 / tmux / binding / tailer / yaml / 起 claude) 已抽到
@@ -1726,7 +1731,8 @@ class FeishuFrontend(Frontend):
 
         try:
             b = await provision_chat(
-                self, self.state,
+                self,
+                self.state,
                 chat_id=chat_id,
                 thread_id=None,
                 display_name=raw_name,
@@ -1739,7 +1745,8 @@ class FeishuFrontend(Frontend):
             )
         except AsciiDirRequired:
             await self.send_html(
-                chat_id, None,
+                chat_id,
+                None,
                 "⚠️ <b>群名含中文,项目目录需英文</b>\n"
                 "请用 <code>/init &lt;英文目录名&gt;</code> 指定 (tmux 仍用群名)\n"
                 "或 /projects 看现有目录",
@@ -1750,15 +1757,16 @@ class FeishuFrontend(Frontend):
             # 已绑定 → 静默 (provision_chat 已 log); 真失败 → 回卡片
             if self.find_binding(chat_id) is None:
                 await self.send_html(
-                    chat_id, None,
+                    chat_id,
+                    None,
                     "❌ <b>开通会话失败</b>\n请检查日志或手动配置 bindings.yaml",
                 )
             return
 
         await self.send_html(
-            chat_id, None,
-            f"✅ <b>已开通会话</b>\n群: {b.name}\n"
-            f"目录: <code>{b.cwd}</code>\n现在可以直接对话了",
+            chat_id,
+            None,
+            f"✅ <b>已开通会话</b>\n群: {b.name}\n目录: <code>{b.cwd}</code>\n现在可以直接对话了",
         )
 
     # ────────── 消息收发 handler ──────────
@@ -1783,9 +1791,7 @@ class FeishuFrontend(Frontend):
         except Exception:
             log.debug("feishu chat_removed event 无 chat_id, 忽略")
             return
-        asyncio.run_coroutine_threadsafe(
-            self._handle_chat_removed(chat_id), self._main_loop
-        )
+        asyncio.run_coroutine_threadsafe(self._handle_chat_removed(chat_id), self._main_loop)
 
     def _ignore_event(self, data) -> None:
         """注册飞书已订阅但无业务动作的事件, 避免 SDK 记录 processor not found。"""
@@ -1815,6 +1821,7 @@ class FeishuFrontend(Frontend):
     async def _handle_chat_removed(self, chat_id: str) -> None:
         """主 loop 里拆除 chat_id 对应的 binding (若有)"""
         from tmuxbot.provision import deprovision_chat
+
         try:
             bindings = [b for b in self.bindings if str(b.chat_id) == str(chat_id)]
             if not bindings:
@@ -1826,9 +1833,7 @@ class FeishuFrontend(Frontend):
                 len(bindings),
             )
             for binding in list(bindings):
-                await deprovision_chat(
-                    self, self.state, binding, bindings_file=self.bindings_file
-                )
+                await deprovision_chat(self, self.state, binding, bindings_file=self.bindings_file)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1841,13 +1846,11 @@ class FeishuFrontend(Frontend):
             msg = event.message
             sender = event.sender
 
-            chat_id: str = msg.chat_id          # oc_xxx
-            chat_type: str = msg.chat_type      # "group" / "p2p"
-            msg_type: str = msg.message_type    # "text" / "image" / ...
+            chat_id: str = msg.chat_id  # oc_xxx
+            chat_type: str = msg.chat_type  # "group" / "p2p"
+            msg_type: str = msg.message_type  # "text" / "image" / ...
             open_id: str = sender.sender_id.open_id
-            incoming = self.normalize_incoming(
-                msg, sender_id=open_id, chat_type=chat_type
-            )
+            incoming = self.normalize_incoming(msg, sender_id=open_id, chat_type=chat_type)
 
             # 诊断: 收到的每条消息 (open_id 按 app 区分, 新接入时据此配白名单; debug 级不刷屏)
             log.debug(
@@ -1878,10 +1881,12 @@ class FeishuFrontend(Frontend):
             _text_now = incoming.text
             if _text_now == "/deinit":
                 from tmuxbot.provision import deprovision_chat
+
                 _name = b.name
                 await deprovision_chat(self, self.state, b, bindings_file=self.bindings_file)
                 await self.send_html(
-                    chat_id, b.thread_id,
+                    chat_id,
+                    b.thread_id,
                     f"✅ 已拆除会话「{_name}」\n"
                     "tmux 已关 · binding 注销\n"
                     "项目目录和历史 jsonl 保留(可重新 /init 接回)",
@@ -1936,8 +1941,9 @@ class FeishuFrontend(Frontend):
                                 ik = node.get("image_key")
                                 if ik:
                                     image_keys.append(ik)
-                    caption = (title + ("\n" if title and text_parts else "") +
-                               "".join(text_parts)).strip()
+                    caption = (
+                        title + ("\n" if title and text_parts else "") + "".join(text_parts)
+                    ).strip()
 
                 if not image_keys:
                     log.debug(f"feishu: {msg_type} msg 无 image_key, 忽略")
@@ -1953,15 +1959,14 @@ class FeishuFrontend(Frontend):
                 # 逐个下载图片 (同步 HTTP 放 to_thread, 失败跳过该图)
                 paths: list[str] = []
                 for ik in image_keys:
-                    p = await asyncio.to_thread(
-                        self._download_image_sync, msg.message_id, ik
-                    )
+                    p = await asyncio.to_thread(self._download_image_sync, msg.message_id, ik)
                     if p:
                         paths.append(p)
 
                 if not paths:
                     await self.send_html(
-                        chat_id, b.thread_id,
+                        chat_id,
+                        b.thread_id,
                         "❌ <b>图片下载失败</b>\n"
                         "请检查飞书 app 是否开通 <code>im:resource</code> 权限",
                     )
@@ -2001,10 +2006,7 @@ class FeishuFrontend(Frontend):
                 except (json.JSONDecodeError, AttributeError, TypeError):
                     content_obj = {}
 
-                file_key = (
-                    (content_obj or {}).get("file_key")
-                    or (content_obj or {}).get("fileKey")
-                )
+                file_key = (content_obj or {}).get("file_key") or (content_obj or {}).get("fileKey")
                 filename = (
                     (content_obj or {}).get("file_name")
                     or (content_obj or {}).get("fileName")
@@ -2025,7 +2027,8 @@ class FeishuFrontend(Frontend):
                 )
                 if not path:
                     await self.send_html(
-                        chat_id, b.thread_id,
+                        chat_id,
+                        b.thread_id,
                         "❌ <b>文件下载失败</b>\n"
                         "请检查飞书 app 是否开通 <code>im:resource</code> 权限",
                     )
@@ -2129,9 +2132,15 @@ class FeishuFrontend(Frontend):
 
             # ── 命令分发 (共享层: stop / capture 命令 / 普通文本) ──
             from tmuxbot.dispatch import dispatch_incoming_text
+
             await dispatch_incoming_text(
-                self, self.backend_for(b), b, self.state,
-                incoming.source_id, incoming.thread_id, text,
+                self,
+                self.backend_for(b),
+                b,
+                self.state,
+                incoming.source_id,
+                incoming.thread_id,
+                text,
             )
 
         except asyncio.CancelledError:
@@ -2146,9 +2155,8 @@ class FeishuFrontend(Frontend):
         lark = self._lark
         self._main_loop = asyncio.get_running_loop()
 
-        builder = (
-            lark.EventDispatcherHandler.builder("", "")
-            .register_p2_im_message_receive_v1(self._on_message)
+        builder = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(
+            self._on_message
         )
         card_action_register = getattr(builder, "register_p2_card_action_trigger", None)
         if card_action_register is not None:
@@ -2158,7 +2166,7 @@ class FeishuFrontend(Frontend):
         # 群解散 + bot 被移出群 → 自动拆除会话。不同 lark-oapi 版本方法名可能缺,
         # 用 getattr 防御性注册: 缺哪个只 warning, 不影响消息收发主链路。
         for _evt_method in (
-            "register_p2_im_chat_disbanded_v1",          # 群解散
+            "register_p2_im_chat_disbanded_v1",  # 群解散
             "register_p2_im_chat_member_bot_deleted_v1",  # bot 被移出群
         ):
             _reg = getattr(builder, _evt_method, None)
@@ -2209,14 +2217,10 @@ class FeishuFrontend(Frontend):
                     self.state.channel_health.error(self.health_id, exc)
                 else:
                     log.warning("feishu ws exited unexpectedly; reconnecting")
-                    self.state.channel_health.error(
-                        self.health_id, "websocket exited unexpectedly"
-                    )
+                    self.state.channel_health.error(self.health_id, "websocket exited unexpectedly")
 
                 await asyncio.sleep(retry_delay)
-                self.state.channel_health.recovering(
-                    self.health_id, "websocket reconnect backoff"
-                )
+                self.state.channel_health.recovering(self.health_id, "websocket reconnect backoff")
                 retry_delay = min(retry_delay * 2, 30.0)
             finally:
                 stop_task.cancel()

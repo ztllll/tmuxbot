@@ -1,0 +1,8 @@
+Historical markdown said: ⠋ Working... ⟦esc⟧
+That prose is not the current loader.
+────────────────────────────────────────────────────────
+continue checking the adapter
+────────────────────────────────────────────────────────
+⠼ Working… checking terminal policy ⟦esc⟧
+╭── π  > ⬢ GPT-5.6 Sol (AISuperToken) · ◕ xhigh > 📁 ~/claude-project/tmuxbot > ⑂ main *15 ?15 > ◫ 43.5%/360K > $0.131 ▶ ──╮
+╰─ ─╯

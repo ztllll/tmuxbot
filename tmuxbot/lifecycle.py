@@ -3,6 +3,7 @@
 消息入口会按需调用 backend.ensure_running()。后台健康巡检每小时检查已存在
 的 route pane；人工关闭的 tmux 不会被它重建，只在下一条消息到达时按需恢复。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,6 +43,23 @@ def lifecycle_interval() -> float:
         return DEFAULT_LIFECYCLE_INTERVAL
 
 
+async def _ensure_backend_running(backend: "Backend", b: "Binding", *, reason: str) -> None:
+    try:
+        await backend.ensure_running(b)
+    except Exception as first_error:
+        recover = getattr(backend, "recover_unhealthy_pane", None)
+        if not callable(recover):
+            raise
+        try:
+            recovered = await recover(b)
+        except Exception:
+            log.exception("[%s] unhealthy-pane recovery failed", b.name)
+            raise first_error
+        if not recovered:
+            raise
+        log.warning("[%s] recovered unsafe provider pane for %s", b.name, reason)
+
+
 async def ensure_binding_running(
     backend: "Backend",
     b: "Binding",
@@ -50,15 +68,7 @@ async def ensure_binding_running(
     reason: str,
     wait: bool = True,
 ) -> bool:
-    """串行调用 backend.ensure_running。
-
-    Args:
-        wait: False 时如果已有同 binding ensure 在跑, 直接跳过。后台巡检用 False,
-            用户消息入口用 True, 保证消息注入前 CLI 已 ready。
-
-    Returns:
-        True 表示实际执行了 ensure_running; False 表示被跳过。
-    """
+    """Serialize provider startup and health recovery for one binding."""
     lock = state.ensure_locks.setdefault(b.name, asyncio.Lock())
     if not wait and lock.locked():
         log.debug("[%s] lifecycle ensure skipped: already running", b.name)
@@ -66,26 +76,47 @@ async def ensure_binding_running(
 
     async with lock:
         started = time.monotonic()
-        try:
-            await backend.ensure_running(b)
-        except Exception as first_error:
-            recover = getattr(backend, "recover_unhealthy_pane", None)
-            if not callable(recover):
-                raise
-            try:
-                recovered = await recover(b)
-            except Exception:
-                log.exception("[%s] unhealthy-pane recovery failed", b.name)
-                raise first_error
-            if not recovered:
-                raise
-            log.warning("[%s] recovered unsafe provider pane for %s", b.name, reason)
+        await _ensure_backend_running(backend, b, reason=reason)
         elapsed = time.monotonic() - started
         if elapsed >= 1.0:
-            log.info(
-                "[%s] ensure_running(%s) finished in %.1fs", b.name, reason, elapsed
-            )
+            log.info("[%s] ensure_running(%s) finished in %.1fs", b.name, reason, elapsed)
         return True
+
+
+async def restart_binding(backend: "Backend", b: "Binding", state: "State", *, reason: str) -> bool:
+    """Restart one route under its lifecycle lock.
+
+    Returns True when an existing provider was restarted and False when a missing
+    provider/session was only started. OMP opts into a clean pane respawn so IM
+    restart never injects Ctrl-C/Ctrl-D into its native TUI.
+    """
+    from tmuxbot.tmux import (
+        tmux_has_session,
+        tmux_pane_command,
+        tmux_respawn_pane,
+        tmux_send_key,
+    )
+
+    lock = state.ensure_locks.setdefault(b.name, asyncio.Lock())
+    async with lock:
+        if not tmux_has_session(b.tmux_session):
+            await _ensure_backend_running(backend, b, reason=reason)
+            return False
+
+        command = tmux_pane_command(b.tmux_target)
+        was_running = backend.is_running_command(command)
+        if backend.restart_via_clean_respawn:
+            if not tmux_respawn_pane(b.tmux_target, b.cwd):
+                raise RuntimeError(f"failed to respawn provider pane {b.tmux_target}")
+            await asyncio.sleep(0.25)
+        elif was_running:
+            tmux_send_key(b.tmux_target, "C-c")
+            await asyncio.sleep(0.5)
+            tmux_send_key(b.tmux_target, "C-d")
+            await asyncio.sleep(2.0)
+
+        await _ensure_backend_running(backend, b, reason=reason)
+        return was_running
 
 
 async def lifecycle_watch_loop(

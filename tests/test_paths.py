@@ -7,12 +7,14 @@ from tmuxbot.paths import RuntimePaths, default_admin_cwd
 
 
 def test_default_admin_cwd_follows_xdg_data_home(tmp_path: Path):
-    assert default_admin_cwd({}, home=tmp_path / "home") == (
-        tmp_path / "home/.local/share/tmuxbot/admin"
-    ).resolve()
-    assert default_admin_cwd(
-        {"XDG_DATA_HOME": str(tmp_path / "share")}, home=tmp_path / "home"
-    ) == (tmp_path / "share/tmuxbot/admin").resolve()
+    assert (
+        default_admin_cwd({}, home=tmp_path / "home")
+        == (tmp_path / "home/.local/share/tmuxbot/admin").resolve()
+    )
+    assert (
+        default_admin_cwd({"XDG_DATA_HOME": str(tmp_path / "share")}, home=tmp_path / "home")
+        == (tmp_path / "share/tmuxbot/admin").resolve()
+    )
 
 
 def test_paths_default_to_xdg_under_empty_home(tmp_path: Path):
@@ -26,7 +28,7 @@ def test_paths_default_to_xdg_under_empty_home(tmp_path: Path):
     assert paths.offsets_file == home / ".local/state/tmuxbot/offsets.json"
     assert paths.lock_file == home / ".local/state/tmuxbot/tmuxbot.lock"
     assert paths.hook_spool_file == home / ".local/state/tmuxbot/claude-hooks.jsonl"
-    assert paths.pi_terminal_health_file == home / ".local/state/tmuxbot/pi-terminal-health.json"
+    assert paths.omp_terminal_health_file == home / ".local/state/tmuxbot/omp-terminal-health.json"
 
 
 def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
@@ -42,7 +44,7 @@ def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
             "TMUXBOT_OFFSETS": str(tmp_path / "offsets.json"),
             "TMUXBOT_LOCK": str(tmp_path / "bridge.lock"),
             "TMUXBOT_HOOK_SPOOL": str(tmp_path / "hooks.jsonl"),
-            "TMUXBOT_PI_TERMINAL_HEALTH_FILE": str(tmp_path / "pi-health.json"),
+            "TMUXBOT_OMP_TERMINAL_HEALTH_FILE": str(tmp_path / "omp-health.json"),
         },
         home=tmp_path / "home",
     )
@@ -54,21 +56,19 @@ def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
     assert paths.offsets_file == tmp_path / "offsets.json"
     assert paths.lock_file == tmp_path / "bridge.lock"
     assert paths.hook_spool_file == tmp_path / "hooks.jsonl"
-    assert paths.pi_terminal_health_file == tmp_path / "pi-health.json"
+    assert paths.omp_terminal_health_file == tmp_path / "omp-health.json"
 
 
 def test_legacy_data_dir_override_keeps_state_files_together(tmp_path: Path):
     data_dir = tmp_path / "legacy-data"
 
-    paths = RuntimePaths.discover(
-        {"TMUXBOT_DATA_DIR": str(data_dir)}, home=tmp_path / "home"
-    )
+    paths = RuntimePaths.discover({"TMUXBOT_DATA_DIR": str(data_dir)}, home=tmp_path / "home")
 
     assert paths.database_file == data_dir / "control-plane.sqlite3"
     assert paths.offsets_file == data_dir / "offsets.json"
     assert paths.lock_file == data_dir / "tmuxbot.lock"
     assert paths.hook_spool_file == data_dir / "claude-hooks.jsonl"
-    assert paths.pi_terminal_health_file == data_dir / "pi-terminal-health.json"
+    assert paths.omp_terminal_health_file == data_dir / "omp-terminal-health.json"
 
 
 def test_explicit_xdg_paths_work_when_home_is_empty(tmp_path: Path):

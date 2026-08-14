@@ -1,4 +1,5 @@
 """Deterministic route inspection and atomic YAML editing commands."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,9 +19,7 @@ from tmuxbot.validation import ConfigValidationError, validate_bindings
 def binding_from_mapping(item: Mapping[str, Any]) -> Binding:
     raw_chat_id = item.get("chat_id", 0)
     chat_id: int | str = (
-        int(raw_chat_id)
-        if str(raw_chat_id).lstrip("-").isdigit()
-        else str(raw_chat_id)
+        int(raw_chat_id) if str(raw_chat_id).lstrip("-").isdigit() else str(raw_chat_id)
     )
     provider_session_id = item.get("provider_session_id") or item.get("last_session_id")
     transcript = item.get("transcript_path")
@@ -38,9 +37,7 @@ def binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         mention_required=item.get("mention_required"),
         admin=bool(item.get("admin", False)),
         thread_root_message_id=(
-            str(item.get("thread_root_message_id"))
-            if item.get("thread_root_message_id")
-            else None
+            str(item.get("thread_root_message_id")) if item.get("thread_root_message_id") else None
         ),
         provider_session_id=str(provider_session_id) if provider_session_id else None,
         transcript_path=Path(str(transcript)) if transcript else None,
@@ -77,9 +74,7 @@ def binding_to_mapping(binding: Binding) -> dict[str, Any]:
 def binding_to_json(binding: Binding) -> dict[str, Any]:
     payload = asdict(binding)
     payload["cwd"] = str(binding.cwd)
-    payload["transcript_path"] = (
-        str(binding.transcript_path) if binding.transcript_path else None
-    )
+    payload["transcript_path"] = str(binding.transcript_path) if binding.transcript_path else None
     payload["tmux_target"] = binding.tmux_target
     payload.pop("pending_session_handoff_after", None)
     return payload
@@ -137,9 +132,7 @@ class RouteStore:
         if not any(binding.name == name for binding in bindings):
             raise KeyError(name)
         replacement = binding_from_mapping(item)
-        candidate = [
-            replacement if binding.name == name else binding for binding in bindings
-        ]
+        candidate = [replacement if binding.name == name else binding for binding in bindings]
         validate_bindings(candidate)
         raw["bindings"] = [binding_to_mapping(binding) for binding in candidate]
         self._atomic_write(raw)
@@ -172,12 +165,8 @@ class RouteStore:
     def _atomic_write(self, document: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_symlink():
-            raise ConfigValidationError(
-                [f"bindings file must not be a symbolic link: {self.path}"]
-            )
-        rendered = yaml.safe_dump(
-            dict(document), allow_unicode=True, sort_keys=False
-        )
+            raise ConfigValidationError([f"bindings file must not be a symbolic link: {self.path}"])
+        rendered = yaml.safe_dump(dict(document), allow_unicode=True, sort_keys=False)
         temp_path: Path | None = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -224,16 +213,10 @@ def build_route_parser() -> argparse.ArgumentParser:
     bind_parser.add_argument("--window", type=int, default=0, dest="tmux_window")
     bind_parser.add_argument("--pane", type=int, default=0, dest="tmux_pane")
     bind_parser.add_argument("--cwd", required=True)
-    bind_parser.add_argument(
-        "--backend", choices=("claude_code", "codex", "pi"), required=True
-    )
+    bind_parser.add_argument("--backend", choices=("claude_code", "codex", "omp"), required=True)
     mention = bind_parser.add_mutually_exclusive_group()
-    mention.add_argument(
-        "--mention-required", action="store_true", dest="mention_required"
-    )
-    mention.add_argument(
-        "--no-mention-required", action="store_false", dest="mention_required"
-    )
+    mention.add_argument("--mention-required", action="store_true", dest="mention_required")
+    mention.add_argument("--no-mention-required", action="store_false", dest="mention_required")
     bind_parser.set_defaults(mention_required=None)
 
     unbind_parser = subparsers.add_parser("unbind")
@@ -248,9 +231,7 @@ def _parse_identifier(value: str | None, *, channel: str) -> int | str | None:
         try:
             return int(value)
         except ValueError as exc:
-            raise ConfigValidationError(
-                ["telegram chat_id/thread_id must be integers"]
-            ) from exc
+            raise ConfigValidationError(["telegram chat_id/thread_id must be integers"]) from exc
     return value
 
 
@@ -275,7 +256,11 @@ def run_route_command(argv: Sequence[str]) -> int:
             if args.as_json:
                 print(json.dumps(binding_to_json(item), ensure_ascii=False))
             else:
-                print(yaml.safe_dump(binding_to_mapping(item), allow_unicode=True, sort_keys=False).rstrip())
+                print(
+                    yaml.safe_dump(
+                        binding_to_mapping(item), allow_unicode=True, sort_keys=False
+                    ).rstrip()
+                )
             return 0
         if args.route_command == "validate":
             count = store.validate()

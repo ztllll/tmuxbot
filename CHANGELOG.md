@@ -4,11 +4,26 @@
 
 ---
 
+## [0.3.1] - 2026-08-14
+
+### Changed
+
+- 完成运行时与 route 身份的 clean cutover：当前 provider 由 Pi 统一迁移为 Oh My Pi（OMP 17.3.2），新配置使用 `backend: omp`、`OMP_BIN` 与 `TG_OMP_BOT_TOKEN`；不保留 `backend: pi`、命令 alias 或可发现的旧 provider。
+- OMP 启动参数集中到服务端 provider registry：受管 TUI 使用 `--approval-mode yolo --extension <managed-extension>`，恢复只追加 `--resume <absolute transcript path>`；Web/API 不接受浏览器传入 binary path、tmux target 或 argv。
+- 受管 OMP extension 通过 provider-authored handoff 与 health sidecar 维护精确会话身份；handoff 额外记录 live `processId`，所有已落盘或 pending identity 都要求该 PID 属于 exact pane。新 session 的 JSONL 在首条消息前尚未落盘时，还要求路径位于官方 sessions root 且文件名匹配 session ID；文件出现后恢复严格 header/cwd 校验。`adopt-omp-session` 也只接受与当前受管 sidecar 一致的身份。已有 OMP 进程缺少有效受管身份时 fail closed，不再按 transcript mtime 猜测。
+- transcript 适配迁移到 OMP JSONL v3：读取 `~/.omp/agent/sessions` 下的 title/session header、当前 branch、`model_change.model`、thinking level、todo phases、plan-file write、mode change、reset boundary 与 canonical compaction；旧 Pi transcript 仅可作为显式绝对路径交给 OMP 官方恢复流程，不搬迁或改写。
+- OMP TUI 屏幕解析降为版本化弱信号：只识别配对的原生 `╭── π` / `╰─` footer，以及紧邻 footer、以 `⟦esc⟧` 结束的 braille loader；会话身份与健康状态仍以 sidecar 和 JSONL 为权威。
+- OMP working/streaming 时的普通文字与附件进入 steering queue；`/new`、`/compact` 等控制命令要求 idle，忙碌时立即拒绝。原生菜单、picker、ask、approval、plan review 与确认全部 SSH-only，IM 只提示精确 pane，不模拟按键。
+- bot `/plan` 改为本地状态/帮助命令：不会向 OMP pane 注入未知 slash command；需要切换 plan mode 时提示 SSH attach 后使用当前默认 `Alt+Shift+P`，并说明自定义 keybinding 可能不同。
+- WebUI、provider scan/probe/create/adopt、模型 picker、通道配置、doctor、Admin CLI、示例配置和当前运维文案统一显示 Oh My Pi，并由 provider registry 解析 OMP capability、路径、启动参数和默认 credential。
+
+---
+
 ## [Unreleased]
 
 ### Documentation
 
-- 更新 GitHub 仓库入口、配置与运维说明：新增 Telegram/飞书 credential、精确 route、XDG 路径、systemd、Pi SSH-only、附件/Web 安全的集中配置文档；同步修正生命周期审计、Admin service 名称、route 示例和架构图。
+- 更新 GitHub 仓库入口、配置与运维说明：新增 Telegram/飞书 credential、精确 route、XDG 路径、systemd、OMP SSH-only、附件/Web 安全的集中配置文档；同步修正生命周期审计、Admin service 名称、route 示例和架构图。
 
 ### Fixed
 

@@ -1,0 +1,7 @@
+╭─ Models ────────────┬────────────────────────────────────────────────────────╮
+│   ✦ Roles      5/10 │  All available models · --models scope               │
+│ ❯ ⬢ All models   32 │  🔍 >                                                │
+│   ● aisupertoken 32 │  aisupertoken/gpt-5.6-sol                            │
+├─────────────────────┴────────────────────────────────────────────────────────┤
+│ Enter assign roles · ↑/↓ providers · → models · type to search · Esc close │
+╰──────────────────────────────────────────────────────────────────────────────╯

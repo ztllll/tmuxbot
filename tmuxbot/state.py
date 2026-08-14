@@ -4,6 +4,7 @@
 - 用 set 保存强引用 (asyncio 默认弱引用 Task, 易被 GC)
 - done_callback 自动从 set 移除 + log exception
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,18 +23,19 @@ class Binding:
       - Telegram: int (正数 DM user_id / 负数 group chat_id)
       - 飞书:     str (oc_xxx 格式的 chat_id)
     """
+
     name: str
-    chat_id: int | str        # Telegram: int; 飞书: str (oc_xxx)
+    chat_id: int | str  # Telegram: int; 飞书: str (oc_xxx)
     thread_id: int | str | None  # Telegram topic int; Feishu thread str; None = root/DM
     tmux_session: str
     tmux_window: int
     tmux_pane: int
     cwd: Path
-    backend: str = "claude_code"            # route adapter: claude_code / codex / pi
-    bot_token_env: str = "TG_BOT_TOKEN"     # ★ 用哪个 token (env 变量名)
-    channel: str = "telegram"               # ★ 前端渠道: telegram / feishu
-    mention_required: bool | None = None      # None = inherit frontend deployment default
-    admin: bool = False                       # privileged route; channel must enforce DM shape
+    backend: str = "claude_code"  # route adapter: claude_code / codex / omp
+    bot_token_env: str = "TG_BOT_TOKEN"  # ★ 用哪个 token (env 变量名)
+    channel: str = "telegram"  # ★ 前端渠道: telegram / feishu
+    mention_required: bool | None = None  # None = inherit frontend deployment default
+    admin: bool = False  # privileged route; channel must enforce DM shape
     # 飞书 topic 的稳定根消息锚点。仅用于 reply_in_thread=True；Telegram/DM/root route 不使用。
     thread_root_message_id: str | None = None
     # provider 会话必须精确绑定到 tmux pane。last_session_id 保留作旧命令层兼容别名；
@@ -86,7 +88,7 @@ class State:
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction
         self.command_transactions: dict[str, object] = {}
-        # Pi auto-compaction IM 状态卡：binding.name → {msg_id, chat_id, started_at, eta_seconds, ...}
+        # OMP auto-compaction IM 状态卡：binding.name → {msg_id, chat_id, started_at, eta_seconds, ...}
         self.compaction_status: dict[str, dict] = {}
         # 通道连接健康：Telegram/飞书共用同一份运行时审计口径。
         self.channel_health = ChannelHealthRegistry()
@@ -108,9 +110,7 @@ class State:
         t.add_done_callback(_done)
         return t
 
-    def find_by_source(
-        self, chat_id: int | str, thread_id: int | str | None
-    ) -> Binding | None:
+    def find_by_source(self, chat_id: int | str, thread_id: int | str | None) -> Binding | None:
         for b in self.bindings:
             if b.chat_id == chat_id and b.thread_id == thread_id:
                 return b

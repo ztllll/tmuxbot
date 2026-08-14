@@ -6,16 +6,16 @@
     剥 @botname 后缀 → 解析别名 → tmux_send_text → capture_and_push (background)
   - /screen: capture 屏幕 → frontend.send_pre
   - /info:   aggregate_usage 统计卡片 → frontend.send_html
-  - /restart: C-c + C-d + ensure_running → frontend.send_html
+  - /restart: 通过 lifecycle 受管重启 → frontend.send_html
   - /rename pending 态: 下一条文本作为名字
   - 普通文本: tmux_send_text 注入, 不 capture
 
 TG 专属逻辑 (BotCommand 菜单 handler、@botname 剥离、m.reply、setup_mode)
 保留在 telegram.py, 不移到这里。
 """
+
 from __future__ import annotations
 
-import asyncio
 import html
 import logging
 import time
@@ -33,13 +33,10 @@ from tmuxbot.command_adapter import (
     CommandKind,
 )
 from tmuxbot.core.events import TerminalState
-from tmuxbot.lifecycle import ensure_binding_running
-from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
+from tmuxbot.lifecycle import ensure_binding_running, restart_binding
 from tmuxbot.tmux import (
     tmux_capture,
-    tmux_has_session,
     tmux_kill_session,
-    tmux_pane_command,
     tmux_send_key,
     tmux_send_text,
 )
@@ -54,6 +51,7 @@ log = logging.getLogger("tmuxbot")
 # stop 命令集: 这些命令不注入 claude, 直接操作 tmux key
 _STOP_CMDS = frozenset({"/esc", "/cc", "/eof"})
 
+
 async def dispatch_incoming_text(
     frontend: "Frontend",
     backend: "Backend",
@@ -63,7 +61,7 @@ async def dispatch_incoming_text(
     thread_id: int | str | None,
     text: str,
     *,
-    bot_username: str | None = None,   # TG 专属: @bot_username 后缀剥离
+    bot_username: str | None = None,  # TG 专属: @bot_username 后缀剥离
 ) -> None:
     """前端无关的命令分发入口。
 
@@ -80,9 +78,7 @@ async def dispatch_incoming_text(
     """
     from tmuxbot.commands import capture_and_push
 
-    parsed = parse_slash_text(
-        text, bot_username=bot_username, aliases=backend.command_aliases()
-    )
+    parsed = parse_slash_text(text, bot_username=bot_username, aliases=backend.command_aliases())
     if parsed and parsed.command == "/tmuxstop":
         stopped = tmux_kill_session(b.tmux_session)
         notice = (
@@ -92,11 +88,40 @@ async def dispatch_incoming_text(
         )
         await frontend.send_html(chat_id, thread_id, notice)
         return
+    if parsed and parsed.command == "/restart":
+        was_running = await restart_binding(backend, b, state, reason="channel-restart")
+        action = "restart" if was_running else "启动"
+        await frontend.send_html(chat_id, thread_id, f"🔄 已{action} {html.escape(backend.name)}")
+        return
 
-    had_live_provider = (
-        tmux_has_session(b.tmux_session)
-        and backend.is_running_command(tmux_pane_command(b.tmux_target))
-    )
+    if parsed and parsed.command == "/plan" and not backend.remote_tui_actions_allowed:
+        snapshot = backend.read_plan_mode(b)
+        interaction_notice = backend.format_remote_access_notice(b, "切换 Plan 模式") or ""
+        if snapshot is not None and snapshot.status == "active":
+            body = (
+                "📝 <b>OMP Plan 模式已启用</b>\n"
+                "· 这是 tmuxbot 本地状态帮助，未向 OMP pane 注入 <code>/plan</code>。\n"
+                + interaction_notice
+            )
+        else:
+            body = (
+                "📝 <b>OMP Plan 模式未启用</b>\n"
+                "· OMP 没有稳定的 <code>/plan</code> slash command；tmuxbot 未向 pane 注入任何内容。\n"
+                "· 请通过 SSH attach 后按默认 <code>Alt+Shift+P</code> 切换；"
+                "自定义 keybindings 可能改变该快捷键。\n" + interaction_notice
+            )
+        await frontend.send_html(chat_id, thread_id, body)
+        return
+    if parsed and not backend.remote_tui_actions_allowed:
+        direct_action = action_from_command(parsed.command, parsed.args)
+        semantic_action = semantic_action_from_command(parsed.command)
+        if parsed.command in _STOP_CMDS or direct_action or semantic_action:
+            interaction = direct_action or semantic_action or parsed.command
+            notice = backend.format_remote_interaction_notice(b, interaction)
+            if notice:
+                await frontend.send_html(chat_id, thread_id, notice)
+            return
+
     await ensure_binding_running(backend, b, state, reason="incoming", wait=True)
 
     # ── /rename pending 态: 下一条文本作为名字 ──
@@ -115,7 +140,8 @@ async def dispatch_incoming_text(
             allow_busy_submission=backend.accepts_input_while_busy,
         )
         await frontend.send_html(
-            chat_id, thread_id,
+            chat_id,
+            thread_id,
             f"✏️ <b>已提交新名字</b>: <code>{html.escape(text)}</code>",
         )
         return
@@ -130,15 +156,6 @@ async def dispatch_incoming_text(
         spec = classify_command(backend, parsed.command, parsed.args)
 
         action = action_from_command(parsed.command, parsed.args)
-        if action and backend.name == "pi":
-            await frontend.send_html(
-                chat_id,
-                thread_id,
-                "⚠️ <b>Pi 交互按键未执行</b>\n"
-                "· tmuxbot 不接受通过 IM 操作 Pi 的选择器。\n"
-                + pi_ssh_interaction_notice(b),
-            )
-            return
         if action:
             await handle_tui_action(
                 frontend,
@@ -152,39 +169,12 @@ async def dispatch_incoming_text(
             return
 
         semantic_action = semantic_action_from_command(parsed.command)
-        if semantic_action and backend.name == "pi":
-            await frontend.send_html(
-                chat_id,
-                thread_id,
-                "⚠️ <b>Pi 交互操作未执行</b>\n"
-                "· tmuxbot 不接受通过 IM 批准或取消 Pi 交互。\n"
-                + pi_ssh_interaction_notice(b),
-            )
-            return
         if semantic_action:
-            await handle_semantic_action(frontend, b, chat_id, thread_id, semantic_action)
+            await handle_semantic_action(frontend, backend, b, chat_id, thread_id, semantic_action)
             return
 
         if spec.kind == CommandKind.BLOCKED:
             return await frontend.send_html(chat_id, thread_id, spec.notice)
-
-        if (
-            backend.name == "pi"
-            and parsed.command == "/plan"
-            and backend.accepts_input_while_busy
-        ):
-            status = backend.parse_terminal_status(tmux_capture(b.tmux_target, 30))
-            if status is not None and status.state != TerminalState.IDLE:
-                label = status.label or status.state.value
-                await frontend.send_html(
-                    chat_id,
-                    thread_id,
-                    "⏳ <b>/plan 未执行</b>\n"
-                    f"· Pi 当前仍在 <code>{html.escape(label)}</code>\n"
-                    "· Plan Mode 会切换工具与会话状态，不能在工作中排队。"
-                    "请等待空闲，或先发送 <code>/esc</code>，确认停止后再试。",
-                )
-                return
 
         if spec.kind == CommandKind.INTERACTIVE:
             await handle_interactive_command(
@@ -200,6 +190,13 @@ async def dispatch_incoming_text(
 
     # ── stop 命令: 发 tmux key, 不注入 claude ──
     if cmd_for_feedback in _STOP_CMDS:
+        if not backend.remote_tui_actions_allowed:
+            notice = backend.format_remote_interaction_notice(
+                b, {"/esc": "取消", "/cc": "Ctrl-C", "/eof": "退出"}[cmd_for_feedback]
+            )
+            if notice:
+                await frontend.send_html(chat_id, thread_id, notice)
+            return
         if cmd_for_feedback == "/esc":
             tmux_send_key(b.tmux_target, "Escape")
             await frontend.send_html(chat_id, thread_id, "⎋ Escape")
@@ -253,31 +250,12 @@ async def dispatch_incoming_text(
         await frontend.send_html(chat_id, thread_id, "\n".join(parts))
         return
 
-    # ── /restart: C-c + C-d + ensure_running ──
-    if cmd_for_feedback == "/restart":
-        # ensure_binding_running above may have just recreated this route.  In
-        # that case there is no old provider process to restart; C-c/C-d would
-        # instead kill the fresh TUI or feed its shell.
-        if not had_live_provider:
-            await frontend.send_html(
-                chat_id, thread_id, f"🔄 已启动 {html.escape(backend.name)}"
-            )
-            return
-        tmux_send_key(b.tmux_target, "C-c")
-        await asyncio.sleep(0.5)
-        tmux_send_key(b.tmux_target, "C-d")
-        await asyncio.sleep(2.0)
-        await ensure_binding_running(backend, b, state, reason="restart", wait=True)
-        await frontend.send_html(chat_id, thread_id, f"🔄 已 restart {html.escape(backend.name)}")
-        return
-
     # ── capture 类 slash 命令: 注入 + background capture_and_push ──
     if cmd_for_feedback and cmd_for_feedback in backend.command_opts():
         opts = backend.command_opts()[cmd_for_feedback]
-        # Pi 普通文字可以在 Working 时进入 steering queue，但 /new、/compact 等
-        # 控制命令不能。不要让 IM update 无声等待共享层 300 秒；明确失败关闭，
-        # 也避免同一命令的多次点击各自长期占住 handler。
-        if backend.accepts_input_while_busy:
+        # Some providers accept ordinary busy steering but require native control
+        # commands to wait for an idle TUI. Fail immediately instead of queuing.
+        if backend.requires_idle_for_control_commands:
             status = backend.parse_terminal_status(tmux_capture(b.tmux_target, 30))
             if status is not None and status.state != TerminalState.IDLE:
                 label = status.label or status.state.value
@@ -285,10 +263,8 @@ async def dispatch_incoming_text(
                     chat_id,
                     thread_id,
                     f"⏳ <b>{html.escape(cmd_for_feedback)} 未执行</b>\n"
-                    f"· Pi 当前仍在 <code>{html.escape(label)}</code>\n"
-                    "· 普通消息可进入 steering queue；控制命令必须等待空闲。"
-                    "如需立即切换，请先发送 <code>/esc</code>，确认停止后再发送 "
-                    f"<code>{html.escape(cmd_for_feedback)}</code>。",
+                    f"· 当前仍在 <code>{html.escape(label)}</code>\n"
+                    "· 普通消息可继续进入 steering queue；控制命令必须等待 TUI 空闲。",
                 )
                 return
         if opts.expect_new_session or opts.expect_session_handoff:

@@ -1,4 +1,5 @@
 """Runtime filesystem locations for source checkouts and installed packages."""
+
 from __future__ import annotations
 
 import os
@@ -12,9 +13,7 @@ def _path(environ: Mapping[str, str], name: str) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
-def default_admin_cwd(
-    environ: Mapping[str, str], *, home: Path | None = None
-) -> Path:
+def default_admin_cwd(environ: Mapping[str, str], *, home: Path | None = None) -> Path:
     """Return the dedicated Admin DM workspace without creating it."""
     resolved_home = (home if home is not None else Path.home()).expanduser()
     data_base = _path(environ, "XDG_DATA_HOME") or resolved_home / ".local/share"
@@ -33,7 +32,7 @@ class RuntimePaths:
     lock_file: Path
     hook_spool_file: Path
     channel_health_file: Path
-    pi_terminal_health_file: Path
+    omp_terminal_health_file: Path
 
     @classmethod
     def discover(
@@ -50,11 +49,7 @@ class RuntimePaths:
         config_dir = _path(environ, "TMUXBOT_CONFIG_DIR") or config_base / "tmuxbot"
         legacy_data_dir = _path(environ, "TMUXBOT_DATA_DIR")
         data_dir = legacy_data_dir or data_base / "tmuxbot"
-        state_dir = (
-            _path(environ, "TMUXBOT_STATE_DIR")
-            or legacy_data_dir
-            or state_base / "tmuxbot"
-        )
+        state_dir = _path(environ, "TMUXBOT_STATE_DIR") or legacy_data_dir or state_base / "tmuxbot"
 
         env_file = _path(environ, "TMUXBOT_ENV")
         bindings_file = _path(environ, "TMUXBOT_BINDINGS")
@@ -73,16 +68,15 @@ class RuntimePaths:
             state_dir=state_dir,
             env_file=env_file or config_dir / ".env",
             bindings_file=bindings_file or config_dir / "bindings.yaml",
-            database_file=_path(environ, "TMUXBOT_DATABASE")
-            or data_dir / "control-plane.sqlite3",
+            database_file=_path(environ, "TMUXBOT_DATABASE") or data_dir / "control-plane.sqlite3",
             offsets_file=_path(environ, "TMUXBOT_OFFSETS") or state_dir / "offsets.json",
             lock_file=_path(environ, "TMUXBOT_LOCK") or state_dir / "tmuxbot.lock",
             hook_spool_file=_path(environ, "TMUXBOT_HOOK_SPOOL")
             or state_dir / "claude-hooks.jsonl",
             channel_health_file=_path(environ, "TMUXBOT_CHANNEL_HEALTH")
             or state_dir / "channel-health.json",
-            pi_terminal_health_file=_path(environ, "TMUXBOT_PI_TERMINAL_HEALTH_FILE")
-            or state_dir / "pi-terminal-health.json",
+            omp_terminal_health_file=_path(environ, "TMUXBOT_OMP_TERMINAL_HEALTH_FILE")
+            or state_dir / "omp-terminal-health.json",
         )
 
     def ensure_private_directories(self) -> None:

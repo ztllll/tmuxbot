@@ -5,6 +5,7 @@ UI/picker 类命令 (/context /cost /compact 等) 不写 jsonl, 注入后等屏�
 - 没命中走 fallback_summary
 - 都没用就发原始屏幕 (strip_decorations)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,8 +26,12 @@ log = logging.getLogger("tmuxbot")
 
 
 async def inject_slash_and_capture(
-    b: "Binding", cmd: str, *, backend: "Backend | None" = None,
-    settle_iters: int = 12, poll: float = 0.4,
+    b: "Binding",
+    cmd: str,
+    *,
+    backend: "Backend | None" = None,
+    settle_iters: int = 12,
+    poll: float = 0.4,
 ) -> str:
     """注入 slash 命令 → 等屏稳定 hash 2 次 → capture → Esc 退 modal → 返回 raw 屏"""
     expected = backend.running_command_names if backend is not None else None
@@ -71,14 +76,19 @@ def _fmt_token_delta(before: int | None, after: int | None) -> str | None:
         return f"· token 未变化 <code>{_fmt_k(before)}</code>"
     if after < before:
         pct = round((before - after) / before * 100)
-        return f"📉 token <code>{_fmt_k(before)}</code> → <code>{_fmt_k(after)}</code> (压缩 {pct}%)"
+        return (
+            f"📉 token <code>{_fmt_k(before)}</code> → <code>{_fmt_k(after)}</code> (压缩 {pct}%)"
+        )
     pct = round((after - before) / before * 100)
     return f"📈 token <code>{_fmt_k(before)}</code> → <code>{_fmt_k(after)}</code> (增加 {pct}%)"
 
 
 async def capture_and_push(
-    frontend: "Frontend", b: "Binding", backend: "Backend",
-    chat_id: int | str, thread_id: int | str | None,
+    frontend: "Frontend",
+    b: "Binding",
+    backend: "Backend",
+    chat_id: int | str,
+    thread_id: int | str | None,
     *,
     command: str | None = None,
 ) -> None:
@@ -172,7 +182,7 @@ async def capture_and_push(
                     break
             except Exception as e:
                 log.debug(f"capture_and_push {key} compact_metadata_since err: {e}")
-        # Pi /new creates the replacement session in memory but defers JSONL
+        # OMP /new creates the replacement session in memory but defers JSONL
         # creation until its first assistant reply. Its fresh-screen marker is
         # therefore the immediate completion signal; the tailer claims the file later.
         if (
@@ -194,7 +204,8 @@ async def capture_and_push(
             early_reason = "done_pattern"
             break
         if (
-            opts.parser and opts.parser_can_retry
+            opts.parser
+            and opts.parser_can_retry
             and not opts.expect_new_session
             and not opts.expect_compact_done
         ):
@@ -232,12 +243,13 @@ async def capture_and_push(
         and b.last_session_id != initial_session
     ):
         new_session_seen = True
-    if compact_meta is None and opts.expect_compact_done:
+    if compact_meta is None and opts.expect_compact_done and not new_session_seen:
         # jsonl flush 是事务式的, marker 落盘可能比循环退出晚 — 5 次 × 1s 重试兜底
         for retry in range(5):
             try:
                 compact_meta = backend.compact_metadata_since(
-                    backend.find_active_jsonl(b), before_jsonl_size,
+                    backend.find_active_jsonl(b),
+                    before_jsonl_size,
                 )
             except Exception as e:
                 log.debug(f"capture_and_push {key} final compact check (retry {retry}): {e}")
@@ -262,7 +274,9 @@ async def capture_and_push(
         dur_ms = compact_meta.get("durationMs")
         trig = compact_meta.get("trigger") or "?"
         if dur_ms:
-            compact_extra_line = f"⏱ 耗时 <code>{dur_ms / 1000:.1f}s</code> · 触发 <code>{trig}</code>"
+            compact_extra_line = (
+                f"⏱ 耗时 <code>{dur_ms / 1000:.1f}s</code> · 触发 <code>{trig}</code>"
+            )
 
     try:
         # 末尾再调一次 parser (覆盖 /clear /new 等固定文案 parser)
@@ -275,6 +289,7 @@ async def capture_and_push(
         if summary:
             if new_session_seen and b.last_session_id:
                 import html as _html
+
                 summary += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
             if delta_line:
                 summary += f"\n{delta_line}"
@@ -292,7 +307,7 @@ async def capture_and_push(
         total_wait = opts.init_delay + opts.max_iters * opts.poll + 5  # +5s for final retry
         if opts.expect_new_session and not new_session_seen:
             if opts.defer_new_session_persistence and deferred_new_session_seen:
-                # Pi's SessionManager does not create the physical JSONL at
+                # OMP's SessionManager does not create the physical JSONL at
                 # /new time. The handoff remains armed until the first
                 # assistant response flushes the new session file.
                 if opts.fallback_summary:
@@ -302,7 +317,7 @@ async def capture_and_push(
             warn = f"⚠️ <b>{key} 未确认完成</b>\n· jsonl 在 {total_wait:.0f}s 内未切换 (命令可能未真触发, 检查 TUI 屏幕)"
             await frontend.send_html(chat_id, thread_id, warn)
             return
-        if opts.expect_compact_done and compact_meta is None:
+        if opts.expect_compact_done and compact_meta is None and not new_session_seen:
             if opts.failure_summary:
                 await frontend.send_html(chat_id, thread_id, opts.failure_summary)
                 return
@@ -313,6 +328,7 @@ async def capture_and_push(
             fb = opts.fallback_summary
             if new_session_seen and b.last_session_id:
                 import html as _html
+
                 fb += f"\n· 新会话 <code>{_html.escape(b.last_session_id[:8])}</code>"
             if delta_line:
                 fb += f"\n{delta_line}"

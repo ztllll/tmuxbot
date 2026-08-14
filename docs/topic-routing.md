@@ -1,10 +1,10 @@
 # Topic Routes and Admin DM
 
-Status: implemented on `main`; v0.3.0 is the frozen baseline and subsequent maintenance is tracked under `CHANGELOG.md [Unreleased]`.
+Status: implemented on `main`; v0.3.0 is the frozen baseline and v0.3.1 is the OMP native-adapter release.
 
 ## Product boundary
 
-tmuxbot is a bidirectional transport between an exact IM endpoint and a real tmux pane. It moves user input, attachments, terminal state, structured local transcript events, and provider-safe controls. It does not interpret development tasks or become a workflow/project-management system. Pi interactions are deliberately observation-only: live menus/inputs are detected and handed off to SSH rather than translated into IM keystrokes.
+tmuxbot is a bidirectional transport between an exact IM endpoint and a real tmux pane. It moves user input, attachments, terminal state, structured local transcript events, and provider-safe controls. It does not interpret development tasks or become a workflow/project-management system. OMP native menus, confirmations, and pickers are deliberately observation-only: live interactions are detected and handed off to SSH rather than translated into IM keystrokes. Bot `/plan` is local help and is never injected as an OMP slash command.
 
 The same pane remains attachable over SSH. IM and SSH therefore control one shared interactive CLI/TUI session rather than separate headless jobs.
 
@@ -13,7 +13,7 @@ The same pane remains attachable over SSH. IM and SSH therefore control one shar
 - **Endpoint**: `(channel, credential, chat_id, thread_id)` where `thread_id` is `int | str | None`. A Feishu topic route additionally persists `thread_root_message_id`, the durable `reply_in_thread=True` anchor used after bridge restarts and when output originates from direct tmux TUI interaction; a missing anchor fails closed and never falls back to the group root.
 - **Route**: one persistent endpoint-to-target mapping.
 - **Target**: `(tmux_session, tmux_window, tmux_pane, cwd)`.
-- **Adapter**: provider-specific TUI and transcript behavior (`claude_code`, `codex`, `pi`).
+- **Adapter**: provider-specific TUI and transcript behavior (`claude_code`, `codex`, `omp`).
 - **Admin route**: a strictly ACL-protected DM route to a management pane.
 
 A group is only a topic container. A group root with no explicit route never falls through to a project. Each bound topic maps to exactly one pane. Unbound topics remain silent even for legacy `/init`, `/projects`, and `/deinit`; topic routes are created explicitly through YAML, the route CLI, or Admin DM.
@@ -39,20 +39,20 @@ A frontend owns one channel credential but may serve routes using different adap
 
 ## Configuration
 
-The readable YAML remains the public route surface. Existing `bindings:` entries remain valid and become route records without a mandatory migration. The stable fields are:
+The readable YAML remains the public route surface. The `bindings:` record shape remains stable; legacy records must be migrated to a current backend key rather than relying on aliases. The stable fields are:
 
 ```yaml
 bindings:
   - name: repo-review
     channel: telegram
-    bot_token_env: TG_BOT_TOKEN
+    bot_token_env: TG_OMP_BOT_TOKEN
     chat_id: -1001234567890
     thread_id: 42
     tmux_session: repo-review
     tmux_window: 0
     tmux_pane: 0
     cwd: /srv/repos/repo
-    backend: pi
+    backend: omp
     mention_required: false
 ```
 
@@ -68,14 +68,14 @@ Direct file editing is allowed. `tmuxbot route validate` is available now; `tmux
 
 ## Admin DM
 
-The admin route is enabled explicitly. Its default target directory is the dedicated XDG workspace `$XDG_DATA_HOME/tmuxbot/admin` (normally `~/.local/share/tmuxbot/admin`), overridden by `TMUXBOT_ADMIN_CWD`. tmuxbot creates it with mode `0700`. Its CLI is configured by `TMUXBOT_ADMIN_CLI` and may be `pi`, `claude_code`, or `codex`. A persisted `admin: true` YAML record stores session identity only; without `TMUXBOT_ADMIN_ENABLED=1` it is ignored and cannot grant Admin capability.
+The admin route is enabled explicitly. Its default target directory is the dedicated XDG workspace `$XDG_DATA_HOME/tmuxbot/admin` (normally `~/.local/share/tmuxbot/admin`), overridden by `TMUXBOT_ADMIN_CWD`. tmuxbot creates it with mode `0700`. Its CLI is configured by `TMUXBOT_ADMIN_CLI` and may be `omp`, `claude_code`, or `codex`. A persisted `admin: true` YAML record stores session identity only; without `TMUXBOT_ADMIN_ENABLED=1` it is ignored and cannot grant Admin capability.
 
 Suggested environment:
 
 ```env
 TMUXBOT_ADMIN_ENABLED=1
 TMUXBOT_ADMIN_TMUX=tmuxbot-admin
-TMUXBOT_ADMIN_CLI=pi
+TMUXBOT_ADMIN_CLI=omp
 # TMUXBOT_ADMIN_CWD=/srv/tmuxbot-admin
 ```
 
@@ -106,12 +106,12 @@ tmuxbot admin create-topic --env-file PATH --channel telegram|feishu ... [--crea
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]
-# Recovery only after an operator directly switched the running Pi TUI session:
+# Recovery only after an operator directly switched the running OMP TUI session:
 # validate the exact session header + cwd, review plan, then repeat with --apply.
-tmuxbot admin adopt-pi-session ROUTE --session-file /absolute/pi-session.jsonl [--apply]
+tmuxbot admin adopt-omp-session ROUTE --session-file /absolute/omp-session.jsonl [--apply]
 ```
 
-`provision-project` is the normal deep interface and is plan-only by default. It accepts one topic intent—create by title, bind a Telegram topic URL, or bind exact chat/thread IDs—then owns endpoint resolution, exact-cwd target creation/reuse, candidate validation, atomic write, supervised restart, verification, and rollback. Its default target is `NAME:0.0`, so callers do not need to coordinate separate discovery/create/bind commands. `create-topic`, `bind-topic`, and `move-topic` remain plan-only low-level recovery interfaces. The create command exists for the common Admin-DM request “create this named Telegram/Feishu topic, create this tmux session in this cwd, and bind Pi/Claude/Codex”: one reviewed command owns the channel API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created topic. Existing topics and tmux sessions are never destroyed by rollback. Telegram topic URLs may be `https://t.me/c/CHAT/THREAD` or include an optional message ID; Telegram never requires a durable root-message anchor. A Pi route normally follows only channel-command-controlled session handoffs. If an operator switches the live Pi TUI outside that flow and outbound replies stop because the route remains pinned to the former JSONL, use `adopt-pi-session` with the exact new session file: it verifies the `type=session` header ID and exact route cwd, plans before writing, atomically persists the new identity, restarts the supervised bridge, and verifies the route. It never discovers or guesses a session by mtime.
+`provision-project` is the normal deep interface and is plan-only by default. It accepts one topic intent—create by title, bind a Telegram topic URL, or bind exact chat/thread IDs—then owns endpoint resolution, exact-cwd target creation/reuse, candidate validation, atomic write, supervised restart, verification, and rollback. Its default target is `NAME:0.0`, so callers do not need to coordinate separate discovery/create/bind commands. `create-topic`, `bind-topic`, and `move-topic` remain plan-only low-level recovery interfaces. The create command exists for the common Admin-DM request “create this named Telegram/Feishu topic, create this tmux session in this cwd, and bind OMP/Claude/Codex”: one reviewed command owns the channel API result, target creation, route write, supervised restart, and verification. Failure restores the old YAML and bridge, removes a transaction-created session, and attempts to delete the transaction-created topic. Existing topics and tmux sessions are never destroyed by rollback. Telegram topic URLs may be `https://t.me/c/CHAT/THREAD` or include an optional message ID; Telegram never requires a durable root-message anchor. An OMP route normally follows provider-authored sidecar handoffs. If an operator switches the live OMP TUI outside the channel flow and outbound replies stop because the route remains pinned to the former JSONL, use `adopt-omp-session` with the exact new absolute session path: it validates the first usable `type="session"` header, session ID, supported version, and canonical route cwd; plans before writing; atomically persists the new identity; restarts the supervised bridge; and verifies the route. It never discovers or guesses a session by mtime.
 
 ## Route CLI
 
@@ -132,33 +132,31 @@ tmuxbot route replace-cli NAME BACKEND
 
 The route-store slice provides `list`, `inspect`, `validate`, `bind`, and `unbind`, plus per-route adapter dispatch. The Admin transaction layer owns the common create/move/verify workflow and supervised restart. The broader command list above records the intended namespace; commands not exposed by `tmuxbot route --help` remain planned. Direct YAML edits still require an explicit bridge restart.
 
-## Pi adapter
+## OMP adapter
 
-Pi runs in its interactive TUI in tmux. tmuxbot does not use Pi RPC, SDK, or print mode. The adapter:
+`OmpBackend` runs Oh My Pi as the real interactive TUI in tmux. tmuxbot does not use OMP RPC, SDK, print, or headless modes. The current contract is:
 
-- launches `PI_BIN` (default `pi`);
-- resumes the latest matching local session when a persisted identity exists;
-- discovers transcripts under `~/.pi/agent/sessions/--<encoded-cwd>--/*.jsonl`;
-- validates the session header cwd before claiming a transcript;
-- normalizes assistant text, thinking, and tool calls;
-- reads model/thinking/usage metadata;
-- recognizes Pi TUI process and activity state, preserves Pi's native Working-state steering queue, and verifies cold wake before delivering: ordinary text and attachments are submitted immediately while streaming; a shell wake ignores stale TUI scrollback but must observe a real Pi footer/status before the user payload is pasted;
-- detects Pi menus, multi-selects, text inputs and confirmation views only when their bottom control hints are adjacent to the current live Pi footer. It sends one static SSH/tmux target notice to the exact route and never injects navigation/approval keys from IM; stale Telegram/Feishu action callbacks fail closed;
-- mirrors Pi's native footer or the installed `pi-statusline` powerline fields: provider/model/thinking, cumulative input/output, cacheRead (`R`)/cacheWrite (`W`), latest prompt cache-hit rate, cost/subscription, context usage/window and auto-compaction, cwd/Git branch/session name, plus extension status lines. TUI values remain the real-time source; the active Pi JSONL only fills fields omitted by terminal width. Claude/Codex retain their existing provider-specific status parsers;
-- replays `rpiv-todo` from the active JSONL branch's latest valid `todo` tool-result snapshot. Whenever at least one non-deleted task exists, every Pi assistant/working IM message carries a persistent TUI-style `Todos (completed/total)` panel with snapshot order, status glyphs, task IDs, `activeForm`, and dependency IDs. Completed-only snapshots remain visible; the panel disappears only after clear/all-deleted. Deleted tasks and abandoned JSONL branches are ignored;
-- mirrors auto-compaction as an editable IM status: TUI `Auto-compacting...` starts a countdown based on the median of the session's latest compaction durations (default 180 seconds), updates periodically, and JSONL `type=compaction` finalizes the card with token metadata. If the TUI leaves compaction without the hard JSONL marker, the card fails closed and warns that work may not have resumed;
-- treats Telegram final-response delivery as part of transcript consumption: every split message must return a Bot API `message_id`; otherwise the current JSONL row keeps its offset and is retried. Successful delivery logs all message IDs. This is at-least-once retry, not yet a durable idempotent outbox;
-- when a source checkout is operated through `~/.local/bin/tmuxbot`, `bin/restart.sh` force-reinstalls that checkout's full uv tool before restarting systemd, so route behavior cannot silently lag behind the reviewed Git revision.
+- the route backend is exactly `omp`; no compatibility backend alias is registered;
+- provider discovery resolves `OMP_BIN`, then `PATH`, then `~/.local/bin/omp`; the registry owns display name `Oh My Pi`, default Telegram credential `TG_OMP_BOT_TOKEN`, and launch argv. Web/API clients may select provider ID but cannot submit a binary path, tmux target, or argv;
+- a managed launch is exactly `omp --approval-mode yolo --extension <managed-extension-absolute-path>`. A pinned route appends only `--resume <exact-absolute-jsonl-path>`; invalid/mismatched pins are preserved and launch fails closed rather than silently starting a replacement session;
+- transcripts are OMP JSONL v3 under `~/.omp/agent/sessions/...`, but discovery does not scan that tree. `omp-session-handoffs/` records exact target, canonical cwd, session ID, transcript path, and live pane process ID; `omp-session-health/` records the same session identity and health state. Before a brand-new session creates its JSONL, only an official sessions-root path with matching session ID and process in the exact pane is accepted; once the file exists, header/cwd/session validation is mandatory. A live OMP process without a valid managed identity sidecar is not safe for IM injection;
+- the current branch is reconstructed from the last entry through `id/parentId`, excluding title/session slots and abandoned branches. Metadata comes from `model_change.model="provider/model"`, `thinking_level_change.thinkingLevel`, title/header/title changes, and assistant usage/cost; assistant provider/model fields are fallback only;
+- assistant `thinking`, `toolCall`, and `text` blocks normalize to tool progress and final text. Only a non-empty `write` tool call targeting `local://*-plan.md` emits a plan update. Plan mode itself is the current branch's last `mode_change.mode`; no third-party plan-mode or statusline extension is part of the contract;
+- todo state is the newest current-branch snapshot from successful `toolResult(toolName="todo").details.phases` or `custom(customType="user_todo_edit").data.phases`. Tasks support `pending`, `in_progress`, `completed`, `abandoned`, and `blocked`, with optional `blocker`; rendering groups by phase and omits abandoned tasks;
+- ordinary text and attachments may enter OMP's native busy steering queue. Control commands and picker/menu commands require IDLE and fail immediately while busy. `/restart` performs a clean pane respawn and exact-path resume instead of injecting C-c/C-d;
+- OMP 17.3.2's native `╭── π … ╮` / `╰─ … ─╯` footer pair and adjacent braille loader ending in `⟦esc⟧` are weak, versioned screen signals only. JSONL/sidecars remain authoritative; the footer may contribute only unambiguous effort, cwd, branch, context, cost, and plan/session labels;
+- ask, approval, model/resume picker, plan review, and other native interactions are accepted only when their controls are adjacent to the live footer. IM receives one exact SSH/tmux target notice and never injects navigation, approval, confirmation, or cancellation keys. `/plan` only reports local mode status/help and suggests the default `Alt+Shift+P` over SSH when inactive;
+- canonical `type="compaction"` or an extension session-switch lifecycle is the completion signal. `tokensBefore` maps to `preTokens`; absent official fields remain `postTokens=None` and `durationMs=None`.
 
-For reliable modified-key handling Pi recommends tmux `extended-keys on` and `extended-keys-format csi-u`. Doctor may diagnose this but must not kill or restart the user's tmux server.
+For reliable modified-key handling OMP recommends tmux `extended-keys on` and `extended-keys-format csi-u`. Doctor may diagnose this but must not kill or restart the user's tmux server.
 
 ## Compatibility rollout
 
 1. Widen endpoint thread IDs and validation while preserving existing YAML.
 2. Add an adapter registry to each frontend and resolve adapters per binding.
-3. Add Pi as a third adapter.
+3. Add OMP as the third adapter and cleanly cut over route/runtime vocabulary.
 4. Add route CLI and atomic route-store operations.
 5. Add strict Admin DM provisioning and hot reload.
 6. Complete Feishu threaded outbound probes and enable thread replies.
 
-At every stage old one-group/one-project bindings continue to run. A message with no exact endpoint match remains silent and never touches tmux.
+At every stage one-group/one-project routes using current backend keys continue to run. A message with no exact endpoint match remains silent and never touches tmux.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tmuxbot.paths import RuntimePaths
 from tmuxbot.supervisor import (
-    SUPERVISOR_PID_ENV,
+    SUPERVISOR_OMPD_ENV,
     BridgeSupervisor,
     _spawn,
     arm_bridge_parent_death_signal,
@@ -47,7 +47,7 @@ def test_bridge_arms_parent_death_signal_after_exec(monkeypatch):
     monkeypatch.setattr("tmuxbot.supervisor.ctypes.CDLL", lambda *_args, **_kwargs: Libc())
     monkeypatch.setattr("tmuxbot.supervisor.os.getppid", lambda: 4242)
 
-    arm_bridge_parent_death_signal({SUPERVISOR_PID_ENV: "4242"})
+    arm_bridge_parent_death_signal({SUPERVISOR_OMPD_ENV: "4242"})
 
     assert calls == [(1, 15)]
 
@@ -62,7 +62,7 @@ def test_bridge_rejects_a_supervisor_that_died_during_spawn(monkeypatch):
     monkeypatch.setattr("tmuxbot.supervisor.os.getppid", lambda: 1)
 
     try:
-        arm_bridge_parent_death_signal({SUPERVISOR_PID_ENV: "4242"})
+        arm_bridge_parent_death_signal({SUPERVISOR_OMPD_ENV: "4242"})
     except RuntimeError as exc:
         assert "disappeared" in str(exc)
     else:
@@ -150,7 +150,7 @@ def test_bridge_argv_and_setup_grant_not_in_child_environment(tmp_path: Path) ->
     assert observed
     assert observed[0][0] == [sys.executable, "-m", "tmuxbot", "bridge"]
     assert "TMUXBOT_SETUP_GRANT" not in observed[0][1]
-    assert observed[0][1][SUPERVISOR_PID_ENV] == str(os.getpid())
+    assert observed[0][1][SUPERVISOR_OMPD_ENV] == str(os.getpid())
 
 
 def test_supervisor_process_environment_overrides_dotenv(tmp_path: Path) -> None:
@@ -243,7 +243,7 @@ def test_supervisor_writes_and_clears_bridge_pid_file(tmp_path: Path) -> None:
 
     supervisor = BridgeSupervisor(
         paths,
-        {"TG_CODEX_BOT_TOKEN": "123:abc", "TMUXBOT_BRIDGE_PID_FILE": str(pid_file)},
+        {"TG_CODEX_BOT_TOKEN": "123:abc", "TMUXBOT_BRIDGE_OMPD_FILE": str(pid_file)},
         spawn=spawn,
     )
 

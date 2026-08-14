@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from tmuxbot.backends.omp import OmpBackend
+
 from tmuxbot.command_adapter import (
     CommandKind,
     CommandSpec,
@@ -14,14 +16,14 @@ from tmuxbot.state import Binding
 
 def binding() -> Binding:
     return Binding(
-        name="pi-route",
+        name="omp-route",
         chat_id=1,
         thread_id=None,
-        tmux_session="pi-route",
+        tmux_session="omp-route",
         tmux_window=0,
         tmux_pane=0,
-        cwd=Path("/tmp/pi-route"),
-        backend="pi",
+        cwd=Path("/tmp/omp-route"),
+        backend="omp",
         provider_session_id="old-session",
         last_session_id="old-session",
     )
@@ -40,9 +42,13 @@ class Frontend:
 
 
 class Backend:
-    name = "pi"
-    running_command_names = frozenset({"pi"})
+    name = "omp"
+    running_command_names = frozenset({"omp"})
     accepts_input_while_busy = True
+    remote_tui_actions_allowed = False
+
+    def format_remote_interaction_notice(self, item, interaction_label):
+        return f"SSH {item.tmux_target} {interaction_label}"
 
     def interactive_session_handoff_commands(self):
         return frozenset({"/resume"})
@@ -58,7 +64,7 @@ class Backend:
 def transaction() -> CommandTransaction:
     return CommandTransaction(
         txn_id="txn",
-        binding_name="pi-route",
+        binding_name="omp-route",
         command="/resume",
         kind=CommandKind.INTERACTIVE,
         injected_text="/resume",
@@ -68,7 +74,7 @@ def transaction() -> CommandTransaction:
     )
 
 
-def test_pi_resume_transaction_stays_open_until_selection(monkeypatch):
+def test_omp_resume_transaction_stays_open_for_ssh_selection(monkeypatch):
     item = binding()
     frontend = Frontend()
     state = SimpleNamespace(command_transactions={})
@@ -94,10 +100,48 @@ def test_pi_resume_transaction_stays_open_until_selection(monkeypatch):
 
     assert item.name in state.command_transactions
     assert frontend.cards == []
-    assert "当前屏幕尚未出现可确认" in frontend.html[-1][2]
+    assert "稍后出现交互界面" in frontend.html[-1][2]
+    assert "SSH" in frontend.html[-1][2]
 
 
-def test_pi_resume_enter_reconciles_and_closes_transaction(monkeypatch):
+def test_omp_model_modal_returns_ssh_notice_without_remote_card(monkeypatch):
+    item = binding()
+    frontend = Frontend()
+    state = SimpleNamespace(command_transactions={})
+    fixture = (Path(__file__).parent / "fixtures" / "omp" / "model_picker.txt").read_text(
+        encoding="utf-8"
+    )
+
+    async def send_text(*_args, **_kwargs):
+        return None
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_capture", lambda *_args: fixture)
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.command_adapter.asyncio.sleep", no_sleep)
+
+    asyncio.run(
+        handle_interactive_command(
+            frontend,
+            OmpBackend(),
+            item,
+            state,
+            item.chat_id,
+            item.thread_id,
+            CommandSpec("/model", CommandKind.INTERACTIVE),
+            "/model",
+        )
+    )
+
+    assert frontend.cards == []
+    assert item.tmux_target in frontend.html[-1][2]
+    assert "已确认当前 TUI 正停留在<b>选择菜单</b>" in frontend.html[-1][2]
+    assert item.name not in state.command_transactions
+
+
+def test_omp_resume_enter_is_rejected_without_identity_adoption(monkeypatch):
     item = binding()
     frontend = Frontend()
     txn = transaction()
@@ -108,7 +152,6 @@ def test_pi_resume_enter_reconciles_and_closes_transaction(monkeypatch):
         "tmuxbot.command_adapter.tmux_send_key",
         lambda target, key: sent_keys.append((target, key)),
     )
-    monkeypatch.setattr("tmuxbot.command_adapter.tmux_capture", lambda *_args: "Resumed session")
 
     asyncio.run(
         handle_tui_action(
@@ -122,7 +165,7 @@ def test_pi_resume_enter_reconciles_and_closes_transaction(monkeypatch):
         )
     )
 
-    assert sent_keys == [(item.tmux_target, "Enter")]
-    assert item.provider_session_id == "new-session"
-    assert item.name not in state.command_transactions
-    assert "会话切换已绑定" in frontend.html[-1][2]
+    assert sent_keys == []
+    assert item.provider_session_id == "old-session"
+    assert state.command_transactions[item.name] is txn
+    assert f"SSH {item.tmux_target}" in frontend.html[-1][2]

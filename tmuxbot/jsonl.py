@@ -5,6 +5,7 @@
 - assistant_text 事件 (真说话) → 封闭聚合器, 单独发新消息
 - aggregator 累计字符 > 3500 或 30s 静默 → 自动封闭
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,22 +32,20 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 JSONL_POLL = 0.5
-AGGREGATOR_MAX_CHARS = 3500    # 累计超此长度封闭, 开新 aggregator
-AGGREGATOR_IDLE_SECONDS = 15   # 静默超此秒数 = turn 结束, watcher 自动封闭
+AGGREGATOR_MAX_CHARS = 3500  # 累计超此长度封闭, 开新 aggregator
+AGGREGATOR_IDLE_SECONDS = 15  # 静默超此秒数 = turn 结束, watcher 自动封闭
 # ★ 积压保护阈值: 单次发现 jsonl 落盘新增超此字节数, 判定为「事务式 flush 爆发」
 # (claude TUI 在派 subagent / 超长 turn 时不实时落盘, 完成后一次性 flush 数 MB)。
 # 逐条推这种积压会瞬间撞 Telegram flood control → 直接跳末尾不回吐。正常单 turn 远 < 此值。
-JSONL_BACKLOG_LIMIT = 512 * 1024   # 512KB
+JSONL_BACKLOG_LIMIT = 512 * 1024  # 512KB
 
 
-def _initial_jsonl_offset(
-    b: "Binding", transcript: Path, *, last_file: Path | None
-) -> int:
+def _initial_jsonl_offset(b: "Binding", transcript: Path, *, last_file: Path | None) -> int:
     """Choose the first committed offset for one newly observed transcript.
 
     A bridge restart with a pinned provider identity must skip historical output.
     A running session switch and a freshly provisioned, still-unpinned route must
-    start at zero: Pi can create and complete its first turn before the 0.5s
+    start at zero: OMP can create and complete its first turn before the 0.5s
     tailer observes the new file, so treating that file as bootstrap history
     silently drops the project's first assistant reply.
     """
@@ -59,8 +58,11 @@ def _initial_jsonl_offset(
 
 
 async def jsonl_poll_loop(
-    b: "Binding", backend: "Backend", frontend: "Frontend",
-    state: "State", offsets_file: Path,
+    b: "Binding",
+    backend: "Backend",
+    frontend: "Frontend",
+    state: "State",
+    offsets_file: Path,
 ) -> None:
     """0.5s 轮询 binding 当前 jsonl, 新事件 fire-and-forget 推给 on_tmux_event。"""
     log.info(f"[{b.name}] tailer start, backend={backend.name}")
@@ -90,9 +92,7 @@ async def jsonl_poll_loop(
                     getattr(frontend, "bindings_file", None),
                     b,
                 )
-            await _dispatch_provider_events(
-                b, provider_events, frontend, state, backend
-            )
+            await _dispatch_provider_events(b, provider_events, frontend, state, backend)
             jl = backend.find_active_jsonl(b)
             if jl is None:
                 await asyncio.sleep(JSONL_POLL)
@@ -104,17 +104,17 @@ async def jsonl_poll_loop(
                 if key not in state.offsets:
                     # 已持久化 identity 的 bridge bootstrap 跳末尾，防历史回吐；运行中
                     # session switch 和刚 provision、尚无 identity 的 route 从 0 读取。
-                    # 后者的首条 Pi turn 可能在 tailer 首次看见文件前已经完整落盘。
-                    state.offsets[key] = _initial_jsonl_offset(
-                        b, jl, last_file=last_file
-                    )
+                    # 后者的首条 OMP turn 可能在 tailer 首次看见文件前已经完整落盘。
+                    state.offsets[key] = _initial_jsonl_offset(b, jl, last_file=last_file)
                     save_offsets(offsets_file, state.offsets, force=True)
                 last_file = jl
                 identity = backend.session_identity(b, jl)
                 old_identity = (b.provider_session_id, b.transcript_path)
                 previous_session_id = b.provider_session_id
                 b.provider_session_id = identity.session_id
-                b.transcript_path = Path(identity.transcript_path) if identity.transcript_path else jl
+                b.transcript_path = (
+                    Path(identity.transcript_path) if identity.transcript_path else jl
+                )
                 b.last_session_id = identity.session_id
                 if old_identity != (b.provider_session_id, b.transcript_path):
                     await asyncio.to_thread(
@@ -153,7 +153,8 @@ async def jsonl_poll_loop(
                 save_offsets(offsets_file, state.offsets, force=True)
                 try:
                     await frontend.send_html(
-                        b.chat_id, b.thread_id,
+                        b.chat_id,
+                        b.thread_id,
                         f"⚠️ 检测到 <b>{skipped // 1024}KB</b> 内容一次性落盘, "
                         f"已跳过未推送 (防 Telegram 限流)\n如需查看请到 TUI",
                     )
@@ -175,15 +176,11 @@ async def jsonl_poll_loop(
                     safe_off += len(line.encode("utf-8")) + 1
                     if not line.strip():
                         continue
-                    events = backend.parse_event(
-                        line, provider_session_id=b.provider_session_id
-                    )
+                    events = backend.parse_event(line, provider_session_id=b.provider_session_id)
                     # ★ 同一 binding 内串行 await, 避免 aggregator race condition
                     # (旧 S.fire 并发让多个 event 同时拿到 agg=None, 各自新建 → 多条"工作中"卡片)
                     # 串行只影响本 binding tailer 实时性, 不影响其他 binding 并发
-                    delivered = await _dispatch_provider_events(
-                        b, events, frontend, state, backend
-                    )
+                    delivered = await _dispatch_provider_events(b, events, frontend, state, backend)
                     if not delivered:
                         safe_off -= len(line.encode("utf-8")) + 1
                         break
@@ -200,11 +197,11 @@ async def _dispatch_provider_events(
     for event in events:
         if (
             event.kind.value == "provider_error"
-            and getattr(backend, "name", None) == "pi"
+            and getattr(backend, "name", None) == "omp"
             and callable(getattr(backend, "provider_error_is_managed", None))
             and backend.provider_error_is_managed(b)
         ):
-            log.debug("[%s] Pi provider error deferred to terminal-health audit", b.name)
+            log.debug("[%s] OMP provider error deferred to terminal-health audit", b.name)
             continue
         decision = RuntimeV2Router.from_environment().route(event)
         for reduced in decision.deliveries:
@@ -224,7 +221,10 @@ async def _dispatch_provider_events(
 
 
 async def _close_aggregator(
-    b: "Binding", state: "State", frontend: "Frontend", backend: "Backend | None" = None,
+    b: "Binding",
+    state: "State",
+    frontend: "Frontend",
+    backend: "Backend | None" = None,
 ) -> None:
     """把 aggregator 标记完成 (编辑消息加 ✓), 然后从 state 移除"""
     aggregators = getattr(state, "tool_aggregator", None)
@@ -247,7 +247,10 @@ async def _close_aggregator(
 
 
 async def _aggregator_idle_watcher(
-    b: "Binding", state: "State", frontend: "Frontend", backend: "Backend",
+    b: "Binding",
+    state: "State",
+    frontend: "Frontend",
+    backend: "Backend",
 ) -> None:
     """背景 task: 等 AGGREGATOR_IDLE_SECONDS 秒后, 如果还是同一个 aggregator, 自动封闭。
     每次新 event 进来会刷 last_ts, watcher 重新计时。"""
@@ -262,8 +265,12 @@ async def _aggregator_idle_watcher(
 
 
 async def on_tmux_event(
-    b: "Binding", kind: str, body: str,
-    frontend: "Frontend", state: "State", backend: "Backend",
+    b: "Binding",
+    kind: str,
+    body: str,
+    frontend: "Frontend",
+    state: "State",
+    backend: "Backend",
 ) -> None:
     """JSONL tailer → TG 路由 (★ Boss 最终定型规则)。
 
@@ -403,7 +410,7 @@ async def _handle_provider_lifecycle(frontend, b, state, backend, body: str) -> 
 def _task_footer(b: "Binding", backend: "Backend") -> str:
     task_footer = render_task_footer(
         backend.read_tasks(b),
-        style="pi" if backend.name == "pi" else "summary",
+        style="omp" if backend.name == "omp" else "summary",
     )
     render_extension = getattr(backend, "render_extension_footer", None)
     extension_footer = render_extension(b) if callable(render_extension) else ""
@@ -415,7 +422,9 @@ def _append_footer(body: str, footer: str) -> str:
 
 
 async def _send_html_with_outbound_attachments(
-    frontend: "Frontend", b: "Binding", html_text: str,
+    frontend: "Frontend",
+    b: "Binding",
+    html_text: str,
 ) -> None:
     clean_text, attachments = split_outbound_attachments(html_text, cwd=b.cwd)
     if clean_text.strip():
@@ -424,7 +433,10 @@ async def _send_html_with_outbound_attachments(
 
 
 async def _send_assistant_reply(
-    frontend: "Frontend", b: "Binding", html_text: str, backend: "Backend",
+    frontend: "Frontend",
+    b: "Binding",
+    html_text: str,
+    backend: "Backend",
 ) -> None:
     clean_text, attachments = split_outbound_attachments(html_text, cwd=b.cwd)
     status = await _capture_terminal_status(b, backend)
@@ -448,7 +460,8 @@ async def _send_assistant_reply(
 
 
 async def _capture_terminal_status(
-    b: "Binding", backend: "Backend",
+    b: "Binding",
+    backend: "Backend",
 ) -> TerminalStatus | None:
     """Capture runtime state and enrich it with one provider metadata snapshot."""
     try:
@@ -458,11 +471,7 @@ async def _capture_terminal_status(
         if callable(status_enricher):
             status = status_enricher(b, status)
         metadata_getter = getattr(backend, "current_runtime_metadata", None)
-        metadata = (
-            metadata_getter(b)
-            if callable(metadata_getter)
-            else ProviderRuntimeMetadata()
-        )
+        metadata = metadata_getter(b) if callable(metadata_getter) else ProviderRuntimeMetadata()
     except Exception:
         log.exception("[%s] provider status capture failed", b.name)
         return None
@@ -523,14 +532,10 @@ async def _capture_terminal_status(
             permission_mode=status.permission_mode or metadata.permission_mode,
             session_name=status.session_name or metadata.session_name,
             input_tokens=(
-                status.input_tokens
-                if status.input_tokens is not None
-                else metadata.input_tokens
+                status.input_tokens if status.input_tokens is not None else metadata.input_tokens
             ),
             output_tokens=(
-                status.output_tokens
-                if status.output_tokens is not None
-                else metadata.output_tokens
+                status.output_tokens if status.output_tokens is not None else metadata.output_tokens
             ),
             cache_read_tokens=(
                 status.cache_read_tokens
@@ -547,15 +552,16 @@ async def _capture_terminal_status(
                 if status.cache_hit_rate is not None
                 else metadata.cache_hit_rate
             ),
-            cost_usd=(
-                status.cost_usd if status.cost_usd is not None else metadata.cost_usd
-            ),
+            cost_usd=(status.cost_usd if status.cost_usd is not None else metadata.cost_usd),
         )
     return status
 
 
 async def _send_live_text(
-    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+    frontend: "Frontend",
+    b: "Binding",
+    state: "State",
+    html_text: str,
     backend: "Backend",
 ) -> None:
     out = _append_footer(strip_handwritten_footer(html_text), _task_footer(b, backend))
@@ -564,7 +570,10 @@ async def _send_live_text(
 
 
 async def _append_reply_stream(
-    frontend: "Frontend", b: "Binding", state: "State", delta_html: str,
+    frontend: "Frontend",
+    b: "Binding",
+    state: "State",
+    delta_html: str,
 ) -> None:
     streams = getattr(state, "reply_streams", None)
     if streams is None:
@@ -595,7 +604,10 @@ async def _append_reply_stream(
 
 
 async def _finalize_reply_stream(
-    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+    frontend: "Frontend",
+    b: "Binding",
+    state: "State",
+    html_text: str,
     backend: "Backend",
 ) -> bool:
     streams = getattr(state, "reply_streams", None)
@@ -611,9 +623,7 @@ async def _finalize_reply_stream(
                 await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
         else:
             footer = await _capture_terminal_status(b, backend)
-            await edit_stream(
-                b, current["msg_id"], html_text, final=True, footer=footer
-            )
+            await edit_stream(b, current["msg_id"], html_text, final=True, footer=footer)
         _remember_live_text(state, b, html_text)
         return True
     except Exception:
@@ -650,7 +660,10 @@ def _normalize_live_text(html_text: str) -> str:
 
 
 async def _send_or_edit_plan(
-    frontend: "Frontend", b: "Binding", state: "State", html_text: str,
+    frontend: "Frontend",
+    b: "Binding",
+    state: "State",
+    html_text: str,
 ) -> None:
     plan_messages = getattr(state, "plan_messages", None)
     if plan_messages is None:
@@ -679,7 +692,9 @@ async def _send_or_edit_plan(
 
 
 async def _send_outbound_attachments(
-    frontend: "Frontend", b: "Binding", attachments,
+    frontend: "Frontend",
+    b: "Binding",
+    attachments,
 ) -> None:
     for attachment in attachments:
         if attachment.kind == "image":

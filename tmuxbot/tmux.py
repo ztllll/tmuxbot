@@ -2,6 +2,7 @@
 
 后端 (claude / codex) 共用。**注入文本是 async 函数**, 避免阻塞 event loop。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,25 +29,49 @@ _TUI_BUSY_RE = re.compile(
     _TUI_BUSY_VERBS + r"[…\.]*\s*[^\n]{0,30}?\(\s*\d+(?:m\s+\d+)?s",  # 必须 ( 开头时间
     re.I,
 )
-# Pi's live loader is rendered with one of these braille spinner frames.
-# Do not match bare ``Working...``: terminal history can contain that text.
-_PI_BUSY_RE = re.compile(
-    r"^\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+"
-    r"(?:Working|Compacting context|Auto-compacting|Summarizing branch|Retrying)\.\.\.",
-    re.I | re.M,
+# OMP 17.3.2 weak screen signals. A footer is current only when its native
+# pair is the last two non-empty pane lines; stale scrollback and old powerline
+# status bars deliberately fail closed.
+_OMP_FOOTER_TOP_RE = re.compile(r"^\s*╭── π(?:\s.*)?╮\s*$")
+_OMP_FOOTER_BOTTOM_RE = re.compile(r"^\s*╰─(?:.*)─╯\s*$")
+_OMP_LIVE_LOADER_RE = re.compile(
+    r"^\s*[\u2801-\u28ff]\s+.+?\s*⟦esc⟧\s*$",
+    re.I,
 )
 _COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")
 _CODEX_STATUS_RE = re.compile(
     r"^\s*gpt-[\w.-]+(?:\s+[\w-]+)?\s*[·•]\s*(?:~?/|/)\S+",
     re.I,
 )
-_PI_FOOTER_RE = re.compile(
-    r"(?:\?|\d+(?:\.\d+)?)%?\s*/\s*\d+(?:\.\d+)?[kKmM]?"
-    r"(?:\s*\(auto\))?.*\s[•·]\s*"
-    r"(?:off|minimal|low|medium|high|xhigh|max|thinking off)\s*$",
-    re.I,
-)
-_PI_STATUSLINE_RE = re.compile(r"🪟\s*ctx\s+", re.I)
+
+
+def find_omp_footer_pair(lines: list[str]) -> tuple[int, int] | None:
+    """Locate the current native OMP footer pair in already de-ANSI lines."""
+    nonempty = [index for index, line in enumerate(lines) if line.strip()]
+    if len(nonempty) < 2:
+        return None
+    top_index, bottom_index = nonempty[-2:]
+    if not _OMP_FOOTER_TOP_RE.fullmatch(lines[top_index]):
+        return None
+    if not _OMP_FOOTER_BOTTOM_RE.fullmatch(lines[bottom_index]):
+        return None
+    return top_index, bottom_index
+
+
+def omp_live_loader(pane: str) -> str | None:
+    """Return only the live braille loader immediately before the OMP footer."""
+    lines = strip_decorations(pane).splitlines()
+    pair = find_omp_footer_pair(lines)
+    if pair is None:
+        return None
+    top_index, _ = pair
+    loader_index = next(
+        (index for index in range(top_index - 1, -1, -1) if lines[index].strip()),
+        None,
+    )
+    if loader_index is None or not _OMP_LIVE_LOADER_RE.fullmatch(lines[loader_index]):
+        return None
+    return lines[loader_index].strip()
 
 
 def _tmux(*args: str) -> subprocess.CompletedProcess:
@@ -64,11 +89,10 @@ def tmux_new_session(s: str, cwd) -> None:
 
 
 def tmux_respawn_pane(target: str, cwd) -> bool:
-    """Replace one unhealthy pane process tree with its configured shell.
+    """Replace one pane process tree with its configured shell.
 
-    Callers must establish that the provider process tree is unsafe before
-    invoking this destructive recovery operation; it never targets a session
-    and cannot affect another route pane.
+    Callers must establish either an unsafe provider tree or an explicit operator
+    restart. The operation targets one pane and cannot affect another route pane.
     """
     return _tmux("respawn-pane", "-k", "-t", target, "-c", str(cwd)).returncode == 0
 
@@ -128,9 +152,7 @@ def tmux_pane_process_commands(target: str) -> tuple[str, ...]:
         root_pid = int(pane.stdout.strip())
     except ValueError:
         return ()
-    processes = subprocess.run(
-        ["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True
-    )
+    processes = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True)
     children: dict[int, list[tuple[int, str]]] = {}
     for line in processes.stdout.splitlines():
         fields = line.strip().split(maxsplit=2)
@@ -161,45 +183,39 @@ def tmux_capture(target: str, lines: int = 50) -> str:
 
 
 def _is_tui_busy(pane: str) -> bool:
-    """判断 Claude/Codex/Pi TUI 当前是否 busy。"""
+    """判断 Claude/Codex/OMP TUI 当前是否 busy。"""
     clean = strip_decorations(pane)
-    return bool(_TUI_BUSY_RE.search(clean) or _PI_BUSY_RE.search(clean))
+    return bool(_TUI_BUSY_RE.search(clean) or omp_live_loader(clean))
 
 
 def _active_input_text(pane: str) -> str | None:
-    """Read only the active Claude/Codex/Pi composer, excluding prompt history."""
+    """Read only the active Claude/Codex/OMP composer, excluding prompt history."""
     lines = strip_decorations(pane).splitlines()
 
+    omp_pair = find_omp_footer_pair(lines)
+    if omp_pair is not None:
+        footer_top, _ = omp_pair
+        separators = [
+            index
+            for index, line in enumerate(lines[:footer_top])
+            if _COMPOSER_SEPARATOR_RE.fullmatch(line.strip())
+        ]
+        if len(separators) >= 2:
+            composer = lines[separators[-2] + 1 : separators[-1]]
+            return "\n".join(line.strip() for line in composer if line.strip())
+        return None
+
     separators = [
-        index
-        for index, line in enumerate(lines)
-        if _COMPOSER_SEPARATOR_RE.fullmatch(line.strip())
+        index for index, line in enumerate(lines) if _COMPOSER_SEPARATOR_RE.fullmatch(line.strip())
     ]
     if len(separators) >= 2:
         composer = lines[separators[-2] + 1 : separators[-1]]
         claude_input = _composer_body(composer, "❯")
         if claude_input is not None:
             return claude_input
-        # Pi's editor has the same two horizontal borders but no prompt marker.
-        # Only accept this shape when a Pi footer follows the lower border, so
-        # historical markdown separators are not mistaken for an active draft.
-        footer = next(
-            (
-                line
-                for line in lines[separators[-1] + 1 :]
-                if _PI_FOOTER_RE.search(line) or _PI_STATUSLINE_RE.search(line)
-            ),
-            None,
-        )
-        if footer is not None:
-            return "\n".join(line.strip() for line in composer if line.strip())
 
     status_index = next(
-        (
-            index
-            for index in range(len(lines) - 1, -1, -1)
-            if _CODEX_STATUS_RE.match(lines[index])
-        ),
+        (index for index in range(len(lines) - 1, -1, -1) if _CODEX_STATUS_RE.match(lines[index])),
         None,
     )
     if status_index is None:
@@ -219,11 +235,7 @@ def _active_input_text(pane: str) -> str | None:
 
 def _composer_body(lines: list[str], marker: str) -> str | None:
     first_index = next(
-        (
-            index
-            for index, line in enumerate(lines)
-            if line.lstrip().startswith(marker)
-        ),
+        (index for index, line in enumerate(lines) if line.lstrip().startswith(marker)),
         None,
     )
     if first_index is None:
@@ -257,16 +269,26 @@ async def tmux_safe_launch(target: str, command: str, *, allowed_shells) -> bool
     return await _RUNTIME.safe_launch(target, command, allowed_shells=allowed_shells)
 
 
-
 async def _paste_text(target: str, text: str) -> None:
     buf = f"tb_{os.getpid()}"
     load_proc = await asyncio.create_subprocess_exec(
-        TMUX, "load-buffer", "-b", buf, "-",
+        TMUX,
+        "load-buffer",
+        "-b",
+        buf,
+        "-",
         stdin=asyncio.subprocess.PIPE,
     )
     await load_proc.communicate(input=text.encode("utf-8"))
     paste_proc = await asyncio.create_subprocess_exec(
-        TMUX, "paste-buffer", "-b", buf, "-t", target, "-p", "-d",
+        TMUX,
+        "paste-buffer",
+        "-b",
+        buf,
+        "-t",
+        target,
+        "-p",
+        "-d",
     )
     await paste_proc.wait()
 

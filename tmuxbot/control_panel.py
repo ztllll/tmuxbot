@@ -1,4 +1,5 @@
 """Channel-neutral control-panel policy and persistence helpers."""
+
 from __future__ import annotations
 
 import html
@@ -81,7 +82,7 @@ def render_panel_text(
     provider = {
         "claude_code": "Claude Code",
         "codex": "Codex",
-        "pi": "Pi",
+        "omp": "OMP",
     }.get(binding.backend, binding.backend)
     runtime = runtime_mode or os.getenv("TMUXBOT_RUNTIME_V2", "off")
     model = html.escape(current_model) if current_model else "暂未读取到（发送一次任务后自动可见）"
@@ -98,7 +99,7 @@ def render_panel_text(
             f"当前模型: <code>{model}</code>",
             "",
             "🧠 点“切换模型”会打开当前 CLI 的原生 /model 选择器；候选由 CLI 实时提供，不写死候选模型。",
-            "📝 Pi route 可点“计划模式”打开 pi-plan-mode 原生 /plan 菜单；也可发送 /plan start、/plan finalize、/plan show、/plan implement、/plan save、/plan export、/plan exit。",
+            "📝 若面板显示“计划模式”，该按钮只打开 tmuxbot 本地 SSH/keybinding 帮助，不会向 CLI 注入 /plan。",
             "选择后会保留当前会话上下文；可刷新 /menu 或用 /status 确认当前模型。",
             "💤 /tmuxstop 会关闭当前 tmux；下一条消息到达时按需恢复。",
             "⚠️ /new 会创建新会话；普通助手回复仍保持无按钮。",

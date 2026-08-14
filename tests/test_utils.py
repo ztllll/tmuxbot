@@ -26,7 +26,7 @@ def test_strip_handwritten_footer_removes_task_block():
     assert strip_handwritten_footer(text) == "real answer"
 
 
-def test_render_task_footer_includes_pi_active_form_and_dependencies():
+def test_render_task_footer_includes_omp_active_form_and_dependencies():
     footer = render_task_footer(
         [
             {"id": 1, "subject": "Audit", "status": "completed"},
@@ -47,64 +47,57 @@ def test_render_task_footer_includes_pi_active_form_and_dependencies():
 
 
 def test_render_task_footer_hides_completed_history_when_no_task_is_active():
-    assert render_task_footer([
-        {"subject": "历史任务", "status": "completed"},
-        {"subject": "另一条历史", "status": "completed"},
-    ]) == ""
-
-
-def test_render_pi_task_footer_includes_work_title_like_tui():
-    class Snapshot(list):
-        work_title = "实现 Pi 多信号疑似失活巡检"
-
-    footer = render_task_footer(
-        Snapshot([{"id": 1, "subject": "实现 Pi 多信号疑似失活巡检", "status": "pending"}]),
-        style="pi",
-    )
-
-    assert footer == (
-        "● <b>实现 Pi 多信号疑似失活巡检 · Todos (0/1)</b>\n"
-        "└─ ○ 实现 Pi 多信号疑似失活巡检"
+    assert (
+        render_task_footer(
+            [
+                {"subject": "历史任务", "status": "completed"},
+                {"subject": "另一条历史", "status": "completed"},
+            ]
+        )
+        == ""
     )
 
 
-def test_render_pi_task_footer_matches_tui_and_keeps_completed_only_snapshot():
+def test_render_omp_task_footer_groups_phases_and_shows_blocker():
     footer = render_task_footer(
         [
-            {"id": 1, "subject": "Audit", "status": "completed"},
-            {"id": 2, "subject": "Implement", "status": "completed", "blockedBy": [1]},
-        ],
-        style="pi",
-    )
-
-    assert footer == (
-        "○ <b>Todos (2/2)</b>\n"
-        "├─ ✓ #1 <s>Audit</s>\n"
-        "└─ ✓ #2 <s>Implement</s> ⛓ #1"
-    )
-
-
-def test_render_pi_task_footer_preserves_snapshot_order_and_active_form():
-    footer = render_task_footer(
-        [
-            {"id": 1, "subject": "Audit", "status": "completed"},
+            {"phase": "Implementation", "content": "Audit", "status": "completed"},
+            {"phase": "Implementation", "content": "Implement", "status": "in_progress"},
             {
-                "id": 2,
-                "subject": "Implement",
-                "status": "in_progress",
-                "activeForm": "implementing adapter",
-                "blockedBy": [1],
+                "phase": "Implementation",
+                "content": "Deploy",
+                "status": "blocked",
+                "blocker": "Need <approval>",
             },
-            {"id": 3, "subject": "Deploy", "status": "pending", "blockedBy": [2]},
+            {"phase": "Implementation", "content": "Dropped", "status": "abandoned"},
+            {"phase": "Verification", "content": "Smoke", "status": "pending"},
         ],
-        style="pi",
+        style="omp",
     )
 
     assert footer == (
-        "● <b>Todos (1/3)</b>\n"
-        "├─ ✓ #1 <s>Audit</s>\n"
-        "├─ ◐ #2 <b>Implement</b> <i>(implementing adapter)</i> ⛓ #1\n"
-        "└─ ○ #3 Deploy ⛓ #2"
+        "● <b>Todos (1/4)</b>\n"
+        "▾ <b>Implementation</b> (1/3)\n"
+        "├─ ✓ <s>Audit</s>\n"
+        "├─ ◐ <b>Implement</b>\n"
+        "└─ ⛔ Deploy — <i>Need &lt;approval&gt;</i>\n"
+        "▾ <b>Verification</b> (0/1)\n"
+        "└─ ○ Smoke"
+    )
+    assert "Dropped" not in footer
+
+
+def test_render_omp_task_footer_keeps_completed_only_and_hides_abandoned_only():
+    assert render_task_footer(
+        [{"phase": "Done", "content": "Audit", "status": "completed"}],
+        style="omp",
+    ) == ("○ <b>Todos (1/1)</b>\n▾ <b>Done</b> (1/1)\n└─ ✓ <s>Audit</s>")
+    assert (
+        render_task_footer(
+            [{"phase": "Old", "content": "Dropped", "status": "abandoned"}],
+            style="omp",
+        )
+        == ""
     )
 
 

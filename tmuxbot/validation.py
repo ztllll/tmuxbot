@@ -4,6 +4,7 @@ The daemon is intentionally permissive at the transport layer, but bindings are
 the safety boundary. Validate them before starting frontends so a bad config does
 not become a cross-chat or cross-project runtime problem.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Iterable
 from tmuxbot.state import Binding
 
 SUPPORTED_CHANNELS = frozenset({"telegram", "feishu"})
-SUPPORTED_BACKENDS = frozenset({"claude_code", "codex", "pi"})
+SUPPORTED_BACKENDS = frozenset({"claude_code", "codex", "omp"})
 
 
 class ConfigValidationError(ValueError):
@@ -30,9 +31,7 @@ def _norm_path(path: Path) -> str:
         return str(path.expanduser().absolute())
 
 
-def validate_bindings(
-    bindings: list[Binding], *, require_nonempty: bool = True
-) -> None:
+def validate_bindings(bindings: list[Binding], *, require_nonempty: bool = True) -> None:
     """Validate binding invariants.
 
     Raises:
@@ -90,30 +89,22 @@ def validate_bindings(
                 )
             if not isinstance(b.chat_id, int):
                 errors.append(
-                    f"binding {label!r}: telegram chat_id must be an integer, "
-                    f"got {b.chat_id!r}"
+                    f"binding {label!r}: telegram chat_id must be an integer, got {b.chat_id!r}"
                 )
             if b.thread_id is not None and not isinstance(b.thread_id, int):
-                errors.append(
-                    f"binding {label!r}: telegram thread_id must be an integer or null"
-                )
+                errors.append(f"binding {label!r}: telegram thread_id must be an integer or null")
 
         if b.channel == "feishu":
             if not isinstance(b.chat_id, str) or not b.chat_id:
-                errors.append(
-                    f"binding {label!r}: feishu chat_id must be a non-empty string"
-                )
+                errors.append(f"binding {label!r}: feishu chat_id must be a non-empty string")
             if b.thread_id is not None and not isinstance(b.thread_id, str):
-                errors.append(
-                    f"binding {label!r}: feishu thread_id must be a string or null"
-                )
+                errors.append(f"binding {label!r}: feishu thread_id must be a string or null")
             if b.thread_root_message_id is not None and b.thread_id is None:
                 errors.append(
                     f"binding {label!r}: Feishu thread_root_message_id requires thread_id"
                 )
-            if (
-                b.thread_root_message_id is not None
-                and not b.thread_root_message_id.startswith("om_")
+            if b.thread_root_message_id is not None and not b.thread_root_message_id.startswith(
+                "om_"
             ):
                 errors.append(
                     f"binding {label!r}: Feishu thread_root_message_id must start with 'om_'"
@@ -135,9 +126,7 @@ def validate_bindings(
             errors.append(f"binding {label!r}: tmux_session is required")
 
         if b.tmux_window < 0 or b.tmux_pane < 0:
-            errors.append(
-                f"binding {label!r}: tmux_window and tmux_pane must be >= 0"
-            )
+            errors.append(f"binding {label!r}: tmux_window and tmux_pane must be >= 0")
 
         target_key = (b.tmux_session, b.tmux_window, b.tmux_pane)
         prior_target = tmux_targets.get(target_key)

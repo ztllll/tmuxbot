@@ -20,7 +20,7 @@ def test_install_service_writes_single_self_healing_user_unit(tmp_path: Path) ->
     assert "StartLimitIntervalSec=0" in content
     assert "Restart=always" in content
     assert "KillMode=process" in content
-    assert "TMUXBOT_BRIDGE_PID_FILE=%t/tmuxbot/bridge.pid" in content
+    assert "TMUXBOT_BRIDGE_OMPD_FILE=%t/tmuxbot/bridge.pid" in content
     assert "ExecStop=/bin/sh -c" in content
     assert "token" not in content.lower()
     assert calls == [

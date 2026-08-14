@@ -1,6 +1,6 @@
 # tmuxbot — 开发文档
 
-> Telegram + 飞书 ↔ tmux AI CLI (Claude Code / Codex / Pi) 双向桥。精确话题路由 + 可插拔 adapter 架构。
+> Telegram + 飞书 ↔ tmux AI CLI (Claude Code / Codex / Oh My Pi) 双向桥。精确话题路由 + 可插拔 adapter 架构。
 > 决策依据见 `RESEARCH.md`, 代码审查见 `CODE_REVIEW.md`, 变更历史见 `CHANGELOG.md`, 版本策略见 `VERSIONING.md`, 发布流程见 `RELEASE.md`, 项目宪法见 `CLAUDE.md`。
 
 ---
@@ -31,7 +31,7 @@ tmuxbot/                       ← 仓库根
 │   ├── core/                  ← provider/channel 事件、消息、回复与 Runtime V2 契约
 │   ├── control_plane/         ← SQLite migration/repository + tmux inventory
 │   ├── providers/             ← CLI discovery、能力与统一启动参数
-│   ├── runtime/               ← 串行 tmux runtime/input queue
+│   ├── runtime/               ← 串行 tmux runtime/input queue + OMP identity/plan/health helpers
 │   ├── teamrun/               ← DAG、worker、worktree、mailbox、artifact、scheduler
 │   ├── web/                   ← FastAPI、认证、setup、terminal 与静态 WebUI
 │   ├── channels/              ← 通道传输契约与 Telegram/飞书适配器
@@ -52,15 +52,16 @@ tmuxbot/                       ← 仓库根
 │   │   ├── claude_code.py     ← ClaudeCodeBackend: parse_event / parse_* / find_active_jsonl
 │   │   │                         / ensure_running / find_tui_activity_fp / aggregate_usage
 │   │   ├── codex.py           ← CodexBackend
-│   │   └── pi.py              ← PiBackend: 原生/自定义 statusline 解析 + JSONL metadata/usage/todo 补全
+│   │   └── omp.py             ← OmpBackend: OMP v3 JSONL、原生 footer 弱信号、exact resume/sidecar
 │   └── frontends/
 │       ├── base.py            ← Frontend ABC 与回复发送契约
 │       ├── telegram.py        ← TelegramFrontend: aiogram + ACL + handlers
 │       ├── feishu.py          ← FeishuFrontend: lark-oapi WebSocket + Card JSON 2.0
 │       └── feishu_cards.py    ← 飞书卡片构建与分页
+├── omp-extensions/             ← 每次受管 OMP 启动显式加载的 identity/health extension
 ├── webui/                     ← React/Vite/xterm.js 中文控制台源码
 ├── bindings.yaml              ← 绑定配置 (gitignored; 多实例 bindings*.yaml 也忽略)
-├── .env                       ← TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN / BOSS_USER_ID 等 (gitignored)
+├── .env                       ← TG_BOT_TOKEN / TG_CODEX_BOT_TOKEN / TG_OMP_BOT_TOKEN / BOSS_USER_ID 等 (gitignored)
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml             ← aiogram>=3.13, pyyaml>=6.0, python-dotenv>=1.0; lark-oapi>=1.4 optional
@@ -104,28 +105,27 @@ tmuxbot/                       ← 仓库根
                        └────────────┬────────────┘
                                     │
               ┌─────────────────────▼──────────────────────┐
-              │            dispatch_incoming_text            │
-              │  stop / capture 命令 / /screen /info        │
-              │  /restart / rename pending / 普通文本        │
-              └──┬─────────────────────────┬───────────────┘
-                 │                         │
-    ┌────────────▼──────────┐  ┌──────────▼────────────┐
-    │  ClaudeCodeBackend     │  │    CodexBackend        │
-    │  parse_event / jsonl   │  │    parse_event / jsonl │
-    │  ensure_running        │  │    ensure_running      │
-    │  TUI 指纹 / compact    │  │                        │
-    └────────────┬──────────┘  └──────────┬────────────┘
-                 │                         │
-    ┌────────────▼─────────────────────────▼────────────┐
-    │              tmux pane (各 binding 独立)            │
-    │  TUI idle → paste-buffer → composer 渲染与提交确认  │
-    │  jsonl tailer → parse_event → aggregator → 推前端  │
-    └───────────────────────────────────────────────────┘
+              │            dispatch_incoming_text           │
+              │  route command policy / 普通文本 / 附件      │
+              └─────────────────────┬──────────────────────┘
+                                    │ backend_for(binding)
+           ┌────────────────────────┼────────────────────────┐
+           │                        │                        │
+┌──────────▼──────────┐  ┌──────────▼──────────┐  ┌────────▼─────────┐
+│ ClaudeCodeBackend   │  │ CodexBackend        │  │ OmpBackend       │
+│ hooks/JSONL/TUI     │  │ rollout JSONL/TUI   │  │ v3 JSONL/sidecar │
+│ provider lifecycle │  │ provider lifecycle  │  │ registry launch  │
+└──────────┬──────────┘  └──────────┬──────────┘  └────────┬─────────┘
+           └────────────────────────┼────────────────────────┘
+                                    ▼
+             tmux pane (各 binding 独立的真实交互式 TUI)
+             transcript tailer → ProviderEvent → 同 endpoint
+
 ```
 
-**架构原则**:frontend 先按 `(channel, credential, chat_id, thread_id)` 命中 route，再以 `frontend.backend_for(binding)` 选择 Claude/Codex/Pi adapter。credential 只划分 Bot/App 身份，不决定 CLI 类型。群根与未绑定 topic/thread 完全静默；新增 topic route 通过 YAML、`tmuxbot route bind` 或 Admin DM 显式创建，不由群内 `/init` 隐式开通。
+**架构原则**:frontend 先按 `(channel, credential, chat_id, thread_id)` 命中 route，再以 `frontend.backend_for(binding)` 选择 Claude/Codex/OMP adapter。credential 只划分 Bot/App 身份，不决定 CLI 类型。群根与未绑定 topic/thread 完全静默；新增 topic route 通过 YAML、`tmuxbot route bind` 或 Admin DM 显式创建，不由群内 `/init` 隐式开通。
 
-完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。Boss 在 Admin DM 中用自然语言创建/绑定 tmux 与 Telegram/飞书话题的模板和验收流程见 [`docs/admin-dm-operations.md`](docs/admin-dm-operations.md)。低层配置操作仍使用 `tmuxbot route list|inspect|validate|bind|unbind`；普通 Admin LLM 的项目开通只使用 `tmuxbot admin provision-project`：一个 topic intent（新建标题、Telegram topic URL、或精确 chat/thread）加 route name/cwd/backend，即可获得固定 plan → apply → verify 流程；tmux 默认 `NAME:0.0`，不存在时事务创建、存在时只复用 exact-cwd pane。`inventory|telegram-topic|feishu-topics|create-topic|bind-topic|move-topic|adopt-pi-session|verify` 保留为低层诊断、恢复和迁移接口。若操作者直接在 Pi TUI 切换会话，route 仍钉在旧 JSONL 导致回推停止时，必须先用精确的 session JSONL 路径执行 `adopt-pi-session` plan，再带 `--apply` 原子认领已校验的同 cwd Pi 会话；该命令会重启 bridge 并验证 route/tmux/service，不能手改 YAML。Telegram route 只需要 `chat_id + thread_id`，`https://t.me/c/CHAT/THREAD` 已足够，不能额外要求 message ID 或 `thread_root_message_id`。直接编辑 YAML 仍作为离线恢复能力保留。
+完整设计、配置和兼容迁移见 [`docs/topic-routing.md`](docs/topic-routing.md)。Boss 在 Admin DM 中用自然语言创建/绑定 tmux 与 Telegram/飞书话题的模板和验收流程见 [`docs/admin-dm-operations.md`](docs/admin-dm-operations.md)。低层配置操作仍使用 `tmuxbot route list|inspect|validate|bind|unbind`；普通 Admin LLM 的项目开通只使用 `tmuxbot admin provision-project`：一个 topic intent（新建标题、Telegram topic URL、或精确 chat/thread）加 route name/cwd/backend，即可获得固定 plan → apply → verify 流程；tmux 默认 `NAME:0.0`，不存在时事务创建、存在时只复用 exact-cwd pane。`inventory|telegram-topic|feishu-topics|create-topic|bind-topic|move-topic|adopt-omp-session|verify` 保留为低层诊断、恢复和迁移接口。若操作者在 tmux/SSH 中直接切换 OMP 会话，route identity 未及时同步导致回推停止，必须对精确的绝对 JSONL 路径执行 `adopt-omp-session` plan，再带 `--apply` 原子认领已校验的同 cwd OMP 会话；该命令不按 mtime 猜测，会重启 bridge 并验证 route/tmux/service。Telegram route 只需要 `chat_id + thread_id`，`https://t.me/c/CHAT/THREAD` 已足够，不能额外要求 message ID 或 `thread_root_message_id`。直接编辑 YAML 仍作为离线恢复能力保留。
 
 ---
 
@@ -213,7 +213,7 @@ bindings:
     chat_id: 123456789             # TG: int (DM = user_id; group = 负数)
     thread_id: null                # DM 无; forum topic 填 topic_id
     bot_token_env: TG_BOT_TOKEN    # 用哪个 bot token (env 变量名)
-    backend: claude_code           # claude_code / codex / pi
+    backend: claude_code           # claude_code / codex / omp
     tmux_session: "claude-alpha"
     tmux_window: 0
     tmux_pane: 0
@@ -345,6 +345,7 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 ```
 
 `CLAUDE_BIN` 在 `ensure_running()` 运行时读取,不会依赖 systemd/tmux 的非交互 shell `PATH`。这也避开 npm 全局安装缺少 native optional dependency 时的 `claude native binary not installed` 故障。`CODEX_BIN` 同理可配置 codex 绝对路径。
+`OMP_BIN` 同样可固定 Oh My Pi 可执行文件；未配置时 registry 按 `PATH`、`~/.local/bin/omp` 解析。OMP 的显示名、route backend、默认 Telegram credential 与启动 argv 全部由 provider registry 提供，Web/API 不接受浏览器提交 binary path、tmux target 或自定义 argv。
 
 ### Runtime V2 灰度与 Claude hooks
 
@@ -353,7 +354,7 @@ echo "CLAUDE_BIN=$HOME/.local/bin/claude" >> .env
 - `TMUXBOT_RUNTIME_V2=on`:只发送 V2 reducer 结果。
 - `TMUXBOT_CLAUDE_HOOKS=true`:启动时幂等合并 tmuxbot 自有 hooks 到 `~/.claude/settings.json`,保留其他 hook 与设置。hook 命令只把官方事件写入 `data/claude-hooks.jsonl`,由 Claude adapter 消费。
 
-无论模式为何,执行面始终是 tmux pane 内的交互式 Claude/Codex/Pi CLI;hooks 与 JSONL 都只是观测源。
+无论模式为何,执行面始终是 tmux pane 内的交互式 Claude/Codex/OMP CLI;hooks、sidecar 与 JSONL 都只是观测/身份来源，不进入 RPC/SDK/headless 执行链。
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -389,14 +390,15 @@ rotation timer 应停用删除，frontend 自身负责断线退避重连。
 多实例只用于显式的故障隔离/灰度，且必须使用完全不重叠的 route、bindings、offsets、
 state、lock 和数据库；它不是多 credential 的默认部署方式。
 
-### ensure_running — 按需重建 tmux + --resume
+### ensure_running — 按需重建 tmux + provider 精确恢复
 
 `ensure_running(binding)` 逻辑(每次收到消息都会调):
 
-1. 检查 tmux session 是否存在,不存在则新建
-2. 检查 pane 当前命令是否为对应 CLI,已在跑则跳过
-3. Claude 使用 `${CLAUDE_BIN:-claude} --dangerously-skip-permissions --resume <session_id>` 重启(上下文不丢)
-4. Codex 使用 `${CODEX_BIN:-codex} resume --dangerously-bypass-approvals-and-sandbox [-m <~/.codex/config.toml 的 model>] <session_id>` 重启(上下文不丢)；无历史会话的新启动同样读取该配置。配置缺失时不传 `-m`。
+1. 检查 tmux session 是否存在,不存在则新建；
+2. 检查 pane 当前命令和进程树是否为 route 对应 CLI；
+3. Claude 使用 `${CLAUDE_BIN:-claude} --dangerously-skip-permissions --resume <session_id>` 重启(上下文不丢)；
+4. Codex 使用 `${CODEX_BIN:-codex} resume --dangerously-bypass-approvals-and-sandbox [-m <~/.codex/config.toml 的 model>] <session_id>` 重启；
+5. OMP 只从 provider registry 取得 `${OMP_BIN:-omp} --approval-mode yolo --extension <managed-extension-absolute-path>`。route 有 transcript pin 时仅追加 `--resume <exact-absolute-jsonl-path>`，绝不使用 `--continue`、`--session`、`--approve`、RPC 或 print 参数。pin 的首个有效 `type:"session"` header 必须有受支持 version、非空 ID、canonical cwd 精确匹配；失败时保留 pin 并拒绝静默新建会话。
 
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
 > Codex 在受管会话重启后会应用当前 `~/.codex/config.toml` 的模型默认值；原生 `/model` 仍可用于当前运行会话的临时选择。
@@ -407,23 +409,16 @@ state、lock 和数据库；它不是多 credential 的默认部署方式。
 入口共享锁，不会并发重复拉起。Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 
-Pi 另有独立的双层异常巡检。受管 `tmuxbot-session-handoff.ts` extension 将结构化 assistant
-provider error 先写成 `recovering`，只有 Pi 发出 `agent_settled`、确认 retry/compaction/follow-up
-都结束后，才升级为 `terminal_error` sidecar；bridge 复核精确 target/cwd/session/transcript 后
-向原 endpoint 通知一次，重试过程中的 transcript error 不再即时误报。
+OMP 使用受管 `omp-extensions/tmuxbot-session-handoff.ts` 提供两套 versioned sidecar。identity 写入 `omp-session-handoffs/`，health 写入 `omp-session-health/`；文件名按 exact tmux target 派生。handoff 必须匹配 `tmuxTarget/cwd/sessionId/transcriptPath/processId`，其中 `processId` 必须属于该 pane 的 live OMP process。新 session 的 JSONL 会延迟到首条消息才创建，因此文件尚不存在时只接受官方 sessions root 与匹配 session ID 的 provider-authored pending path；文件出现后必须通过 transcript header/cwd 校验。已有 `omp` 进程但缺少有效 identity sidecar 时 fail closed，提示 `/restart`，禁止按 cwd/mtime 猜测会话。
 
-第二层由 `TMUXBOT_PI_TERMINAL_HEALTH_ENABLED=1` 启用，默认
-`TMUXBOT_PI_TERMINAL_HEALTH_INTERVAL=600`。它不重启、不中断任何 Pi：只有同一精确
-session 连续 3 个周期显示真实 Pi working spinner、JSONL 大小及稳定屏幕均无进展，并且没有
-retry、自动压缩、session handoff 或活跃子工具时，才去重提示人工使用 `/screen` 检查。正常
-idle/working、自愈和不确定状态一律静默；持久 fingerprint 使 bridge 重启后不会重复通知。
+health extension 在 `agent_start` 写 `working`，非终止 `agent_end` 保持 `working/recovering`，只有 terminal end 才写 `idle` 或 `terminal_error`。bridge 仅在 exact target/cwd/session/transcript 全部一致时消费错误状态。第二层由 `TMUXBOT_OMP_TERMINAL_HEALTH_ENABLED=1` 启用，默认 `TMUXBOT_OMP_TERMINAL_HEALTH_INTERVAL=600`；它只对同一精确 session 的持续无进展状态去重告警，不重启或中断 OMP。
 
 ### lifecycle health audit — 每小时只巡检，不休眠 provider
 
 `lifecycle.py` 默认每 3600 秒巡检一次**已存在**的 route pane。巡检与入站消息共用
 `State.ensure_locks[binding.name]`，调用 adapter 的 `ensure_running()` 重新验证前台 provider
 与进程树；仅当 provider 明确不健康时才调用其受控恢复 seam。它不读取 `State.last_active`，
-不向 Claude/Codex/Pi 发送退出命令，不按空闲时间回收任何 TUI，也不创建缺失 tmux target。
+不向 Claude/Codex/OMP 发送空闲退出命令，不按空闲时间回收任何 TUI，也不创建缺失 tmux target。
 
 人工 `/tmuxstop` 或 `tmux kill-session` 后，缺失 session 会被健康巡检跳过；下一条精确 route
 消息仍是唯一的按需恢复入口。这样定时任务和长任务持续保留，同时保有低频异常 pane 自愈能力。
@@ -436,16 +431,14 @@ idle/working、自愈和不确定状态一律静默；持久 fingerprint 使 bri
 
 | 命令 | 行为 |
 |---|---|
-| `/esc` | 发 Escape 到 TUI(中断当前生成) |
-| `/cc` | 发 C-c(取消/清空输入) |
-| `/eof` | 发 C-d(退出 claude) |
+| `/esc /cc /eof` | Claude/Codex 可发送对应控制键；OMP 不接受 IM 远程按键，只返回 exact pane 的 SSH attach 提示 |
 | `/tmuxstop` | 关闭整个 tmux，保留 binding/历史；下一条消息按需恢复 |
 | `/screen` | 抓 tmux 屏幕推回 |
-| `/info` | 聚合统计(累计 token / 缓存命中率,只读 jsonl) |
-| `/restart` | C-c + C-d + ensure_running |
-| `/new` | 别名 → `/clear`,注入 TUI |
-| `/rename` | 注入 TUI 进 pending_rename 态;下一条文本作名字 |
-| `/context /cost /usage /compact /clear /stats /help` | TUI 透传 + capture_and_push 结构化反馈 |
+| `/info` | 聚合统计(累计 token / 缓存命中率,只读 JSONL) |
+| `/restart` | Claude/Codex 沿原控制流程重启；OMP 使用 clean pane respawn 后按 exact transcript path 恢复，不向原生 TUI 注入 C-c/C-d |
+| `/new /compact /clear /fresh` | OMP 控制命令只允许在 IDLE 时执行；busy 时立即明确拒绝，绝不进入 steering queue |
+| `/plan` | OMP 本地帮助：只报告当前 `mode_change` 状态，未启用时提示 SSH attach 后用默认 `Alt+Shift+P`；不会把 `/plan` 注入 pane |
+| OMP 原生菜单 | `/login /model /scoped-models /settings /statusline /resume /tree /trust /fork /import` 仅识别当前菜单并提示 SSH 操作，不从 IM 模拟导航、确认或取消 |
 
 ### TG 专属命令 (BotFather 注册菜单)
 
@@ -453,7 +446,7 @@ idle/working、自愈和不确定状态一律静默；持久 fingerprint 使 bri
 |---|---|
 | `/status` | 综合状态 4 章节: 🔌连接 / 📊上下文 / 💰用量 / 📈累计 + 🚦订阅配额 |
 | `/whoami` | 我的 user_id / chat_id / thread_id(调试) |
-| `/resume` | 注入到 TUI,picker 由 `detect_idle_picker` 自动推 inline keyboard |
+| `/resume` | Claude/Codex 依各自 adapter 处理；OMP 只提示通过 SSH 操作原生 picker，sidecar 在会话切换后同步 exact identity |
 
 ---
 
@@ -461,29 +454,28 @@ idle/working、自愈和不确定状态一律静默；持久 fingerprint 使 bri
 
 参见 `CLAUDE.md` 第 2 节。摘要:
 
-- `cwd` 编码:绝对路径里所有非 `[A-Za-z0-9]` 字符都替换为 `-`
-- Claude/Codex 的 `paste-buffer -p` 前先等 TUI idle；paste 渲染后及每次 Enter 前再要求连续稳定 idle 0.5s，封住“初检 idle → 队列/重绘转 busy → Enter 被忽略”的竞态。Pi 是显式例外：官方 TUI 在 streaming/Working 时支持普通 Enter 将消息作为 steering queue 提交，所以 `ProviderCapabilities.accepts_input_while_busy=True`，入站文字/附件以及 `/rename` pending 后的名字值都会立即 paste + Enter，不等待 300s idle；此路径不能以“仍 busy”作为成功，必须观察 composer 清空/变化，避免假确认。`/new`、`/compact` 等 slash/picker/control command 不能误入 steering queue；Pi 非 `IDLE` 时共享 dispatch 必须立即在原 endpoint 回复“未执行”并提示先 `/esc`，不得让 IM handler 无声等待 300 秒后才抛 `TmuxBusyTimeout`。provider CLI 从 shell 唤醒是另一条显式路径：只按 foreground allowlist 判断，不得让旧 TUI scrollback 的 `Working...` 阻止启动；启动后必须验证真实 provider footer/status 出现。未知 foreground、foreground revalidation 失败或 TUI 未 ready 必须抛错到 dispatch，不能静默返回后继续把用户消息粘进 shell。所有 provider 的原草稿仍在时才有限重试，避免漏交与重复提交。
-- claude TUI 事务式 flush jsonl → AskUserQuestion 被全局宪法封禁
-- TG 4096 限 UTF-16 单位。最终 assistant 回复的每个分片必须取得 Bot API 返回的真实 `message_id` 才算送达；返回 `None`/抛错时 JSONL tailer 不提交当前行 offset，而是下一轮重试，并在成功时记录 message IDs。tailer 首次发现 transcript 时，已有持久 provider identity 的 bridge bootstrap 才跳到 EOF 防历史回吐；新 provision 且 identity 仍为空的 route 必须从 0 读取，否则 Pi 首个 turn 在轮询前完整落盘时会静默丢掉第一条回复。
-- `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)
-- `sendChatAction("typing")` 每 4s 刷一次维持 ~5s 显示
-- `/compact` 完成硬信号: `type=system, subtype=compact_boundary` + `compactMetadata.preTokens/postTokens`
-- tailer 积压保护: 单次落盘超 512KB 判定为事务式 flush 爆发 → 跳末尾,不回吐
-- 飞书无 typing API; 飞书 text 消息不能编辑,必须用 interactive card
-- `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`（普通 Bot API HTML 不支持原生 table）
-- Pi `/new` 的 JSONL 是延迟持久化：TUI 先显示 `✓ New session started`，新文件要等首条 assistant 回复才落盘。命令确认使用 TUI marker，但 `pending_session_handoff_after` 必须一直保留到 tailer 认领新 JSONL，不能因即时看不到文件而清除。
-- Pi 命令分三类维护：文本 capture（`/session`）、JSONL 硬信号（`/new`、`/clone`、`/compact`）和 interactive picker（`/resume`、`/tree`、`/fork`、`/settings`、`/model`、`/scoped-models`、`/trust`、`/import`）。Pi picker 只做屏幕硬信号识别：导航/提交/取消控制提示必须紧邻当前实时 footer，命中后仅向原 endpoint 通知 SSH attach 到精确 pane；不得从 IM 模拟方向键、Enter、Escape、批准或取消，旧 Telegram/飞书卡 callback 也必须拒绝。interactive session switch 的事务保留到用户在 SSH 中完成选择，再调用 Pi 原生 `/session` 读取 File/ID 同步 route identity；不得 capture 后自动 Escape 关闭 picker。
-- Pi `/compact` 与自动压缩的完成硬信号都是同一 JSONL 新增 `type=compaction` entry，不是 Claude 的 `compact_boundary`。heartbeat 从 TUI `Compacting context...` / `Auto-compacting...` 建立可编辑 IM 状态卡，ETA 使用当前 session 最近 5 次 compaction 的中位耗时（无历史默认 180s），每约 12s 更新；entry 落盘后编辑为完成回执并带 `tokensBefore`/summary usage/Todo。若 TUI 离开 compacting 但无 entry，必须标记“未确认完成/可能未续跑”，不能假报成功。
-- Pi 可由 extension 替换原生 footer。当前 parser 同时支持原生 footer 与 `pi-statusline` powerline（provider/model/thinking/cwd/Git/context/tokens/cache/cost/extension status）；composer 识别也必须接受该 statusline，Todo overlay 出现在编辑器上方时不能误入草稿。
-- `@narumitw/pi-plan-mode` 的权威状态来自当前精确 transcript branch 最后一条 `type=custom, customType=plan-mode-state`，不能按 mtime 跨 session 猜。IM 映射 `plan active/ready/saved/implementing` 四态，页面内容底部显示对应中文 Plan widget；配套 `pi-statusline` 会把 ready 压缩为 `📝 plan ✓`，screen 与 JSONL enrichment 必须去重。`plan_mode_complete` toolResult 和 `custom_message/proposed-plan` 统一转为 `PLAN_UPDATE` 可编辑计划卡；bridge restart 只从 snapshot 恢复状态栏/widget，不重复发送历史计划卡。`/plan`、`/plan tools` 是交互菜单，其余 `/plan` 子命令和 inline prompt 直接 passthrough 并返回 TUI 回执；pi-tui-kit 的 `↑/↓ navigate • enter select • esc close` 等控制栏只有在紧邻实时 Pi footer 时才算当前交互，命中后 Telegram/飞书仅发送精确 SSH/tmux 提示，不生成选择或方向键控制卡；所有 `/plan` 入口在 Pi 非 IDLE 时立即拒绝，禁止进入 steering queue 延迟改变工具/模式，bridge 不重实现扩展状态机。
-- `rpiv-todo` 的权威状态不是独立文件，而是当前 Pi JSONL 分支上最后一条合法 `toolResult(toolName="todo")` 的 `message.details.tasks` 完整快照。`read_tasks()` 必须沿最后 leaf 的 `parentId` 链 replay、忽略 abandoned branch 与 `deleted` 项。只要快照里仍有非 deleted task，Pi 的每条 assistant/working IM 消息都固定追加 TUI 风格的完整 `Todos (completed/total)` 面板，保留原顺序、`○/◐/✓`、task ID、`activeForm` 和 `blockedBy`；即使全部 completed 也继续显示，只有 clear/全部 deleted 后隐藏。Claude harness 继续使用原有 summary footer 语义。
+- Claude 的 cwd session 目录使用编码路径；OMP 不扫描编码 cwd 或“最新会话”，只认 exact target-scoped handoff sidecar，其次才使用 binding 的 exact transcript pin。当前 OMP 会话通常位于 `~/.omp/agent/sessions/<encoded-project>/<timestamp>_<id>.jsonl`，但目录结构不是发现协议。
+- Claude/Codex 的 `paste-buffer -p` 前先等 TUI idle。OMP 是显式例外：普通文字/附件在 Working 时可提交到原生 steering queue (`accepts_input_while_busy=True`)；`/new`、`/compact`、`/clear`、`/fresh` 及所有 picker/control command 必须要求 IDLE，busy 时立即回复未执行，不能排队等待或进入 steering。
+- OMP 的 `/restart` 走 clean `respawn-pane`，再由 `ensure_running()` 使用 registry argv 和 exact `--resume <absolute path>`；禁止向 OMP TUI 注入 C-c/C-d 来猜测退出状态。
+- OMP JSONL 当前 canonical schema 是 v3：固定 title/session slot 之后，以最后 entry 的 `id/parentId` 回溯当前 branch，忽略 abandoned branch。runtime metadata 从 `model_change.model="provider/model"`、`thinking_level_change.thinkingLevel`、`title/title_change` 与 assistant `usage/cost` 读取；assistant `provider/model` 只作 fallback。
+- OMP assistant `message.content` 的 `thinking/toolCall/text` 规范化为 tool progress/final text；只有 `write` toolCall 写入非空 `local://*-plan.md` 才产生 `PLAN_UPDATE`。plan active 状态只看当前 branch 最后的 `mode_change.mode="plan"`，不依赖第三方 plan extension。
+- `/plan` 是 tmuxbot 本地帮助，不是 OMP slash command。它不会写入 transcript；未处于 plan mode 时仅提示 SSH attach 后使用默认 `Alt+Shift+P`，并注明自定义 keybindings 可能改变快捷键。
+- OMP todo 的权威快照是当前 branch 最后一个成功 `toolResult(toolName="todo").details.phases`，或更新的 `custom(customType="user_todo_edit").data.phases`。phase 下 task 支持 `pending/in_progress/completed/abandoned/blocked` 与可选 `blocker`；渲染按 phase 分组，abandoned 不显示。
+- OMP `/compact` 与自动压缩的完成硬信号是 canonical `type="compaction"`（或 extension lifecycle/session switch）；稳定元数据只有 `preTokens=tokensBefore`，无官方字段时 `postTokens/durationMs=None`。Claude 的 `compact_boundary` 契约保持不变。
+- OMP 17.3.2 原生 `╭── π … ╮` / `╰─ … ─╯` footer 与紧邻 footer、以 `⟦esc⟧` 结尾的 braille loader 仅是版本化弱信号。模型/provider/usage 以 JSONL 为准；屏幕只补可明确解析的 effort、cwd、branch、context、cost、plan/session label。自定义 statusline 不属于 adapter 契约。
+- OMP 原生 ask/approval/model/resume/plan review 等交互只有在控制提示紧邻当前 footer 时才视为 live；Telegram/飞书只发送 exact tmux target 的 SSH 提示，所有旧 callback 或 IM 按键动作 fail closed。
+- TG 4096 限 UTF-16 单位。最终 assistant 回复的每个分片必须取得 Bot API 返回的真实 `message_id` 才算送达；失败时 JSONL tailer 不提交当前行 offset并在下一轮重试。新 provision 且 identity 仍为空的 route 必须从 0 读取，避免首个完整 turn 在轮询前落盘后丢失。
+- `setMessageReaction` 需 Bot API 7.0+ (aiogram 3.13+)；`sendChatAction("typing")` 每 4s 刷一次维持约 5s 显示；飞书无 typing API，text 消息不可编辑，需使用 interactive card。
+- tailer 积压保护: 单次落盘超 512KB 判定为事务式 flush 爆发 → 跳末尾,不回吐。
+- `ReplyDocument` 的 fenced code 支持语言和 `filename=...`; Markdown pipe table 在飞书映射为 Card 2.0 根级 `table`，Telegram HTML 路径安全退化为对齐 `<pre>`。
+- claude TUI 事务式 flush JSONL，AskUserQuestion 被全局宪法封禁。
 
 ---
 
 ## 9. 部署红线
 
 - ❌ 不能 root/sudo 跑 claude
-- ❌ 不要依赖 systemd/tmux 的 shell PATH 找 `claude`;生产环境配置 `CLAUDE_BIN` 绝对路径
+- ❌ 不要依赖 systemd/tmux 的 shell PATH 找 provider；生产环境可用 `CLAUDE_BIN` / `CODEX_BIN` / `OMP_BIN` 固定绝对路径，OMP 仍必须通过 registry 组合受管启动参数
 - ❌ 不推荐用 npm 全局安装 Claude Code;若 npm optional dependency/postinstall 坏了会出现 `claude native binary not installed`
 - ❌ 项目里不要配 `PreToolUse` hook
 - ❌ `tmux_send_text` 不前置 Escape(中断要用 `/esc`)

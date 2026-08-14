@@ -4,7 +4,7 @@ from pathlib import Path
 from tmuxbot.backends import claude_code, codex
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
-from tmuxbot.backends.pi import PiBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.core.events import TerminalState
 from tmuxbot.state import Binding
 
@@ -39,7 +39,7 @@ def test_provider_process_detection_and_safe_start_are_explicit():
 def test_provider_capabilities_describe_real_provider_features():
     claude = ClaudeCodeBackend().capabilities
     codex = CodexBackend().capabilities
-    pi = PiBackend().capabilities
+    omp = OmpBackend().capabilities
 
     assert claude.name == "claude_code"
     assert claude.supports_hooks
@@ -49,7 +49,7 @@ def test_provider_capabilities_describe_real_provider_features():
     assert codex.supports_incremental_text
     assert codex.supports_plans
     assert codex.supports_usage
-    assert pi.accepts_input_while_busy
+    assert omp.accepts_input_while_busy
 
 
 def test_claude_terminal_status_normalizes_permission_and_context():
@@ -69,8 +69,7 @@ def test_claude_terminal_status_normalizes_permission_and_context():
 
 def test_codex_terminal_status_normalizes_working_model_and_cwd():
     status = CodexBackend().parse_terminal_status(
-        "• Working (9s • esc to interrupt)\n"
-        "gpt-5.6-sol high · ~/repo · Main [default]"
+        "• Working (9s • esc to interrupt)\ngpt-5.6-sol high · ~/repo · Main [default]"
     )
 
     assert status is not None
@@ -79,15 +78,11 @@ def test_codex_terminal_status_normalizes_working_model_and_cwd():
     assert status.model == "gpt-5.6-sol"
     assert status.effort == "high"
     assert status.cwd == "~/repo"
-    assert CodexBackend().format_status_footer(status) == (
-        "gpt-5.6-sol high · working 9s · ~/repo"
-    )
+    assert CodexBackend().format_status_footer(status) == ("gpt-5.6-sol high · working 9s · ~/repo")
 
 
 def test_codex_terminal_status_keeps_effort_when_cwd_is_home():
-    status = CodexBackend().parse_terminal_status(
-        "gpt-5.6-terra medium · ~ · Main [default]"
-    )
+    status = CodexBackend().parse_terminal_status("gpt-5.6-terra medium · ~ · Main [default]")
 
     assert status is not None
     assert status.model == "gpt-5.6-terra"
@@ -97,9 +92,7 @@ def test_codex_terminal_status_keeps_effort_when_cwd_is_home():
 
 
 def test_codex_terminal_status_renders_xhigh_effort():
-    status = CodexBackend().parse_terminal_status(
-        "gpt-5.6-sol xhigh · ~/repo · feature/footer"
-    )
+    status = CodexBackend().parse_terminal_status("gpt-5.6-sol xhigh · ~/repo · feature/footer")
 
     assert status is not None
     assert status.effort == "xhigh"
@@ -107,9 +100,7 @@ def test_codex_terminal_status_renders_xhigh_effort():
 
 
 def test_codex_terminal_status_omits_missing_effort_cleanly():
-    status = CodexBackend().parse_terminal_status(
-        "gpt-5.6-sol · ~/repo · Main [default]"
-    )
+    status = CodexBackend().parse_terminal_status("gpt-5.6-sol · ~/repo · Main [default]")
 
     assert status is not None
     assert status.effort is None
@@ -123,7 +114,9 @@ def test_codex_runtime_metadata_falls_back_to_active_transcript(tmp_path, monkey
     rollout.write_text(
         "\n".join(
             (
-                json.dumps({"type": "session_meta", "payload": {"id": "s-1", "cwd": str(tmp_path)}}),
+                json.dumps(
+                    {"type": "session_meta", "payload": {"id": "s-1", "cwd": str(tmp_path)}}
+                ),
                 json.dumps(
                     {
                         "type": "event_msg",
@@ -147,7 +140,8 @@ def test_codex_runtime_metadata_falls_back_to_active_transcript(tmp_path, monkey
                     }
                 ),
             )
-        ) + "\n"
+        )
+        + "\n"
     )
     monkeypatch.setattr(codex, "CODEX_SESSIONS_DIR", sessions)
 
@@ -322,7 +316,8 @@ def test_claude_current_model_prefers_latest_context_usage_model(tmp_path, monke
                     }
                 ),
             )
-        ) + "\n"
+        )
+        + "\n"
     )
 
     assert ClaudeCodeBackend().current_model(_binding(tmp_path, "claude_code")) == "claude-fable-5"

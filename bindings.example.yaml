@@ -12,7 +12,7 @@
 #   tmux_window   tmux window index
 #   tmux_pane     tmux pane index
 #   cwd           CLI working directory
-#   backend       claude_code / codex / pi
+#   backend       claude_code / codex / omp
 #   bot_token_env credential namespace; routes sharing it use one bot/app
 #   mention_required explicit group/topic mention policy; project topics usually false
 #
@@ -44,7 +44,7 @@ bindings:
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/youruser/projects/project-review
-    backend: pi
+    backend: omp
     mention_required: false
 
   - name: project-implementation
@@ -58,9 +58,9 @@ bindings:
     cwd: /home/youruser/projects/project-implementation
     backend: codex
 
-  # Feishu thread -> Pi. Root messages are a different endpoint and stay silent.
-  # If Pi later opens a menu/input/confirmation, tmuxbot only sends an SSH notice
-  # for this exact pane; it never drives Pi keys from Telegram/Feishu.
+  # Feishu thread -> OMP. Root messages are a different endpoint and stay silent.
+  # If OMP later opens a menu/input/confirmation, tmuxbot only sends an SSH notice
+  # for this exact pane; it never drives OMP keys from Telegram/Feishu.
   - name: feishu-topic
     channel: feishu
     bot_token_env: FEISHU
@@ -73,4 +73,4 @@ bindings:
     tmux_window: 0
     tmux_pane: 0
     cwd: /home/youruser/projects/feishu-topic
-    backend: pi
+    backend: omp

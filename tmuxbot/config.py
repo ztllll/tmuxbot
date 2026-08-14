@@ -1,4 +1,5 @@
 """配置加载: .env (TG_BOT_TOKEN, BOSS_USER_ID) + bindings.yaml → State"""
+
 from __future__ import annotations
 
 import logging
@@ -25,10 +26,8 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         return None
     channel = os.getenv("TMUXBOT_ADMIN_CHANNEL", "telegram").strip().lower()
     backend = os.getenv("TMUXBOT_ADMIN_CLI", "").strip()
-    if backend not in {"claude_code", "codex", "pi"}:
-        raise ConfigValidationError(
-            ["TMUXBOT_ADMIN_CLI must be one of: claude_code, codex, pi"]
-        )
+    if backend not in {"claude_code", "codex", "omp"}:
+        raise ConfigValidationError(["TMUXBOT_ADMIN_CLI must be one of: claude_code, codex, omp"])
     raw_chat_id = os.getenv("TMUXBOT_ADMIN_CHAT_ID", "").strip()
     if channel == "telegram":
         if not raw_chat_id:
@@ -43,15 +42,11 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "TG_BOT_TOKEN").strip()
     elif channel == "feishu":
         if not raw_chat_id:
-            raise ConfigValidationError(
-                ["TMUXBOT_ADMIN_CHAT_ID is required for feishu admin DM"]
-            )
+            raise ConfigValidationError(["TMUXBOT_ADMIN_CHAT_ID is required for feishu admin DM"])
         chat_id = raw_chat_id
         credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "FEISHU").strip()
     else:
-        raise ConfigValidationError(
-            ["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"]
-        )
+        raise ConfigValidationError(["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"])
     tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin").strip()
     if not tmux_session:
         raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
@@ -71,8 +66,7 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         install_admin_context(
             cwd=cwd,
             bindings_file=bindings_file,
-            service=os.getenv("TMUXBOT_SERVICE", "tmuxbot.service").strip()
-            or "tmuxbot.service",
+            service=os.getenv("TMUXBOT_SERVICE", "tmuxbot.service").strip() or "tmuxbot.service",
         )
     except (OSError, RuntimeError) as exc:
         raise ConfigValidationError(
@@ -200,9 +194,7 @@ def load_config(
 
     if not bindings_file.is_file():
         if not allow_missing_bindings:
-            raise ConfigValidationError(
-                [f"bindings file does not exist: {bindings_file}"]
-            )
+            raise ConfigValidationError([f"bindings file does not exist: {bindings_file}"])
         raw: object = {"bindings": []}
     else:
         try:

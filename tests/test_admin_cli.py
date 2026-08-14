@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 
@@ -29,7 +30,7 @@ def route(name: str = "alpha", **overrides) -> dict[str, object]:
         "tmux_window": 0,
         "tmux_pane": 0,
         "cwd": f"/tmp/{name}",
-        "backend": "pi",
+        "backend": "omp",
         "mention_required": False,
         "provider_session_id": "session-old",
         "transcript_path": f"/tmp/{name}.jsonl",
@@ -57,9 +58,7 @@ def test_admin_runtime_treats_empty_tmux_output_as_stopped(monkeypatch):
         )(),
     )
 
-    status = runtime.target_status(
-        type("Target", (), {"value": "missing:0.0"})()
-    )
+    status = runtime.target_status(type("Target", (), {"value": "missing:0.0"})())
 
     assert status == {"state": "stopped", "target": "missing:0.0"}
 
@@ -148,18 +147,13 @@ def test_admin_inventory_reports_routes_and_tmux_targets(tmp_path, capsys):
                 "state": "running",
                 "target": "alpha:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
     )
 
-    assert (
-        run_admin_command(
-            ["--file", str(bindings), "inventory", "--json"], runtime=runtime
-        )
-        == 0
-    )
+    assert run_admin_command(["--file", str(bindings), "inventory", "--json"], runtime=runtime) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["routes"][0]["name"] == "alpha"
     assert payload["tmux_targets"][0]["target"] == "alpha:0.0"
@@ -202,9 +196,7 @@ def test_admin_contract_install_is_idempotent_and_preserves_existing_text(tmp_pa
     runbook = (admin_cwd / "ADMIN-RUNBOOK.md").read_text(encoding="utf-8")
     assert "How this conversation runs" in runbook
     assert str(bindings.resolve()) in runbook
-    manifest = json.loads(
-        (admin_cwd / "tmuxbot-admin-context.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((admin_cwd / "tmuxbot-admin-context.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == 1
     assert manifest["admin_cwd"] == str(admin_cwd.resolve())
     assert set(manifest["files"]) == {"AGENTS.md", "CLAUDE.md", "ADMIN-RUNBOOK.md"}
@@ -226,16 +218,27 @@ def test_admin_context_verification_detects_stale_contract(tmp_path, capsys):
     write_routes(bindings, [route()])
     admin_cwd = tmp_path / "admin"
     argv = [
-        "--file", str(bindings), "--service", "bridge.service",
-        "install-contract", "--cwd", str(admin_cwd),
+        "--file",
+        str(bindings),
+        "--service",
+        "bridge.service",
+        "install-contract",
+        "--cwd",
+        str(admin_cwd),
     ]
     assert run_admin_command(argv) == 0
     (admin_cwd / "AGENTS.md").write_text("tampered\n", encoding="utf-8")
 
     exit_code = run_admin_command(
         [
-            "--file", str(bindings), "--service", "bridge.service",
-            "verify-context", "--cwd", str(admin_cwd), "--json",
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "verify-context",
+            "--cwd",
+            str(admin_cwd),
+            "--json",
         ]
     )
 
@@ -245,9 +248,7 @@ def test_admin_context_verification_detects_stale_contract(tmp_path, capsys):
     assert any("AGENTS.md" in error for error in payload["errors"])
 
 
-def test_admin_contract_install_creates_default_dedicated_workspace(
-    monkeypatch, tmp_path, capsys
-):
+def test_admin_contract_install_creates_default_dedicated_workspace(monkeypatch, tmp_path, capsys):
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route()])
     data_home = tmp_path / "share"
@@ -340,7 +341,10 @@ def test_feishu_topic_discovery_returns_exact_root_threads(monkeypatch, tmp_path
                         "sender": {"sender_type": "user", "id": "ou_boss"},
                         "body": {
                             "content": json.dumps(
-                                {"title": "Network", "content": [[{"tag": "text", "text": "Project"}]]}
+                                {
+                                    "title": "Network",
+                                    "content": [[{"tag": "text", "text": "Project"}]],
+                                }
                             )
                         },
                     },
@@ -410,9 +414,7 @@ def test_create_telegram_topic_returns_exact_endpoint(monkeypatch, tmp_path):
         },
     )
 
-    topic = create_telegram_topic(
-        env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, "CliproxyApi"
-    )
+    topic = create_telegram_topic(env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, "CliproxyApi")
 
     assert topic == {
         "title": "CliproxyApi",
@@ -443,9 +445,7 @@ def test_delete_telegram_topic_uses_delete_forum_topic(monkeypatch, tmp_path):
         "tmuxbot.admin_cli.json.load", lambda _response: {"ok": True, "result": True}
     )
 
-    delete_telegram_topic(
-        env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, 42337
-    )
+    delete_telegram_topic(env_file, "TG_CODEX_BOT_TOKEN", -1003799747978, 42337)
 
     assert requests[0].full_url.endswith("/bottoken/deleteForumTopic")
 
@@ -488,7 +488,7 @@ def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--create-target",
         ],
         runtime=runtime,
@@ -504,9 +504,7 @@ def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
     assert "plan only" in output
 
 
-def test_create_telegram_topic_apply_creates_endpoint_target_and_route(
-    monkeypatch, tmp_path
-):
+def test_create_telegram_topic_apply_creates_endpoint_target_and_route(monkeypatch, tmp_path):
     cwd = tmp_path / "project"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
@@ -553,7 +551,7 @@ def test_create_telegram_topic_apply_creates_endpoint_target_and_route(
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--mention-required",
             "false",
             "--create-target",
@@ -661,7 +659,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--create-target",
         ],
         runtime=runtime,
@@ -677,9 +675,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
     assert "plan only" in output
 
 
-def test_create_feishu_topic_apply_creates_endpoint_target_and_route(
-    monkeypatch, tmp_path
-):
+def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch, tmp_path):
     cwd = tmp_path / "project"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
@@ -697,9 +693,7 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(
     )
     monkeypatch.setattr(
         "tmuxbot.admin_cli.delete_feishu_message",
-        lambda env_file, credential, message_id: deleted.append(
-            (env_file, credential, message_id)
-        ),
+        lambda env_file, credential, message_id: deleted.append((env_file, credential, message_id)),
     )
 
     exit_code = run_admin_command(
@@ -724,7 +718,7 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--mention-required",
             "false",
             "--create-target",
@@ -792,7 +786,7 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--create-target",
             "--apply",
         ],
@@ -806,9 +800,7 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
     assert "restart failed" in capsys.readouterr().out
 
 
-def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target(
-    tmp_path, capsys
-):
+def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target(tmp_path, capsys):
     cwd = tmp_path / "project"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
@@ -824,7 +816,7 @@ def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target
             "bridge.service",
             "provision-project",
             "--name",
-            "pi-cliproxyapi",
+            "omp-cliproxyapi",
             "--channel",
             "telegram",
             "--credential",
@@ -834,7 +826,7 @@ def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
         ],
         runtime=runtime,
     )
@@ -854,7 +846,7 @@ def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target
         "thread_root_message_id": None,
         "topic_title": None,
     }
-    assert payload["route"]["tmux_target"] == "pi-cliproxyapi:0.0"
+    assert payload["route"]["tmux_target"] == "omp-cliproxyapi:0.0"
     assert payload["target_action"] == "create"
 
 
@@ -873,7 +865,7 @@ def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
             "bridge.service",
             "provision-project",
             "--name",
-            "pi-cliproxyapi",
+            "omp-cliproxyapi",
             "--channel",
             "telegram",
             "--credential",
@@ -883,21 +875,21 @@ def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--apply",
         ],
         runtime=runtime,
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("pi-cliproxyapi")
+    bound = RouteStore(bindings).inspect("omp-cliproxyapi")
     assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
         -1003799747978,
         42337,
         None,
     )
-    assert bound.tmux_target == "pi-cliproxyapi:0.0"
-    assert runtime.created == [("pi-cliproxyapi:0.0", cwd)]
+    assert bound.tmux_target == "omp-cliproxyapi:0.0"
+    assert runtime.created == [("omp-cliproxyapi:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
 
 
@@ -939,7 +931,7 @@ def test_provision_project_apply_creates_feishu_topic_and_route(monkeypatch, tmp
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--apply",
         ],
         runtime=runtime,
@@ -981,7 +973,7 @@ def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
         ]
     )
 
@@ -990,19 +982,19 @@ def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
 
 
 def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
-    old_cwd = tmp_path / "pi-agent"
+    old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
     new_cwd = tmp_path / "dida-todo"
     bindings = tmp_path / "bindings.yaml"
-    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     original = bindings.read_bytes()
     runtime = FakeRuntime(
         {
-            "pi-agent:0.0": {
+            "omp-agent:0.0": {
                 "state": "running",
-                "target": "pi-agent:0.0",
+                "target": "omp-agent:0.0",
                 "cwd": str(old_cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1010,9 +1002,16 @@ def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
 
     exit_code = run_admin_command(
         [
-            "--file", str(bindings), "--service", "bridge.service",
-            "rename-project", "pi-agent", "--new-name", "dida-todo",
-            "--new-cwd", str(new_cwd),
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "rename-project",
+            "omp-agent",
+            "--new-name",
+            "dida-todo",
+            "--new-cwd",
+            str(new_cwd),
         ],
         runtime=runtime,
     )
@@ -1024,25 +1023,25 @@ def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
     assert runtime.respawned == []
     payload = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
     assert payload["operation"] == "rename-project"
-    assert payload["before"]["tmux_target"] == "pi-agent:0.0"
+    assert payload["before"]["tmux_target"] == "omp-agent:0.0"
     assert payload["after"]["tmux_target"] == "dida-todo:0.0"
     assert payload["after"]["provider_session_id"] is None
 
 
 def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
-    old_cwd = tmp_path / "pi-agent"
+    old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
     (old_cwd / "marker").write_text("ok", encoding="utf-8")
     new_cwd = tmp_path / "dida-todo"
     bindings = tmp_path / "bindings.yaml"
-    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     runtime = FakeRuntime(
         {
-            "pi-agent:0.0": {
+            "omp-agent:0.0": {
                 "state": "running",
-                "target": "pi-agent:0.0",
+                "target": "omp-agent:0.0",
                 "cwd": str(old_cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1050,9 +1049,17 @@ def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
 
     exit_code = run_admin_command(
         [
-            "--file", str(bindings), "--service", "bridge.service",
-            "rename-project", "pi-agent", "--new-name", "dida-todo",
-            "--new-cwd", str(new_cwd), "--apply",
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "rename-project",
+            "omp-agent",
+            "--new-name",
+            "dida-todo",
+            "--new-cwd",
+            str(new_cwd),
+            "--apply",
         ],
         runtime=runtime,
     )
@@ -1065,25 +1072,25 @@ def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
     assert bound.tmux_target == "dida-todo:0.0"
     assert bound.provider_session_id is None
     assert bound.transcript_path is None
-    assert runtime.renamed == [("pi-agent", "dida-todo")]
+    assert runtime.renamed == [("omp-agent", "dida-todo")]
     assert runtime.respawned == [("dida-todo:0.0", new_cwd)]
     assert runtime.restarts == ["bridge.service"]
 
 
 def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failure(tmp_path):
-    old_cwd = tmp_path / "pi-agent"
+    old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
     new_cwd = tmp_path / "dida-todo"
     bindings = tmp_path / "bindings.yaml"
-    write_routes(bindings, [route("pi-agent", cwd=str(old_cwd))])
+    write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     original = bindings.read_bytes()
     runtime = FakeRuntime(
         {
-            "pi-agent:0.0": {
+            "omp-agent:0.0": {
                 "state": "running",
-                "target": "pi-agent:0.0",
+                "target": "omp-agent:0.0",
                 "cwd": str(old_cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         },
@@ -1092,9 +1099,17 @@ def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failu
 
     exit_code = run_admin_command(
         [
-            "--file", str(bindings), "--service", "bridge.service",
-            "rename-project", "pi-agent", "--new-name", "dida-todo",
-            "--new-cwd", str(new_cwd), "--apply",
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "rename-project",
+            "omp-agent",
+            "--new-name",
+            "dida-todo",
+            "--new-cwd",
+            str(new_cwd),
+            "--apply",
         ],
         runtime=runtime,
     )
@@ -1102,9 +1117,9 @@ def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failu
     assert exit_code == 2
     assert bindings.read_bytes() == original
     assert old_cwd.is_dir() and not new_cwd.exists()
-    assert "pi-agent:0.0" in runtime.targets
+    assert "omp-agent:0.0" in runtime.targets
     assert "dida-todo:0.0" not in runtime.targets
-    assert runtime.renamed == [("pi-agent", "dida-todo"), ("dida-todo", "pi-agent")]
+    assert runtime.renamed == [("omp-agent", "dida-todo"), ("dida-todo", "omp-agent")]
 
 
 def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
@@ -1119,7 +1134,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
                 "state": "running",
                 "target": "project:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1149,7 +1164,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--mention-required",
             "false",
         ],
@@ -1164,9 +1179,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
     assert "plan only" in output
 
 
-def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effects(
-    tmp_path, capsys
-):
+def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effects(tmp_path, capsys):
     cwd = tmp_path / "project"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
@@ -1194,7 +1207,7 @@ def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effect
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--create-target",
             "--apply",
         ],
@@ -1219,7 +1232,7 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
                 "state": "running",
                 "target": "project:0.0",
                 "cwd": str(tmp_path / "wrong"),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1247,7 +1260,7 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
         ],
         runtime=runtime,
     )
@@ -1287,7 +1300,7 @@ def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--create-target",
             "--apply",
         ],
@@ -1328,7 +1341,7 @@ def test_move_topic_preserves_provider_identity_and_target(tmp_path):
                 "state": "running",
                 "target": "alpha:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1398,7 +1411,7 @@ def test_bind_apply_rejects_duplicate_endpoint_before_creating_target(tmp_path, 
             "--cwd",
             str(requested_cwd),
             "--backend",
-            "pi",
+            "omp",
             "--mention-required",
             "false",
             "--create-target",
@@ -1474,7 +1487,7 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
                 "state": "running",
                 "target": "project:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         },
@@ -1505,7 +1518,7 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
             "--cwd",
             str(cwd),
             "--backend",
-            "pi",
+            "omp",
             "--apply",
         ],
         runtime=runtime,
@@ -1517,15 +1530,15 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
     assert runtime.restarts == ["bridge.service", "bridge.service"]
 
 
-def test_adopt_pi_session_plans_then_applies_verified_identity(tmp_path, capsys):
+def test_adopt_omp_session_plans_then_applies_verified_identity(tmp_path, capsys, monkeypatch):
     cwd = tmp_path / "alpha"
     cwd.mkdir()
-    session = tmp_path / "new-pi-session.jsonl"
+    session = tmp_path / "new-omp-session.jsonl"
     session.write_text(
         json.dumps(
             {
                 "type": "session",
-                "id": "pi-session-new",
+                "id": "omp-session-new",
                 "cwd": str(cwd),
             }
         )
@@ -1540,7 +1553,7 @@ def test_adopt_pi_session_plans_then_applies_verified_identity(tmp_path, capsys)
                 "state": "running",
                 "target": "alpha:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1550,37 +1563,45 @@ def test_adopt_pi_session_plans_then_applies_verified_identity(tmp_path, capsys)
         str(bindings),
         "--service",
         "bridge.service",
-        "adopt-pi-session",
+        "adopt-omp-session",
         "alpha",
         "--session-file",
         str(session),
     ]
 
+    monkeypatch.setattr("tmuxbot.admin_cli.read_handoff", lambda *_args: None)
+    assert run_admin_command(argv, runtime=runtime) == 2
+    assert "no matching managed identity sidecar" in capsys.readouterr().out
+    monkeypatch.setattr(
+        "tmuxbot.admin_cli.read_handoff",
+        lambda *_args: SimpleNamespace(
+            session_id="omp-session-new",
+            transcript_path=session.resolve(),
+        ),
+    )
+
     assert run_admin_command(argv, runtime=runtime) == 0
     planned = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
     assert planned["before"]["provider_session_id"] == "session-old"
     assert planned["after"] == {
-        "provider_session_id": "pi-session-new",
+        "provider_session_id": "omp-session-new",
         "transcript_path": str(session),
     }
     assert runtime.restarts == []
 
     assert run_admin_command([*argv, "--apply"], runtime=runtime) == 0
     adopted = RouteStore(bindings).inspect("alpha")
-    assert adopted.provider_session_id == "pi-session-new"
+    assert adopted.provider_session_id == "omp-session-new"
     assert adopted.transcript_path == session
     assert runtime.restarts == ["bridge.service"]
 
 
-def test_adopt_pi_session_rejects_a_different_cwd(tmp_path, capsys):
+def test_adopt_omp_session_rejects_a_different_cwd(tmp_path, capsys):
     cwd = tmp_path / "alpha"
     cwd.mkdir()
     session = tmp_path / "wrong.jsonl"
     session.write_text(
-        json.dumps(
-            {"type": "session", "id": "pi-session-wrong", "cwd": str(tmp_path)}
-        )
-        + "\n",
+        json.dumps({"type": "session", "id": "omp-session-wrong", "cwd": str(tmp_path)}) + "\n",
         encoding="utf-8",
     )
     bindings = tmp_path / "bindings.yaml"
@@ -1591,7 +1612,7 @@ def test_adopt_pi_session_rejects_a_different_cwd(tmp_path, capsys):
                 "state": "running",
                 "target": "alpha:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1602,7 +1623,7 @@ def test_adopt_pi_session_rejects_a_different_cwd(tmp_path, capsys):
             [
                 "--file",
                 str(bindings),
-                "adopt-pi-session",
+                "adopt-omp-session",
                 "alpha",
                 "--session-file",
                 str(session),
@@ -1611,7 +1632,7 @@ def test_adopt_pi_session_rejects_a_different_cwd(tmp_path, capsys):
         )
         == 2
     )
-    assert "Pi session cwd mismatch" in capsys.readouterr().out
+    assert "OMP session cwd mismatch" in capsys.readouterr().out
     assert runtime.restarts == []
 
 
@@ -1626,7 +1647,7 @@ def test_verify_json_reports_route_tmux_and_service(tmp_path, capsys):
                 "state": "running",
                 "target": "alpha:0.0",
                 "cwd": str(cwd),
-                "command": "pi",
+                "command": "omp",
                 "dead": False,
             }
         }
@@ -1650,5 +1671,5 @@ def test_verify_json_reports_route_tmux_and_service(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["route"]["tmux_target"] == "alpha:0.0"
-    assert payload["tmux"]["command"] == "pi"
+    assert payload["tmux"]["command"] == "omp"
     assert payload["service"]["active"] is True

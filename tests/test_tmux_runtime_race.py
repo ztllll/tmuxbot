@@ -19,7 +19,7 @@ class BusyAfterPasteFake:
         return f"idle\nDRAFT:{self.draft}"
 
     def pane_command(self, _target: str) -> str:
-        return "pi"
+        return "omp"
 
     async def paste(self, _target: str, text: str) -> None:
         self.draft = text
@@ -105,7 +105,7 @@ def runtime_for(fake):
     )
 
 
-def test_pi_busy_queue_submission_does_not_wait_for_idle():
+def test_omp_busy_queue_submission_does_not_wait_for_idle():
     fake = BusyQueueFake()
     runtime = runtime_for(fake)
     runtime._input_reader = lambda pane: pane.partition("EDITOR:")[2]
@@ -133,7 +133,6 @@ def test_busy_race_after_paste_waits_for_idle_before_consuming_enter_attempts():
     assert fake.submission_count == 1
     assert fake.enter_count == 1
     assert fake.draft == ""
-
 
 
 def test_first_enter_waits_for_a_stable_post_paste_idle_window():

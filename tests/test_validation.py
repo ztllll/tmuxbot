@@ -96,13 +96,12 @@ def test_accepts_multiple_backends_on_one_telegram_credential():
                 name="gamma",
                 chat_id=123,
                 thread_id=43,
-                tmux_session="gamma-pi",
+                tmux_session="gamma-omp",
                 cwd=Path("/tmp/tmuxbot-gamma"),
-                backend="pi",
+                backend="omp",
             ),
         ]
     )
-
 
 
 def test_rejects_bad_channel_and_backend():
@@ -111,6 +110,10 @@ def test_rejects_bad_channel_and_backend():
         "unsupported channel",
         "unsupported backend",
     )
+
+
+def test_rejects_historical_pi_backend_identity():
+    assert_invalid([binding(backend="pi")], "unsupported backend", "'pi'")
 
 
 def test_accepts_feishu_string_threads_and_mixed_backends_per_credential():
@@ -132,7 +135,7 @@ def test_accepts_feishu_string_threads_and_mixed_backends_per_credential():
                 thread_id="omt_thread_b",
                 tmux_session="fs-b",
                 cwd=Path("/tmp/fs-b"),
-                backend="pi",
+                backend="omp",
                 bot_token_env="FEISHU",
             ),
         ]

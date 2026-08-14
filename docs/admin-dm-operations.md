@@ -7,7 +7,7 @@ Boss DM
   ↕
 Admin tmux pane
   ↕
-Pi / Claude Code / Codex
+Oh My Pi (`omp`) / Claude Code / Codex
   ↕
 当前 Unix 用户权限
 ```
@@ -20,13 +20,13 @@ Admin AI 不是受限的配置机器人。Boss DM 通过身份与私聊形状校
 
 ```ini
 [Service]
-Environment="PI_BIN=/home/you/.local/bin/pi"
+Environment="OMP_BIN=/home/you/.local/bin/omp"
 Environment="TMUXBOT_ADMIN_ENABLED=1"
 Environment="TMUXBOT_ADMIN_CHANNEL=telegram"
 Environment="TMUXBOT_ADMIN_CHAT_ID=123456789"
-Environment="TMUXBOT_ADMIN_CREDENTIAL=TG_BOT_TOKEN"
+Environment="TMUXBOT_ADMIN_CREDENTIAL=TG_OMP_BOT_TOKEN"
 Environment="TMUXBOT_ADMIN_TMUX=tmuxbot-admin"
-Environment="TMUXBOT_ADMIN_CLI=pi"
+Environment="TMUXBOT_ADMIN_CLI=omp"
 Environment="TMUXBOT_ADMIN_CWD=/home/you/.local/share/tmuxbot/admin"
 ```
 
@@ -35,7 +35,7 @@ Environment="TMUXBOT_ADMIN_CWD=/home/you/.local/share/tmuxbot/admin"
 - `TMUXBOT_ADMIN_CHAT_ID` 必须是 Boss 的正数 Telegram private user ID；省略时默认使用 `BOSS_USER_ID`。
 - `TMUXBOT_ADMIN_CREDENTIAL` 指定承载管理 DM 的 Telegram Bot credential。
 - `TMUXBOT_ADMIN_CWD` 默认是 `$XDG_DATA_HOME/tmuxbot/admin`，通常为 `~/.local/share/tmuxbot/admin`。tmuxbot 会以 `0700` 创建它。该目录应独立于用户根目录和所有项目树，避免 Admin 指令沿目录层级被普通项目会话继承。
-- `TMUXBOT_ADMIN_CLI` 可为 `pi`、`claude_code` 或 `codex`。
+- `TMUXBOT_ADMIN_CLI` 可为 `omp`、`claude_code` 或 `codex`。
 - `admin: true` YAML 记录只保存 provider session identity；没有 `TMUXBOT_ADMIN_ENABLED=1` 时不会授予 Admin 权限。
 
 修改 systemd 配置后：
@@ -52,16 +52,16 @@ Admin LLM 不应自行拼装 YAML、tmux 和 systemd 操作。普通“创建项
 ```bash
 # 已有 Telegram topic：三段式 URL 已足够，tmux 默认 NAME:0.0
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  provision-project --name pi-demo --channel telegram \
-  --credential TG_CODEX_BOT_TOKEN \
+  provision-project --name omp-demo --channel telegram \
+  --credential TG_OMP_BOT_TOKEN \
   --topic-link https://t.me/c/INTERNAL_CHAT_ID/THREAD_ID \
-  --cwd /absolute/project/demo --backend pi
+  --cwd /absolute/project/demo --backend omp
 
 # 新建 Telegram/飞书 topic：用精确 chat_id + 名称替换 --topic-link
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
-  provision-project --name pi-demo --channel feishu \
+  provision-project --name omp-demo --channel feishu \
   --credential FEISHU_CODEX --chat-id oc_xxx --topic-title "Demo 项目" \
-  --cwd /absolute/project/demo --backend pi
+  --cwd /absolute/project/demo --backend omp
 # 两种模式都先核对 plan，再原命令增加 --apply。
 
 # 以下是安装契约和低层诊断/恢复命令
@@ -93,9 +93,9 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 # 用户明确要求新建 Telegram/飞书话题时，一条事务覆盖 topic、tmux 和 route
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   create-topic --env-file /path/to/.env --channel feishu \
-  --name demo-pi --credential FEISHU_CODEX --chat-id oc_xxx \
-  --topic-title "Demo 项目" --tmux-target demo-pi:0.0 \
-  --cwd /absolute/project/demo --backend pi \
+  --name demo-omp --credential FEISHU_CODEX --chat-id oc_xxx \
+  --topic-title "Demo 项目" --tmux-target demo-omp:0.0 \
+  --cwd /absolute/project/demo --backend omp \
   --mention-required false --create-target
 # 核对 plan 后，原命令增加 --apply。
 ```
@@ -119,10 +119,10 @@ LLM 不再自行决定先跑 `inventory`、`telegram-topic`、`feishu-topics`、
 ```bash
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   create-topic --env-file /path/to/.env --channel feishu \
-  --name demo-pi --credential FEISHU_CODEX \
+  --name demo-omp --credential FEISHU_CODEX \
   --chat-id oc_xxx --topic-title "Demo 项目" \
-  --tmux-target demo-pi:0.0 --cwd /absolute/project/demo \
-  --backend pi --mention-required false --create-target
+  --tmux-target demo-omp:0.0 --cwd /absolute/project/demo \
+  --backend omp --mention-required false --create-target
 
 # plan 中的 chat/title/target/cwd/adapter 全部吻合后，再重复并加 --apply。
 ```
@@ -134,15 +134,15 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 ```bash
 tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
   bind-topic \
-  --name demo-pi \
+  --name demo-omp \
   --channel feishu \
   --credential FEISHU_CODEX \
   --chat-id oc_xxx \
   --thread-id omt_xxx \
   --thread-root-message-id om_xxx \
-  --tmux-target demo-pi:0.0 \
+  --tmux-target demo-omp:0.0 \
   --cwd /absolute/project/demo \
-  --backend pi \
+  --backend omp \
   --mention-required false
 
 # 核对 plan 后再加 --apply；目标不存在时还必须显式加 --create-target。
@@ -174,11 +174,32 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 `provision-project` 默认把 route 名作为 tmux session 名并使用 `NAME:0.0`；可用 `--tmux-target` 显式覆盖。目标不存在时 `--apply` 自动事务创建，不再要求操作者额外记 `--create-target`；目标已存在时只在 cwd 完全相同且未被 route 占用时复用。禁止为 route 直接运行 `tmux new-session`。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
 
-### 2.1 为什么不用单一 system prompt
+### 2.1 OMP 受管会话、恢复与重启
 
-核心身份和硬规则写入 `AGENTS.md` / `CLAUDE.md`，可同时覆盖 Pi、Claude Code 和 Codex，并在 `/new`、resume 或 compact 后重新加载。`ADMIN-RUNBOOK.md` 承载部署相关细节，避免每轮 system prompt 背整本运维手册。Pi 的 `.pi/APPEND_SYSTEM.md`、provider skill 或 prompt template 可以作为加固和快捷入口，但不作为唯一正确性来源。
+OMP 的 executable 和 argv 由服务端 provider registry 决定。`OMP_BIN` 只覆盖 executable；受管启动始终是 `omp --approval-mode yolo --extension <受管扩展绝对路径>`。浏览器、自然语言请求和 route YAML 都不能提交任意 binary path 或 argv。
 
-`tmuxbot-admin-context.json` 保存 schema version、Admin cwd、bindings/service 参数和受管文件 hash；部署变更或手工修改后，`verify-context` 会 fail closed 并要求重新运行 `install-contract`。修改活动 Pi 的 context files 后运行 `/reload`，Claude/Codex 则按各自 CLI 的重载或安全重启方式生效。
+OMP JSONL 通常位于 `~/.omp/agent/sessions/<project-key>/<timestamp>_<id>.jsonl`。受管扩展在 `session_start` 和 `session_switch` 后刷新 `$TMUXBOT_STATE_DIR/omp-session-handoffs/` 与 `omp-session-health/`；handoff 记录精确 `tmuxTarget/cwd/sessionId/transcriptPath/processId`。新 session 文件在首条消息前可能尚未创建，此时只接受官方 sessions root、匹配 session ID 且 `processId` 属于 exact pane 的 pending identity；文件落盘后必须通过 JSONL header/cwd/session ID 校验。tmuxbot 不按 mtime 选择同 cwd 的其他会话。
+
+如果操作者在真实 OMP TUI 中直接执行 `/new`、`/fork`、`/resume` 或 `/import`，正常情况下扩展 sidecar 会让 route 自动收敛到新身份；若这是 channel 命令流之外的切换且回复没有跟随，使用精确 JSONL 路径接管：
+
+```bash
+tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
+  adopt-omp-session ROUTE \
+  --session-file /absolute/path/to/session.jsonl
+# 核对 target、cwd、session id、transcript 与当前 live process 的受管 handoff 后，原命令增加 --apply，再 verify。
+```
+
+`adopt-omp-session` 只持久化已经由受管 OMP sidecar 证明的新身份；sidecar 缺失、PID 不属于 exact pane，或 session/path 不一致时 plan 直接失败，不会替未受管进程伪造 identity。
+
+已有 session pin 的启动只追加 `--resume <绝对 JSONL 路径>`。pin 缺失、header/cwd 不匹配、OMP 无法恢复或新进程没有发布匹配 sidecar 时，启动显式失败并保留 pin；禁止静默清 pin 或开新会话。
+
+OMP `/restart` 使用干净的 pane respawn，然后按固定 registry argv 和现有 pin 恢复；不会向原生 TUI 注入 Ctrl-C/Ctrl-D。一个正在运行但缺少有效受管 handoff 的 OMP pane 会拒绝 IM 注入，操作者必须执行 `/restart` 或通过 Web 重新启动受管 OMP。
+
+### 2.2 为什么不用单一 system prompt
+
+核心身份和硬规则写入 `AGENTS.md` / `CLAUDE.md`，可同时覆盖 OMP、Claude Code 和 Codex，并在新会话、resume 或 compact 后重新加载。`ADMIN-RUNBOOK.md` 承载部署相关细节，避免每轮 system prompt 背整本运维手册；provider 自身配置只能作为加固，不能成为唯一正确性来源。
+
+`tmuxbot-admin-context.json` 保存 schema version、Admin cwd、bindings/service 参数和受管文件 hash；部署变更或手工修改后，`verify-context` 会 fail closed 并要求重新运行 `install-contract`。需要让活动 OMP 重新读取更新后的上下文时，使用上述受管 `/restart` 或 Web restart，不依赖旧 provider 的私有配置目录或 reload 约定。
 
 ## 3. 在 DM 中需要提供什么
 
@@ -187,7 +208,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 1. Telegram 群名或 `chat_id`；
 2. 已有话题的 `thread_id`，或该话题内一条消息的链接；
 3. 项目工作目录 `cwd`；
-4. 使用的 adapter：`pi`、`claude_code` 或 `codex`；
+4. 使用的 adapter：`omp`、`claude_code` 或 `codex`；
 5. 绑定已有 tmux target，还是创建新的 session/window/pane；
 6. 群内是否需要 `@bot`。项目话题通常明确写“无需 @机器人”，对应 `mention_required: false`；
 7. 是否允许创建新 Telegram/飞书话题。若要求绑定已有话题，应明确写“不要新建话题”；若明确要求创建话题，只需提供精确 `chat_id`，不需要先由用户手动创建再回传 thread ID。
@@ -198,12 +219,12 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 ```text
 请把 Telegram 群「项目群」的已有话题 8024
-绑定到 tmux pane project-pi:0.0。
+绑定到 tmux pane project-omp:0.0。
 
 配置：
-- credential: TG_BOT_TOKEN
+- credential: TG_OMP_BOT_TOKEN
 - cwd: /home/you/projects/project
-- adapter: pi
+- adapter: omp
 - 群里无需 @机器人
 - 不要新建 Telegram 话题
 
@@ -215,25 +236,25 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 ### 4.2 没有 tmux，创建后绑定已有话题
 
 ```text
-请为 /home/you/projects/demo 创建 Pi tmux，
+请为 /home/you/projects/demo 创建 OMP tmux，
 然后绑定到 Telegram 群「项目群」的已有话题 12345。
 
 要求：
-- tmux session: demo-pi
-- target: demo-pi:0.0
-- adapter: pi
-- credential: TG_BOT_TOKEN
+- tmux session: demo-omp
+- target: demo-omp:0.0
+- adapter: omp
+- credential: TG_OMP_BOT_TOKEN
 - 群里无需 @机器人
 - 不要新建 Telegram 话题
 
-完成后校验 route，重启 bridge，检查 Pi、JSONL tailer 和 polling。
+完成后校验 route，重启 bridge，检查 OMP、精确 session sidecar、JSONL tailer 和 polling。
 ```
 
 ### 4.3 在已有 session 中增加 window/pane
 
 ```text
 请在 tmux session project-team 中创建一个新的 window，
-cwd=/home/you/projects/new-project，启动 Pi，
+cwd=/home/you/projects/new-project，启动 OMP，
 并绑定到 Telegram 群「项目群」的已有话题 12345。
 
 自动选择未被 route 占用的 window/pane，
@@ -244,10 +265,10 @@ cwd=/home/you/projects/new-project，启动 Pi，
 
 ```text
 请在 Telegram 群「项目群」新建话题「Demo 项目」，
-创建 tmux session demo-pi，cwd=/home/you/projects/demo，
-使用 Pi，并把新话题绑定到 demo-pi:0.0。
+创建 tmux session demo-omp，cwd=/home/you/projects/demo，
+使用 OMP，并把新话题绑定到 demo-omp:0.0。
 
-使用 TG_BOT_TOKEN，新话题无需 @机器人。
+使用 TG_OMP_BOT_TOKEN，新话题无需 @机器人。
 完成后汇报新 thread_id 并验证双向路由。
 ```
 
@@ -267,13 +288,13 @@ https://t.me/c/<internal-chat-id>/<thread_id>/<message_id>
 可以在 DM 中说：
 
 ```text
-请把这个已有 Telegram 话题绑定到项目 Pi：
+请把这个已有 Telegram 话题绑定到项目 OMP：
 https://t.me/c/xxxxxxxxxx/12345/67890
 
 目标：
-- tmux: demo-pi:0.0
+- tmux: demo-omp:0.0
 - cwd: /home/you/projects/demo
-- adapter: pi
+- adapter: omp
 - 无需 @机器人
 - 不要新建话题
 ```
@@ -319,11 +340,11 @@ tmuxbot route unbind NAME
 - 未配置的群根、topic 和 thread 完全静默，不打反应、不 typing、不回复，也不触碰 tmux。
 - endpoint 唯一键是 `(channel, bot_token_env, chat_id, thread_id)`。
 - tmux target 唯一键是 `(tmux_session, tmux_window, tmux_pane)`；同一个 tmux session 可以承载多个不同 pane route。
-- 一个 credential 可以混合承载 Claude Code、Codex 和 Pi；adapter 是 route 属性，不由 Bot token 决定。
+- 一个 credential 可以混合承载 Claude Code、Codex 和 OMP；adapter 是 route 属性，不由 Bot token 决定。
 - 项目话题应绑定项目 pane；Admin DM 应绑定专用 XDG workspace 下的独立管理 pane，不应使用用户根目录或复用项目 pane。
 - 同一 backend 不应让两个 route 竞争同一 cwd transcript。需要并行独立会话时，应使用不同项目/worktree cwd 或明确的 provider session 隔离策略。
-- Pi 的菜单、选择、文本输入和确认界面是 SSH-only：tmuxbot 只有在控制提示紧邻当前实时 Pi footer 时才向原 endpoint 通知精确 pane；不会通过 Telegram/飞书发送方向键、Enter、Escape、批准或取消，旧交互卡 callback 也会拒绝。
-- Pi 建议 tmux 开启：
+- OMP 原生菜单、picker、ask、approval、plan review、文本输入和确认界面是 SSH-only：tmuxbot 只通知精确 pane，不会通过 Telegram/飞书发送方向键、Enter、Escape、批准或取消，旧交互卡 callback 也会拒绝。bot `/plan` 是本地帮助，不会注入 OMP；请 SSH attach 后使用默认 `Alt+Shift+P`，自定义 keybindings 可能不同。
+- OMP 建议 tmux 开启：
 
   ```tmux
   set -g extended-keys on
@@ -357,11 +378,11 @@ tmuxbot route unbind NAME
 Boss DM
 └─ tmuxbot-admin:0.0
    cwd=/home/you/.local/share/tmuxbot/admin
-   adapter=pi
+   adapter=omp
    用途=管理 tmux、route、systemd 与项目入口
 
 统一项目群
-├─ 话题 8024 → project-a:0.0 → /home/you/projects/a → pi
+├─ 话题 8024 → project-a:0.0 → /home/you/projects/a → omp
 ├─ 话题 9001 → project-b:0.0 → /home/you/projects/b → claude_code
 └─ 话题 9002 → project-c:0.0 → /home/you/projects/c → codex
 ```

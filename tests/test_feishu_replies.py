@@ -49,7 +49,8 @@ def test_feishu_assistant_reply_returns_editable_message_and_provider_footer(tmp
     )
     assert "已完成" in markdown
     state = next(
-        element for element in card["body"]["elements"]
+        element
+        for element in card["body"]["elements"]
         if element.get("element_id") == "reply_state"
     )
     assert state["text"]["content"] == "✅ 已完成"
@@ -123,9 +124,7 @@ def test_feishu_assistant_reply_sends_long_output_as_multiple_cards(tmp_path):
     )
     body = ("很长的完整内容\n" * 2500) + "最后一段"
 
-    result = asyncio.run(
-        frontend.send_assistant_reply(b, ReplyEnvelope(title="回复", body=body))
-    )
+    result = asyncio.run(frontend.send_assistant_reply(b, ReplyEnvelope(title="回复", body=body)))
 
     assert result.message_id == "om_1"
     assert len(cards) > 1
@@ -134,7 +133,7 @@ def test_feishu_assistant_reply_sends_long_output_as_multiple_cards(tmp_path):
     assert "最后一段" in cards[-1][1]
 
 
-def test_feishu_assistant_reply_splits_real_large_pi_reply_below_element_limit(tmp_path):
+def test_feishu_assistant_reply_splits_real_large_omp_reply_below_element_limit(tmp_path):
     cards = []
     frontend = FeishuFrontend.__new__(FeishuFrontend)
     frontend.backend = ClaudeCodeBackend()
@@ -153,24 +152,25 @@ def test_feishu_assistant_reply_splits_real_large_pi_reply_below_element_limit(t
 
     frontend._send_card_for_route_sync = send_card
     b = Binding(
-        name="pi-网络同传系统项目",
+        name="omp-网络同传系统项目",
         chat_id="oc_group",
         thread_id="omt_topic",
-        tmux_session="pi-network",
+        tmux_session="omp-network",
         tmux_window=0,
         tmux_pane=0,
         cwd=Path(tmp_path),
         backend="claude_code",
         channel="feishu",
     )
-    body = "\n\n".join(
-        f"## 必须先修的问题 {index}\n\n- 当前证据 {index}\n- 修复方案 {index}"
-        for index in range(180)
-    ) + "\n\n## 发布硬化\n\n- 完成真实验收"
-
-    result = asyncio.run(
-        frontend.send_assistant_reply(b, ReplyEnvelope(title="回复", body=body))
+    body = (
+        "\n\n".join(
+            f"## 必须先修的问题 {index}\n\n- 当前证据 {index}\n- 修复方案 {index}"
+            for index in range(180)
+        )
+        + "\n\n## 发布硬化\n\n- 完成真实验收"
     )
+
+    result = asyncio.run(frontend.send_assistant_reply(b, ReplyEnvelope(title="回复", body=body)))
 
     assert result.message_id == "om_1"
     assert len(cards) > 3
@@ -232,9 +232,7 @@ def test_feishu_image_upload_failure_reports_only_basename(tmp_path):
 
     frontend.send_html = send_html
 
-    result = asyncio.run(
-        frontend.send_image("oc_123", None, image, caption=image.name)
-    )
+    result = asyncio.run(frontend.send_image("oc_123", None, image, caption=image.name))
 
     assert result is None
     assert notices == ["❌ <b>附件发送失败</b>: <code>private-chart.png</code>"]

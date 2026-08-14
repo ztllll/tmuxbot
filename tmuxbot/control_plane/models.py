@@ -7,7 +7,8 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
-PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "pi"})
+PERSISTED_PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "pi", "omp"})
+DISCOVERABLE_PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "omp"})
 
 
 class RunState(str, Enum):
@@ -50,8 +51,8 @@ class ProviderProfile:
     discovered_at: int
 
     def __post_init__(self) -> None:
-        if self.binary_name not in PROVIDER_BINARIES:
-            raise ValueError("provider binary is not allowlisted")
+        if self.binary_name not in PERSISTED_PROVIDER_BINARIES:
+            raise ValueError("provider binary is not persistable")
         if not self.id or not self.executable_path.startswith("/"):
             raise ValueError("provider identity and absolute executable path are required")
 

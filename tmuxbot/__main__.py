@@ -2,6 +2,7 @@
 
 支持 `python -m tmuxbot` 或 `python tmuxbot.py` (thin entry 调这里)。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
-from tmuxbot.backends.pi import PiBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.channel_health import channel_health_audit_loop
 from tmuxbot import __version__
 from tmuxbot.config import load_config
@@ -26,8 +27,7 @@ from tmuxbot.hooks.install import install_claude_hooks
 from tmuxbot.jsonl import jsonl_poll_loop
 from tmuxbot.lifecycle import lifecycle_watch_loop
 from tmuxbot.paths import RuntimePaths
-from tmuxbot.runtime.pi_terminal_health import pi_terminal_health_audit_loop
-from tmuxbot.pi_extension import install_pi_handoff_extension
+from tmuxbot.runtime.omp_terminal_health import omp_terminal_health_audit_loop
 from tmuxbot.control_plane.repository import ControlPlaneRepository
 from tmuxbot.state import S
 from tmuxbot.utils import save_offsets
@@ -35,6 +35,7 @@ from tmuxbot.utils import save_offsets
 # 飞书前端按需 import (没装 lark-oapi 时不 crash, 只在实际使用时报错)
 try:
     from tmuxbot.frontends.feishu import FeishuFrontend
+
     _FEISHU_AVAILABLE = True
 except ImportError:
     _FEISHU_AVAILABLE = False
@@ -57,7 +58,7 @@ def _telegram_group_mention_only(token_env: str) -> bool:
     names = ["TELEGRAM_GROUP_MENTION_ONLY", f"{token_env}_GROUP_MENTION_ONLY"]
     suffix = "_BOT_TOKEN"
     if token_env.endswith(suffix):
-        names.append(f"{token_env[:-len(suffix)]}_GROUP_MENTION_ONLY")
+        names.append(f"{token_env[: -len(suffix)]}_GROUP_MENTION_ONLY")
     return _env_flag(*names)
 
 
@@ -90,18 +91,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
     if _env_flag("TMUXBOT_CLAUDE_HOOKS"):
         install_claude_hooks()
         log.info("managed Claude hooks installed")
-    if any(binding.backend == "pi" for binding in S.bindings):
-        try:
-            extension = install_pi_handoff_extension()
-            log.info("managed Pi handoff extension installed: %s", extension)
-        except OSError:
-            log.exception("unable to install managed Pi handoff extension")
 
     # 装配 backend 实例池
     backends_pool = {
         "claude_code": ClaudeCodeBackend(),
         "codex": CodexBackend(),
-        "pi": PiBackend(),
+        "omp": OmpBackend(),
     }
 
     # ── 按 channel 分拣: telegram bindings vs feishu bindings ──
@@ -122,8 +117,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
             continue
         backend = backends_pool[bs[0].backend]  # legacy/default adapter for /init
         fe = TelegramFrontend(
-            token=token, state=S, backend=backend, bindings=bs,
-            env_file=paths.env_file, bindings_file=paths.bindings_file,
+            token=token,
+            state=S,
+            backend=backend,
+            bindings=bs,
+            env_file=paths.env_file,
+            bindings_file=paths.bindings_file,
             offsets_file=paths.offsets_file,
             project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
             bot_token_env=token_env,
@@ -167,9 +166,7 @@ async def main(paths: RuntimePaths | None = None) -> None:
                 raw_oids = os.getenv(f"{env_key}_BOSS_OPEN_IDS", "")
                 boss_open_ids = [x.strip() for x in raw_oids.split(",") if x.strip()]
                 if not boss_open_ids:
-                    log.warning(
-                        f"{env_key}_BOSS_OPEN_IDS 未配置, 飞书 ACL 会拒绝所有消息"
-                    )
+                    log.warning(f"{env_key}_BOSS_OPEN_IDS 未配置, 飞书 ACL 会拒绝所有消息")
                 backend_name = bs[0].backend  # legacy/default adapter for /init
                 backend = backends_pool.get(backend_name)
                 if backend is None:
@@ -179,7 +176,11 @@ async def main(paths: RuntimePaths | None = None) -> None:
                 # 由 ACL 的 open_id 白名单兜底, 只响应 Boss)。可用 env
                 # {env_key}_GROUP_MENTION_ONLY=true 改回需 @ (注意 feishu.py 的 @ 检测
                 # 目前比的是 app_id, 真要用需先修成 bot open_id)
-                _mention_only = os.getenv(f"{env_key}_GROUP_MENTION_ONLY", "").lower() in ("1", "true", "yes")
+                _mention_only = os.getenv(f"{env_key}_GROUP_MENTION_ONLY", "").lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                )
                 fe = FeishuFrontend(
                     app_id=app_id,
                     app_secret=app_secret,
@@ -191,7 +192,9 @@ async def main(paths: RuntimePaths | None = None) -> None:
                     offsets_file=paths.offsets_file,
                     bindings_file=paths.bindings_file,
                     bot_token_env=env_key,
-                    project_base=os.getenv("TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")),
+                    project_base=os.getenv(
+                        "TMUXBOT_PROJECT_BASE", os.path.expanduser("~/projects")
+                    ),
                     backends=backends_pool,
                 )
                 frontends.append(fe)
@@ -244,13 +247,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
     control_plane = ControlPlaneRepository(paths.database_file)
     control_plane.migrate()
     from tmuxbot.teamrun.channel_projection import projection_loop
+
     S.fire(projection_loop(control_plane, frontends))
     S.fire(lifecycle_watch_loop(frontends, S))
-    if any(binding.backend == "pi" for binding in S.bindings):
-        S.fire(pi_terminal_health_audit_loop(frontends, S, paths.pi_terminal_health_file))
-    log.info(
-        f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s"
-    )
+    if any(binding.backend == "omp" for binding in S.bindings):
+        S.fire(omp_terminal_health_audit_loop(frontends, S, paths.omp_terminal_health_file))
+    log.info(f"{len(frontends)} frontend(s) ready · heartbeat every {HEARTBEAT_INTERVAL}s")
 
     # graceful shutdown
     stop = asyncio.Event()

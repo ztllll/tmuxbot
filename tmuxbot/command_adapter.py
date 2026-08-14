@@ -4,6 +4,7 @@ The provider remains the source of truth. This module classifies commands and
 adds a thin transaction/interaction layer around tmux injection so IM users get
 feedback for interactive or unknown slash commands.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,8 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from tmuxbot.picker import detect_pi_interaction
-from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
+from tmuxbot.picker import detect_omp_interaction
 from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
 from tmuxbot.utils import strip_decorations
 
@@ -91,78 +91,6 @@ _BLOCKED_COMMANDS = {
     "/exit": "会退出当前 CLI, 已阻止。需要退出 CLI 请用 /eof, 需要重启用 /restart。",
 }
 
-_CLAUDE_INTERACTIVE = {
-    "/add-dir": "添加工作目录, 可能打开交互确认。",
-    "/agents": "打开 subagent 管理界面。",
-    "/allowed-tools": "打开权限规则管理界面。",
-    "/branch": "创建/切换会话分支, 可能打开选择界面。",
-    "/code-review": "启动代码审查工作流。",
-    "/debug": "打开调试/诊断信息。",
-    "/diff": "显示当前 diff。",
-    "/doctor": "运行安装/运行时诊断。",
-    "/effort": "调整推理强度, 无参数时打开滑条。",
-    "/mcp": "打开 MCP 状态/管理界面。",
-    "/memory": "打开记忆管理界面。",
-    "/model": "切换模型, 无参数时打开模型 picker。",
-    "/permissions": "打开权限规则管理界面。",
-    "/plan": "进入计划模式并让后续计划输出正常回推。",
-    "/resume": "恢复历史会话, 无参数时打开会话 picker。",
-    "/review": "启动审查工作流。",
-    "/security-review": "启动安全审查工作流。",
-    "/settings": "打开设置界面。",
-    "/tasks": "打开后台任务列表。",
-    "/ultraplan": "启动 ultraplan 工作流。",
-    "/workflows": "打开 workflow 进度界面。",
-}
-
-_PI_INTERACTIVE = {
-    "/login": "管理 Pi provider 登录凭据。",
-    "/model": "切换模型, 无参数时打开模型 picker。",
-    "/scoped-models": "配置当前会话的模型循环范围。",
-    "/settings": "打开 Pi 设置界面。",
-    "/statusline": "打开 Pi 自定义状态栏设置界面。",
-    "/resume": "恢复历史会话并切换当前 provider session。",
-    "/tree": "浏览当前会话树并选择继续位置。",
-    "/trust": "保存当前项目的信任决定。",
-    "/fork": "从历史 user message 创建新会话。",
-    "/import": "导入 JSONL 并切换当前 provider session。",
-    "/plan": "打开 pi-plan-mode 原生菜单；可用方向键与确认键操作。",
-}
-
-_CODEX_INTERACTIVE = {
-    "/agent": "切换/查看 agent thread。",
-    "/apps": "打开 app/connector picker。",
-    "/approve": "审批最近一次 auto review deny 的重试。",
-    "/btw": "开启 side conversation。",
-    "/debug-config": "显示配置层诊断。",
-    "/diff": "显示当前 diff。",
-    "/experimental": "打开实验功能开关。",
-    "/fast": "切换或查看 Fast tier。",
-    "/fork": "fork 当前会话。",
-    "/goal": "设置或管理持久 goal。",
-    "/hooks": "查看/管理 hooks。",
-    "/ide": "引入 IDE 上下文。",
-    "/keymap": "打开快捷键设置。",
-    "/mcp": "查看 MCP 工具状态。",
-    "/memories": "配置 memories。",
-    "/mention": "选择/附加文件。",
-    "/model": "切换模型, 无参数时打开模型 picker。",
-    "/permissions": "切换 approval/sandbox 权限模式。",
-    "/personality": "选择回复风格。",
-    "/plan": "进入计划模式并可带 inline prompt。",
-    "/plugins": "打开插件浏览/管理界面。",
-    "/ps": "查看后台 terminal。",
-    "/raw": "切换 raw scrollback。",
-    "/resume": "恢复历史会话。",
-    "/review": "启动 working tree review。",
-    "/side": "开启 side conversation。",
-    "/skills": "浏览/选择 skills。",
-    "/statusline": "配置 status line。",
-    "/stop": "停止后台 terminal。",
-    "/theme": "选择终端主题。",
-    "/title": "配置终端标题。",
-    "/vim": "切换 composer Vim mode。",
-}
 
 _TUI_ACTIONS: dict[str, tuple[str | None, str]] = {
     "up": ("Up", "↑ Up"),
@@ -185,9 +113,7 @@ _SEMANTIC_ACTIONS: dict[str, SemanticAction] = {
     "revise-plan": SemanticAction(
         "revise-plan", "继续修改", ("Down", "Enter"), "选择反馈/继续计划选项。"
     ),
-    "reject-plan": SemanticAction(
-        "reject-plan", "退出计划", ("Escape",), "取消当前计划审批界面。"
-    ),
+    "reject-plan": SemanticAction("reject-plan", "退出计划", ("Escape",), "取消当前计划审批界面。"),
     "approve-once": SemanticAction(
         "approve-once", "批准一次", ("Enter",), "批准当前高亮的权限请求。"
     ),
@@ -245,12 +171,12 @@ def parse_slash_text(
     else:
         command = raw_cmd.split("@", 1)[0]
 
-    injected = text[:leading] + command + stripped[len(raw_cmd):]
-    args = injected.lstrip()[len(command):].strip()
+    injected = text[:leading] + command + stripped[len(raw_cmd) :]
+    args = injected.lstrip()[len(command) :].strip()
 
     real_cmd = aliases.get(command)
     if real_cmd:
-        injected = text[:leading] + real_cmd + stripped[len(raw_cmd):]
+        injected = text[:leading] + real_cmd + stripped[len(raw_cmd) :]
 
     return ParsedSlash(command=command, raw_command=raw_cmd, injected_text=injected, args=args)
 
@@ -258,6 +184,12 @@ def parse_slash_text(
 def classify_command(backend: "Backend", command: str, args: str = "") -> CommandSpec:
     if command in _BLOCKED_COMMANDS:
         return CommandSpec(command, CommandKind.BLOCKED, notice=_BLOCKED_COMMANDS[command])
+    if command == "/plan" and not backend.remote_tui_actions_allowed:
+        return CommandSpec(
+            command,
+            CommandKind.LOCAL,
+            description="显示 tmuxbot 本地 OMP Plan 模式帮助；不向 pane 注入命令。",
+        )
     if (
         command in _LOCAL_COMMANDS
         or command in _TUI_COMMANDS
@@ -268,18 +200,7 @@ def classify_command(backend: "Backend", command: str, args: str = "") -> Comman
     if command in backend.command_opts():
         return CommandSpec(command, CommandKind.CAPTURE)
 
-    if backend.name == "codex":
-        interactive = _CODEX_INTERACTIVE
-    elif backend.name == "pi":
-        if command == "/plan" and args.strip().lower() not in {"", "tools"}:
-            return CommandSpec(
-                command,
-                CommandKind.PASSTHROUGH,
-                description="执行 pi-plan-mode 直接命令并读取 TUI 回执。",
-            )
-        interactive = _PI_INTERACTIVE
-    else:
-        interactive = _CLAUDE_INTERACTIVE
+    interactive = backend.interactive_commands()
     if command in interactive:
         return CommandSpec(
             command,
@@ -420,6 +341,11 @@ async def handle_tui_action(
             "可用: <code>/up /down /left /right /tab /space /enter /refresh</code>",
         )
         return
+    if backend is not None and not backend.remote_tui_actions_allowed:
+        notice = backend.format_remote_interaction_notice(b, label or "TUI 交互")
+        if notice:
+            await frontend.send_html(chat_id, thread_id, notice)
+        return
     if key is not None:
         tmux_send_key(b.tmux_target, key)
         await asyncio.sleep(0.45)
@@ -454,6 +380,7 @@ async def handle_tui_action(
 
 async def handle_semantic_action(
     frontend: "Frontend",
+    backend: "Backend",
     b: "Binding",
     chat_id: int | str,
     thread_id: int | str | None,
@@ -469,6 +396,11 @@ async def handle_semantic_action(
             "⚠️ <b>未知语义操作</b>\n"
             "可用: <code>/approve-plan /revise-plan /reject-plan /approve-once /deny</code>",
         )
+        return
+    if not backend.remote_tui_actions_allowed:
+        notice = backend.format_remote_interaction_notice(b, semantic.label)
+        if notice:
+            await frontend.send_html(chat_id, thread_id, notice)
         return
     for key in semantic.keys:
         tmux_send_key(b.tmux_target, key)
@@ -500,20 +432,19 @@ async def handle_interactive_command(
     )
     log.info("[%s] interactive command injected: %s txn=%s", b.name, spec.command, txn.txn_id)
     await asyncio.sleep(1.0)
-    if backend.name == "pi":
+    if not backend.remote_tui_actions_allowed:
         screen = tmux_capture(b.tmux_target, spec.lines)
-        interaction = detect_pi_interaction(screen)
+        interaction = detect_omp_interaction(screen)
         if interaction is not None:
-            body = pi_ssh_interaction_notice(
-                b, interaction_label=interaction.label
-            )
+            body = backend.format_remote_interaction_notice(b, interaction.label)
         else:
             body = (
-                f"↪️ <b>{html.escape(spec.command)} 已提交到 Pi</b>\n"
-                "· 当前屏幕尚未出现可确认的交互控制栏；"
-                "若稍后出现菜单、选择、输入或确认界面，tmuxbot 会另行通知 SSH 处理。"
+                f"↪️ <b>{html.escape(spec.command)} 已提交到 {html.escape(backend.name)}</b>\n"
+                "· 当前屏幕尚未出现可确认的交互控制栏；若稍后出现交互界面，"
+                "tmuxbot 会另行通知通过 SSH 处理。"
             )
-        await frontend.send_html(chat_id, thread_id, body)
+        if body:
+            await frontend.send_html(chat_id, thread_id, body)
     else:
         body = build_interaction_body(
             b,
@@ -546,7 +477,7 @@ async def handle_passthrough_command(
     await frontend.send_html(
         chat_id,
         thread_id,
-        f"↪️ <b>已透传 Pi 命令</b> <code>{html.escape(spec.command)}</code>\n"
+        f"↪️ <b>已透传 OMP 命令</b> <code>{html.escape(spec.command)}</code>\n"
         "· 正在读取 TUI 回执；随后会回传屏幕变化或明确说明未观察到可见变化。",
     )
     state.fire(
@@ -653,17 +584,14 @@ def _tail(text: str, lines: int) -> str:
 
 
 def _looks_like_plan_approval(low: str) -> bool:
-    return (
-        ("plan" in low or "计划" in low)
-        and (
-            "approve" in low
-            or "approval" in low
-            or "start coding" in low
-            or "accept edits" in low
-            or "keep planning" in low
-            or "批准" in low
-            or "继续计划" in low
-        )
+    return ("plan" in low or "计划" in low) and (
+        "approve" in low
+        or "approval" in low
+        or "start coding" in low
+        or "accept edits" in low
+        or "keep planning" in low
+        or "批准" in low
+        or "继续计划" in low
     )
 
 
@@ -686,8 +614,5 @@ def _looks_like_permission_prompt(low: str) -> bool:
 
 def _looks_like_picker(low: str) -> bool:
     return (
-        "enter to select" in low
-        or "esc to cancel" in low
-        or "to navigate" in low
-        or "↑/↓" in low
+        "enter to select" in low or "esc to cancel" in low or "to navigate" in low or "↑/↓" in low
     )

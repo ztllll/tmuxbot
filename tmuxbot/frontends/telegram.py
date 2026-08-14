@@ -1,8 +1,9 @@
 """Telegram 前端: aiogram 装配 + 命令注册 + 发送/编辑/反应/typing。
 
 每个 frontend = 一个 bot token + adapter registry + 一组 route bindings。
-同一 bot credential 可按 topic route 选择 Claude Code、Codex 或 Pi。
+同一 bot credential 可按 topic route 选择 Claude Code、Codex 或 OMP。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -71,9 +72,8 @@ from tmuxbot.control_panel import (
     save_binding_mention_policy,
 )
 from tmuxbot.frontends.base import BackendResolutionError, Frontend
-from tmuxbot.lifecycle import ensure_binding_running
+from tmuxbot.lifecycle import ensure_binding_running, restart_binding
 from tmuxbot.replies import render_assistant_reply, screen_footer_from_capture
-from tmuxbot.runtime.pi_interaction import pi_ssh_interaction_notice
 from tmuxbot.tmux import tmux_capture, tmux_has_session, tmux_pane_command, tmux_send_key
 from tmuxbot.utils import render_table, utf16_len
 
@@ -157,10 +157,7 @@ class _TelegramHTMLSplitter(HTMLParser):
     def handle_starttag(self, tag: str, attrs) -> None:
         start = self.get_starttag_text() or f"<{tag}>"
         end = f"</{tag}>"
-        if (
-            utf16_len(start) + utf16_len(end) > self._available()
-            and self.has_text
-        ):
+        if utf16_len(start) + utf16_len(end) > self._available() and self.has_text:
             self._flush()
         self.current.append(start)
         self.current_len += utf16_len(start)
@@ -290,6 +287,7 @@ def build_telegram_panel_markup(
     confirm_new: bool = False,
     confirm_restart: bool = False,
     confirm_stop: bool = False,
+    include_plan: bool = False,
 ) -> InlineKeyboardMarkup:
     token = binding_token(binding.name)
     if confirm_new:
@@ -355,7 +353,7 @@ def build_telegram_panel_markup(
         [InlineKeyboardButton(text="切换模型", callback_data=f"panel:{token}:cmd_model")],
         *(
             [[InlineKeyboardButton(text="计划模式", callback_data=f"panel:{token}:cmd_plan")]]
-            if binding.backend == "pi"
+            if include_plan
             else []
         ),
         [
@@ -402,11 +400,11 @@ class TelegramFrontend(Frontend):
         self,
         token: str,
         state: "State",
-        backend: "Backend",                 # legacy/default adapter for /init compatibility
-        bindings: list["Binding"],          # bindings owned by this bot credential
+        backend: "Backend",  # legacy/default adapter for /init compatibility
+        bindings: list["Binding"],  # bindings owned by this bot credential
         env_file: Path,
         bindings_file: Path,
-        offsets_file: Path | None = None,   # /init 起 tailer 用
+        offsets_file: Path | None = None,  # /init 起 tailer 用
         project_base: str = os.path.expanduser("~/projects"),  # /init 新项目目录的父目录
         bot_token_env: str = "TG_BOT_TOKEN",  # 本 frontend 的 token env key (/init 持久化用)
         group_only_when_mentioned: bool = False,
@@ -462,10 +460,7 @@ class TelegramFrontend(Frontend):
         """列 project_base 下的直接子目录, 返回 HTML 文本 (供 /projects 用)"""
         base = self.project_base
         try:
-            dirs = sorted(
-                d for d in os.listdir(base)
-                if os.path.isdir(os.path.join(base, d))
-            )
+            dirs = sorted(d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
         except OSError:
             dirs = []
         body = "\n".join(f"• {html.escape(d)}" for d in dirs) if dirs else "（空）"
@@ -498,6 +493,7 @@ class TelegramFrontend(Frontend):
         try:
             ctx_raw = await inject_slash_and_capture(b, "/context", backend=backend)
             from tmuxbot.backends.claude_code import parse_context as _pc
+
             ctx_summary = _pc(ctx_raw) if b.backend == "claude_code" else None
         except Exception:
             log.exception("inject /context err")
@@ -506,6 +502,7 @@ class TelegramFrontend(Frontend):
         try:
             usage_raw = await inject_slash_and_capture(b, "/usage", backend=backend)
             from tmuxbot.backends.claude_code import parse_cost as _pcost
+
             usage_summary = _pcost(usage_raw) if b.backend == "claude_code" else None
         except Exception:
             log.exception("inject /usage err")
@@ -529,11 +526,12 @@ class TelegramFrontend(Frontend):
                 ["📤 输出 token", f"{stats['output']:,}"],
                 ["📦 缓存创建", f"{stats['cache_create']:,}"],
                 ["📦 缓存命中", f"{stats['cache_read']:,}"],
-                ["🎯 缓存命中率", f"{stats['cache_hit_rate']*100:.1f}%"],
+                ["🎯 缓存命中率", f"{stats['cache_hit_rate'] * 100:.1f}%"],
                 ["💬 助手回复", f"{stats['count']} 条"],
             ]
             parts += [
-                "", "📈 <b>四、本会话累计 (jsonl)</b>",
+                "",
+                "📈 <b>四、本会话累计 (jsonl)</b>",
                 f"<pre>{html.escape(render_table(['项目', '值'], sess_rows))}</pre>",
             ]
 
@@ -595,10 +593,10 @@ class TelegramFrontend(Frontend):
                 return None
             except TelegramNetworkError as e:
                 log.warning(f"net err (try {i + 1}): {e}")
-                await asyncio.sleep(2 ** i)
+                await asyncio.sleep(2**i)
             except Exception as e:
                 log.warning(f"send err (try {i + 1}): {e}")
-                await asyncio.sleep(2 ** i)
+                await asyncio.sleep(2**i)
         log.error("send giving up")
         return None
 
@@ -641,9 +639,7 @@ class TelegramFrontend(Frontend):
         first_msg = None
         for chunk in split_for_tg(rendered.chat_html):
             msg = await self._tg_call(
-                lambda c=chunk: self.bot.send_message(
-                    chat_id, c, message_thread_id=thread_id
-                )
+                lambda c=chunk: self.bot.send_message(chat_id, c, message_thread_id=thread_id)
             )
             if first_msg is None:
                 first_msg = msg
@@ -689,7 +685,9 @@ class TelegramFrontend(Frontend):
             html_text = html_text[: TG_SPLIT - 30] + "\n<i>… (内容已截断)</i>"
         await self._tg_call(
             lambda: self.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id, text=html_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=html_text,
             )
         )
 
@@ -735,7 +733,9 @@ class TelegramFrontend(Frontend):
                 file = BufferedInputFile(clean_text.encode("utf-8"), filename="capture.txt")
                 await self._tg_call(
                     lambda: self.bot.send_document(
-                        chat_id, file, caption="📷 capture (long)",
+                        chat_id,
+                        file,
+                        caption="📷 capture (long)",
                         message_thread_id=thread_id,
                     )
                 )
@@ -747,9 +747,7 @@ class TelegramFrontend(Frontend):
             for chunk in split_for_tg(escaped, limit=TG_SPLIT - 12):
                 wrapped = f"<pre>{chunk}</pre>"
                 await self._tg_call(
-                    lambda c=wrapped: self.bot.send_message(
-                        chat_id, c, message_thread_id=thread_id
-                    )
+                    lambda c=wrapped: self.bot.send_message(chat_id, c, message_thread_id=thread_id)
                 )
         for attachment in attachments:
             if attachment.kind == "image":
@@ -758,7 +756,10 @@ class TelegramFrontend(Frontend):
                 await self.send_file(chat_id, thread_id, attachment.path)
 
     async def send_image(
-        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        self,
+        chat_id: int | str,
+        thread_id: int | None,
+        path: str | Path,
         caption: str | None = None,
     ) -> Any:
         try:
@@ -791,7 +792,10 @@ class TelegramFrontend(Frontend):
         return " ".join(v for v in (footer.model, footer.effort) if v) or None
 
     async def send_file(
-        self, chat_id: int | str, thread_id: int | None, path: str | Path,
+        self,
+        chat_id: int | str,
+        thread_id: int | None,
+        path: str | Path,
         caption: str | None = None,
     ) -> Any:
         try:
@@ -875,37 +879,72 @@ class TelegramFrontend(Frontend):
     async def send_chat_action(self, chat_id: int, thread_id: int | None, action: str) -> None:
         try:
             await self.bot.send_chat_action(
-                chat_id=chat_id, action=action, message_thread_id=thread_id,
+                chat_id=chat_id,
+                action=action,
+                message_thread_id=thread_id,
             )
         except Exception as e:
             log.debug(f"send_chat_action err: {e}")
 
     async def send_picker_card(
-        self, chat_id: int, thread_id: int | None,
-        body_html: str, binding_name: str, num_options: int = 9,
+        self,
+        chat_id: int,
+        thread_id: int | None,
+        body_html: str,
+        binding_name: str,
+        num_options: int = 9,
     ) -> Any:
         """picker 卡片 + 1-9 数字按钮 + ⎋ 取消。callback_data 格式: 'picker:<binding>:<n>'"""
         rows: list[list[InlineKeyboardButton]] = []
         row: list[InlineKeyboardButton] = []
         for n in range(1, num_options + 1):
-            row.append(InlineKeyboardButton(
-                text=str(n), callback_data=f"picker:{binding_name}:{n - 1}",
-            ))
+            row.append(
+                InlineKeyboardButton(
+                    text=str(n),
+                    callback_data=f"picker:{binding_name}:{n - 1}",
+                )
+            )
             if len(row) == 3:
-                rows.append(row); row = []
+                rows.append(row)
+                row = []
         if row:
             rows.append(row)
-        rows.append([InlineKeyboardButton(
-            text="⎋ 取消 picker", callback_data=f"picker:{binding_name}:esc",
-        )])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⎋ 取消 picker",
+                    callback_data=f"picker:{binding_name}:esc",
+                )
+            ]
+        )
         markup = InlineKeyboardMarkup(inline_keyboard=rows)
-        return await self._tg_call(lambda: self.bot.send_message(
-            chat_id, body_html, message_thread_id=thread_id, reply_markup=markup,
-        ))
+        return await self._tg_call(
+            lambda: self.bot.send_message(
+                chat_id,
+                body_html,
+                message_thread_id=thread_id,
+                reply_markup=markup,
+            )
+        )
 
     async def send_interaction_card(
         self, chat_id: int, thread_id: int | None, html_text: str, binding_name: str
     ) -> Any:
+        binding = next(
+            (b for b in getattr(self, "bindings", ()) if b.name == binding_name),
+            None,
+        )
+        interaction_backend = (
+            self.backend_for(binding) if binding is not None else getattr(self, "backend", None)
+        )
+        if (
+            binding is not None
+            and interaction_backend is not None
+            and not interaction_backend.remote_tui_actions_allowed
+        ):
+            notice = interaction_backend.format_remote_interaction_notice(binding, "交互界面")
+            return await self.send_html(chat_id, thread_id, notice or html_text)
+
         token = binding_token(binding_name)
         rows: list[list[InlineKeyboardButton]] = []
         semantic_actions = semantic_actions_from_body(html_text)
@@ -919,33 +958,26 @@ class TelegramFrontend(Frontend):
                     for action in semantic_actions[:3]
                 ]
             )
-        rows.extend([
+        rows.extend(
             [
-                InlineKeyboardButton(text="↑", callback_data=f"tui:{token}:up"),
-            ],
-            [
-                InlineKeyboardButton(text="←", callback_data=f"tui:{token}:left"),
-                InlineKeyboardButton(text="↵", callback_data=f"tui:{token}:enter"),
-                InlineKeyboardButton(text="→", callback_data=f"tui:{token}:right"),
-            ],
-            [
-                InlineKeyboardButton(text="↓", callback_data=f"tui:{token}:down"),
-                InlineKeyboardButton(text="Tab", callback_data=f"tui:{token}:tab"),
-                InlineKeyboardButton(text="Space", callback_data=f"tui:{token}:space"),
-            ],
-            [
-                InlineKeyboardButton(text="⎋", callback_data=f"tui:{token}:esc"),
-                InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
-            ],
-        ])
-        binding = next(
-            (b for b in getattr(self, "bindings", ()) if b.name == binding_name),
-            None,
-        )
-        interaction_backend = (
-            self.backend_for(binding)
-            if binding is not None
-            else getattr(self, "backend", None)
+                [
+                    InlineKeyboardButton(text="↑", callback_data=f"tui:{token}:up"),
+                ],
+                [
+                    InlineKeyboardButton(text="←", callback_data=f"tui:{token}:left"),
+                    InlineKeyboardButton(text="↵", callback_data=f"tui:{token}:enter"),
+                    InlineKeyboardButton(text="→", callback_data=f"tui:{token}:right"),
+                ],
+                [
+                    InlineKeyboardButton(text="↓", callback_data=f"tui:{token}:down"),
+                    InlineKeyboardButton(text="Tab", callback_data=f"tui:{token}:tab"),
+                    InlineKeyboardButton(text="Space", callback_data=f"tui:{token}:space"),
+                ],
+                [
+                    InlineKeyboardButton(text="⎋", callback_data=f"tui:{token}:esc"),
+                    InlineKeyboardButton(text="刷新", callback_data=f"tui:{token}:refresh"),
+                ],
+            ]
         )
         if (
             interaction_backend is not None
@@ -974,6 +1006,7 @@ class TelegramFrontend(Frontend):
         chat_id: int,
         thread_id: int | None,
     ) -> Any:
+        include_plan = False
         text = render_panel_text(
             b,
             frontend_default=self.group_only_when_mentioned,
@@ -984,7 +1017,7 @@ class TelegramFrontend(Frontend):
                 chat_id,
                 text,
                 message_thread_id=thread_id,
-                reply_markup=build_telegram_panel_markup(b),
+                reply_markup=build_telegram_panel_markup(b, include_plan=include_plan),
             )
         )
 
@@ -1040,13 +1073,15 @@ class TelegramFrontend(Frontend):
         if is_control_command(incoming.text):
             return True
         b = self.find_binding(*source_key(m))
-        required = effective_mention_required(
-            b,
-            self.group_only_when_mentioned,
-        ) if b is not None else self.group_only_when_mentioned
-        return incoming_message_is_addressed(
-            incoming, require_addressing=required
+        required = (
+            effective_mention_required(
+                b,
+                self.group_only_when_mentioned,
+            )
+            if b is not None
+            else self.group_only_when_mentioned
         )
+        return incoming_message_is_addressed(incoming, require_addressing=required)
 
     async def _resolve_binding_or_reply(self, m: Message) -> "Binding | None":
         if not self._acl_ok(m):
@@ -1069,9 +1104,7 @@ class TelegramFrontend(Frontend):
                 if b.get("name") == name:
                     b["chat_id"] = chat_id
                     break
-            self.bindings_file.write_text(
-                yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
-            )
+            self.bindings_file.write_text(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
         except Exception as e:
             log.exception(f"save_binding_chat_id err: {e}")
 
@@ -1139,7 +1172,9 @@ class TelegramFrontend(Frontend):
                         log.debug(f"set_message_reaction err: {e}")
                     try:
                         await event.bot.send_chat_action(
-                            chat_id=event.chat.id, action="typing", message_thread_id=tid,
+                            chat_id=event.chat.id,
+                            action="typing",
+                            message_thread_id=tid,
                         )
                     except Exception as e:
                         log.debug(f"send_chat_action err: {e}")
@@ -1205,9 +1240,7 @@ class TelegramFrontend(Frontend):
                 tmux_has_session(b.tmux_session)
                 and tmux_pane_command(b.tmux_target) in backend.running_command_names
             )
-            await ensure_binding_running(
-                backend, b, S, reason=f"telegram-{reason}", wait=True
-            )
+            await ensure_binding_running(backend, b, S, reason=f"telegram-{reason}", wait=True)
             return was_running
 
         # ─── /status (跟 backend 紧耦合, 走 inject_slash_and_capture) ─────────
@@ -1234,17 +1267,27 @@ class TelegramFrontend(Frontend):
             from tmuxbot.paths import RuntimePaths
             from tmuxbot.teamrun.projection import render_latest_teamrun
 
-            paths = RuntimePaths.discover(os.environ, legacy_project_dir=Path(__file__).resolve().parents[2])
-            await F_.send_html(m.chat.id, thread_id_of(m), render_latest_teamrun(paths.database_file))
+            paths = RuntimePaths.discover(
+                os.environ, legacy_project_dir=Path(__file__).resolve().parents[2]
+            )
+            await F_.send_html(
+                m.chat.id, thread_id_of(m), render_latest_teamrun(paths.database_file)
+            )
 
         # ─── /esc /cc /eof ─────────
         async def _send_key(m: Message, key: str, label: str):
             b = await F_._resolve_binding_or_reply(m)
             if not b:
                 return
+            backend = F_.backend_for(b)
+            if not backend.remote_tui_actions_allowed:
+                notice = backend.format_remote_interaction_notice(b, label)
+                if notice:
+                    await F_.send_html(b.chat_id, b.thread_id, notice)
+                return
             was_running = await _wake_route_for_command(b, key)
             if not was_running:
-                await m.reply(f"🔄 已启动 {F_.backend_for(b).name}")
+                await m.reply(f"🔄 已启动 {backend.name}")
                 return
             tmux_send_key(b.tmux_target, key)
             await m.reply(label)
@@ -1319,20 +1362,9 @@ class TelegramFrontend(Frontend):
             if not b:
                 return
             backend = F_.backend_for(b)
-            # A manually closed route has no provider to restart. Starting its
-            # pinned TUI is the correct restart-equivalent; never send C-c/C-d
-            # into a freshly created session or a shell.
-            if not await _wake_route_for_command(b, "restart"):
-                await m.reply(f"🔄 已启动 {backend.name}")
-                return
-            tmux_send_key(b.tmux_target, "C-c")
-            await asyncio.sleep(0.5)
-            tmux_send_key(b.tmux_target, "C-d")
-            await asyncio.sleep(2.0)
-            await ensure_binding_running(
-                backend, b, self.state, reason="telegram-restart", wait=True
-            )
-            await m.reply(f"🔄 已 restart {backend.name}")
+            was_running = await restart_binding(backend, b, self.state, reason="telegram-restart")
+            action = "restart" if was_running else "启动"
+            await m.reply(f"🔄 已{action} {backend.name}")
 
         # ─── 文件 / 图片 ─────────
         @dp.message(F.photo | F.document | F.video | F.animation | F.audio | F.voice)
@@ -1352,9 +1384,7 @@ class TelegramFrontend(Frontend):
             if file_size and file_size > MAX_FILE_MB * 1024 * 1024:
                 await m.reply(f"文件超过 {MAX_FILE_MB}MB")
                 return
-            save_path = attachment_path(
-                "telegram", m.message_id, file_id[-16:], fname
-            )
+            save_path = attachment_path("telegram", m.message_id, file_id[-16:], fname)
             try:
                 f = await m.bot.get_file(file_id)
                 await m.bot.download_file(f.file_path, destination=save_path)
@@ -1375,9 +1405,7 @@ class TelegramFrontend(Frontend):
                 backend_name=F_.backend_for(b).name,
             )
             backend = F_.backend_for(b)
-            await ensure_binding_running(
-                backend, b, self.state, reason="telegram-file", wait=True
-            )
+            await ensure_binding_running(backend, b, self.state, reason="telegram-file", wait=True)
             await tmux_send_text(
                 b.tmux_target,
                 inject,
@@ -1391,9 +1419,7 @@ class TelegramFrontend(Frontend):
         @dp.message(F.forum_topic_created)
         async def on_topic_created(m: Message):
             if m.message_thread_id is not None and m.forum_topic_created:
-                F_._topic_names[(m.chat.id, m.message_thread_id)] = (
-                    m.forum_topic_created.name
-                )
+                F_._topic_names[(m.chat.id, m.message_thread_id)] = m.forum_topic_created.name
 
         @dp.message(F.forum_topic_edited)
         async def on_topic_edited(m: Message):
@@ -1403,9 +1429,7 @@ class TelegramFrontend(Frontend):
                 and m.forum_topic_edited
                 and m.forum_topic_edited.name
             ):
-                F_._topic_names[(m.chat.id, m.message_thread_id)] = (
-                    m.forum_topic_edited.name
-                )
+                F_._topic_names[(m.chat.id, m.message_thread_id)] = m.forum_topic_edited.name
 
         # ─── /init compatibility handler ─────────
         # Topic routes are explicit configuration; an unbound endpoint stays silent.
@@ -1475,8 +1499,13 @@ class TelegramFrontend(Frontend):
             # (TG group 内命令自动带 /compact@ztl_claude_bot 形式)
             # _bot_username 在 start_polling 时通过 get_me() 填入, 避免每条消息都 API 请求
             await dispatch_incoming_text(
-                F_, F_.backend_for(b), b, S,
-                incoming.source_id, incoming.thread_id, incoming.text,
+                F_,
+                F_.backend_for(b),
+                b,
+                S,
+                incoming.source_id,
+                incoming.thread_id,
+                incoming.text,
                 bot_username=F_._bot_username,
             )
 
@@ -1502,6 +1531,7 @@ class TelegramFrontend(Frontend):
             if b is None or b is not source_binding:
                 await cq.answer("面板与会话不匹配", show_alert=True)
                 return
+            include_plan = False
 
             if action in {"mention_on", "mention_off", "mention_default"}:
                 value = {
@@ -1521,7 +1551,7 @@ class TelegramFrontend(Frontend):
                         frontend_default=F_.group_only_when_mentioned,
                         current_model=F_._panel_current_model(b),
                     ),
-                    reply_markup=build_telegram_panel_markup(b),
+                    reply_markup=build_telegram_panel_markup(b, include_plan=include_plan),
                 )
                 await cq.answer("@ 策略已更新")
                 return
@@ -1556,7 +1586,7 @@ class TelegramFrontend(Frontend):
                         frontend_default=F_.group_only_when_mentioned,
                         current_model=F_._panel_current_model(b),
                     ),
-                    reply_markup=build_telegram_panel_markup(b),
+                    reply_markup=build_telegram_panel_markup(b, include_plan=include_plan),
                 )
                 await cq.answer("已刷新")
                 return
@@ -1584,28 +1614,34 @@ class TelegramFrontend(Frontend):
             from tmuxbot.picker import extract_picker_block
 
             if S.setup_mode:
-                await cq.answer("⚠️ setup 中"); return
+                await cq.answer("⚠️ setup 中")
+                return
             if cq.from_user and cq.from_user.id != S.boss_user_id:
-                await cq.answer("⚠️ 无权限"); return
+                await cq.answer("⚠️ 无权限")
+                return
             # ★ 全局 ACL 双重门禁: source 没在本 frontend 的 binding 子集 → 静默
             source_binding = None
             if cq.message:
                 cq_tid = getattr(cq.message, "message_thread_id", None)
                 source_binding = F_.find_binding(cq.message.chat.id, cq_tid)
                 if source_binding is None:
-                    await cq.answer(); return
+                    await cq.answer()
+                    return
             parts = (cq.data or "").split(":", 2)
             if len(parts) != 3:
-                await cq.answer("⚠️ 格式错误"); return
+                await cq.answer("⚠️ 格式错误")
+                return
             _, b_name, action = parts
             b = next((bb for bb in F_.bindings if bb.name == b_name), None)
             if not b or b is not source_binding:
-                await cq.answer("⚠️ binding 未找到"); return
-            if b.backend == "pi":
-                await cq.answer("Pi 交互请通过 SSH 处理", show_alert=True)
-                await F_.send_html(
-                    b.chat_id, b.thread_id, pi_ssh_interaction_notice(b)
-                )
+                await cq.answer("⚠️ binding 未找到")
+                return
+            picker_backend = F_.backend_for(b)
+            if not picker_backend.remote_tui_actions_allowed:
+                await cq.answer("交互请通过 SSH 处理", show_alert=True)
+                notice = picker_backend.format_remote_interaction_notice(b, "选择菜单")
+                if notice:
+                    await F_.send_html(b.chat_id, b.thread_id, notice)
                 return
 
             pre_block = extract_picker_block(tmux_capture(b.tmux_target, 80))
@@ -1626,7 +1662,8 @@ class TelegramFrontend(Frontend):
                 try:
                     idx = int(action)
                 except ValueError:
-                    await cq.answer("⚠️ 参数错误"); return
+                    await cq.answer("⚠️ 参数错误")
+                    return
                 for _ in range(idx):
                     tmux_send_key(b.tmux_target, "Down")
                     await asyncio.sleep(0.05)
@@ -1686,14 +1723,12 @@ class TelegramFrontend(Frontend):
             if cq.message is None:
                 await cq.answer("⚠️ 消息不存在")
                 return
-            if b.backend == "pi" and action in {
-                "up", "down", "left", "right", "enter", "esc",
-                "confirm_ctrl_c", "ctrl_c", "model_session",
-            }:
-                await cq.answer("Pi 交互请通过 SSH 处理", show_alert=True)
-                await F_.send_html(
-                    b.chat_id, b.thread_id, pi_ssh_interaction_notice(b)
-                )
+            interaction_backend = F_.backend_for(b)
+            if not interaction_backend.remote_tui_actions_allowed:
+                await cq.answer("交互请通过 SSH 处理", show_alert=True)
+                notice = interaction_backend.format_remote_interaction_notice(b, "交互界面")
+                if notice:
+                    await F_.send_html(b.chat_id, b.thread_id, notice)
                 return
             if action == "confirm_ctrl_c":
                 await F_.send_interrupt_confirmation(
@@ -1709,7 +1744,12 @@ class TelegramFrontend(Frontend):
                     )
                 elif is_semantic:
                     await handle_semantic_action(
-                        F_, b, cq.message.chat.id, getattr(cq.message, "message_thread_id", None), action
+                        F_,
+                        interaction_backend,
+                        b,
+                        cq.message.chat.id,
+                        getattr(cq.message, "message_thread_id", None),
+                        action,
                     )
                 elif action == "status":
                     await F_.send_light_status_summary(
@@ -1736,9 +1776,7 @@ class TelegramFrontend(Frontend):
                 return
             chat_id = ev.chat.id
             # bot 自己的新状态: left / kicked = 被移出群 (或群被删)
-            new_status = getattr(
-                getattr(ev, "new_chat_member", None), "status", None
-            )
+            new_status = getattr(getattr(ev, "new_chat_member", None), "status", None)
             removed = new_status in ("left", "kicked")
             if removed:
                 F_._cancel_unknown_chat_leave(chat_id)
@@ -1756,9 +1794,7 @@ class TelegramFrontend(Frontend):
                 log.info(f"bot removed from bound chat {chat_id}, 拆除 {len(bound)} binding")
                 for b in list(bound):
                     try:
-                        await deprovision_chat(
-                            F_, S, b, bindings_file=F_.bindings_file
-                        )
+                        await deprovision_chat(F_, S, b, bindings_file=F_.bindings_file)
                     except Exception:
                         log.exception(f"deprovision {b.name} err")
                 return
@@ -1772,6 +1808,7 @@ class TelegramFrontend(Frontend):
                     chat_id,
                     UNKNOWN_CHAT_INIT_GRACE_SECONDS,
                 )
+
                 async def _leave_if_still_unbound() -> None:
                     try:
                         await asyncio.sleep(UNKNOWN_CHAT_INIT_GRACE_SECONDS)
@@ -1818,7 +1855,9 @@ class TelegramFrontend(Frontend):
         except Exception as e:
             log.warning(f"set_my_commands err: {e}")
         try:
-            await self.dp.start_polling(self.bot, allowed_updates=self.dp.resolve_used_update_types())
+            await self.dp.start_polling(
+                self.bot, allowed_updates=self.dp.resolve_used_update_types()
+            )
         except Exception as exc:
             self.state.channel_health.error(self.health_id, exc)
             raise

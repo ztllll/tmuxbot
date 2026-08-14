@@ -29,9 +29,7 @@ class BridgeReadiness:
 def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
     raw_chat_id = item.get("chat_id", 0)
     chat_id: int | str = (
-        int(raw_chat_id)
-        if str(raw_chat_id).lstrip("-").isdigit()
-        else str(raw_chat_id)
+        int(raw_chat_id) if str(raw_chat_id).lstrip("-").isdigit() else str(raw_chat_id)
     )
     return Binding(
         name=str(item.get("name", "")),
@@ -47,20 +45,20 @@ def _binding_from_mapping(item: Mapping[str, Any]) -> Binding:
         mention_required=item.get("mention_required"),
         admin=bool(item.get("admin", False)),
         thread_root_message_id=(
-            str(item.get("thread_root_message_id"))
-            if item.get("thread_root_message_id")
-            else None
+            str(item.get("thread_root_message_id")) if item.get("thread_root_message_id") else None
         ),
     )
 
 
-def inspect_bridge_readiness(
-    paths: RuntimePaths, environ: Mapping[str, str]
-) -> BridgeReadiness:
+def inspect_bridge_readiness(paths: RuntimePaths, environ: Mapping[str, str]) -> BridgeReadiness:
     effective_environ = dict(environ)
     if paths.env_file.is_file():
         effective_environ.update(
-            {key: value for key, value in dotenv_values(paths.env_file).items() if value is not None}
+            {
+                key: value
+                for key, value in dotenv_values(paths.env_file).items()
+                if value is not None
+            }
         )
     if not paths.bindings_file.exists():
         return BridgeReadiness(False, "bindings_missing", 0, 0)
@@ -82,7 +80,9 @@ def inspect_bridge_readiness(
                 frontends.add((binding.channel, binding.bot_token_env))
         else:
             key = binding.bot_token_env
-            if effective_environ.get(f"{key}_APP_ID") and effective_environ.get(f"{key}_APP_SECRET"):
+            if effective_environ.get(f"{key}_APP_ID") and effective_environ.get(
+                f"{key}_APP_SECRET"
+            ):
                 frontends.add((binding.channel, key))
     if not frontends:
         return BridgeReadiness(False, "credentials_missing", len(bindings), 0)
@@ -92,17 +92,17 @@ def inspect_bridge_readiness(
 Spawn = Callable[[list[str], dict[str, str]], Awaitable[Any]]
 
 
-SUPERVISOR_PID_ENV = "TMUXBOT_SUPERVISOR_PID"
+SUPERVISOR_OMPD_ENV = "TMUXBOT_SUPERVISOR_OMPD"
 
 
 def arm_bridge_parent_death_signal(environ: Mapping[str, str]) -> None:
     """Tie a supervised bridge child to its exact parent on Linux."""
-    raw_parent = environ.get(SUPERVISOR_PID_ENV, "").strip()
+    raw_parent = environ.get(SUPERVISOR_OMPD_ENV, "").strip()
     if not raw_parent:
         return
     expected_parent = int(raw_parent)
     if expected_parent <= 1:
-        raise ValueError(f"invalid {SUPERVISOR_PID_ENV}: {raw_parent!r}")
+        raise ValueError(f"invalid {SUPERVISOR_OMPD_ENV}: {raw_parent!r}")
     if not sys.platform.startswith("linux"):
         return
     libc = ctypes.CDLL(None, use_errno=True)
@@ -131,7 +131,7 @@ class BridgeSupervisor:
         self.spawn = spawn
         self.pid_file = Path(
             self.environ.get(
-                "TMUXBOT_BRIDGE_PID_FILE",
+                "TMUXBOT_BRIDGE_OMPD_FILE",
                 str(self.paths.state_dir / "bridge.pid"),
             )
         )
@@ -188,7 +188,7 @@ class BridgeSupervisor:
                 child_env["TMUXBOT_ENV"] = str(self.paths.env_file)
                 child_env["TMUXBOT_BINDINGS"] = str(self.paths.bindings_file)
                 child_env["TMUXBOT_DATA_DIR"] = str(self.paths.state_dir)
-                child_env[SUPERVISOR_PID_ENV] = str(os.getpid())
+                child_env[SUPERVISOR_OMPD_ENV] = str(os.getpid())
                 self._state = "starting"
                 self._reason = "spawning"
                 try:

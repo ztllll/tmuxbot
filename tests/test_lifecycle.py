@@ -7,6 +7,7 @@ from tmuxbot.lifecycle import (
     ensure_binding_running,
     lifecycle_enabled,
     lifecycle_watch_loop,
+    restart_binding,
 )
 from tmuxbot.state import Binding
 
@@ -64,9 +65,7 @@ def test_health_audit_defaults_to_one_hour_and_skips_manually_closed_tmux_sessio
         monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
         monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: False)
         backend = FakeBackend()
-        frontend = SimpleNamespace(
-            bindings=[binding()], backend_for=lambda _binding: backend
-        )
+        frontend = SimpleNamespace(bindings=[binding()], backend_for=lambda _binding: backend)
         task = asyncio.create_task(
             lifecycle_watch_loop([frontend], SimpleNamespace(ensure_locks={}), startup_delay=0)
         )
@@ -94,9 +93,7 @@ def test_health_audit_checks_existing_tmux_sessions(monkeypatch):
         monkeypatch.setenv("TMUXBOT_LIFECYCLE_ENABLED", "1")
         monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: True)
         backend = QuickBackend()
-        frontend = SimpleNamespace(
-            bindings=[binding()], backend_for=lambda _binding: backend
-        )
+        frontend = SimpleNamespace(bindings=[binding()], backend_for=lambda _binding: backend)
         task = asyncio.create_task(
             lifecycle_watch_loop([frontend], SimpleNamespace(ensure_locks={}), startup_delay=0)
         )
@@ -125,9 +122,7 @@ def test_ensure_binding_running_skips_background_when_lock_is_busy():
         )
         await backend.started.wait()
 
-        skipped = await ensure_binding_running(
-            backend, b, state, reason="watchdog", wait=False
-        )
+        skipped = await ensure_binding_running(backend, b, state, reason="watchdog", wait=False)
 
         backend.release.set()
         await first
@@ -182,9 +177,10 @@ def test_ensure_binding_running_recovers_only_after_provider_health_failure():
     backend = RecoveringBackend()
     state = SimpleNamespace(ensure_locks={})
 
-    assert asyncio.run(
-        ensure_binding_running(backend, binding(), state, reason="incoming", wait=True)
-    ) is True
+    assert (
+        asyncio.run(ensure_binding_running(backend, binding(), state, reason="incoming", wait=True))
+        is True
+    )
     assert backend.ensure_calls == 2
     assert backend.recovery_calls == 1
 
@@ -203,12 +199,52 @@ def test_ensure_binding_running_preserves_bound_provider_identity(tmp_path):
     b.transcript_path = old
     state = SimpleNamespace(ensure_locks={})
 
-    asyncio.run(
-        ensure_binding_running(
-            RestartingBackend(), b, state, reason="restart", wait=True
-        )
-    )
+    asyncio.run(ensure_binding_running(RestartingBackend(), b, state, reason="restart", wait=True))
 
     assert b.provider_session_id == "old-session"
     assert b.last_session_id == "old-session"
     assert b.transcript_path == old
+
+
+def test_restart_binding_cleanly_respawns_omp_without_tui_keys(monkeypatch, tmp_path):
+    calls = []
+
+    class OmpBackend:
+        restart_via_clean_respawn = True
+
+        def is_running_command(self, command):
+            return command == "omp"
+
+        async def ensure_running(self, _binding):
+            calls.append("ensure")
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr("tmuxbot.tmux.tmux_pane_command", lambda _target: "omp")
+    monkeypatch.setattr(
+        "tmuxbot.tmux.tmux_respawn_pane",
+        lambda target, cwd: calls.append(("respawn", target, cwd)) or True,
+    )
+    monkeypatch.setattr(
+        "tmuxbot.tmux.tmux_send_key",
+        lambda *_args: calls.append("key"),
+    )
+    monkeypatch.setattr("tmuxbot.lifecycle.asyncio.sleep", no_sleep)
+
+    b = binding("omp-route")
+    transcript = tmp_path / "session.jsonl"
+    b.provider_session_id = "session-id"
+    b.transcript_path = transcript
+
+    was_running = asyncio.run(
+        restart_binding(
+            OmpBackend(), b, SimpleNamespace(ensure_locks={}), reason="operator-restart"
+        )
+    )
+
+    assert was_running is True
+    assert calls == [("respawn", b.tmux_target, b.cwd), "ensure"]
+    assert b.provider_session_id == "session-id"
+    assert b.transcript_path == transcript

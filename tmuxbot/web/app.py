@@ -49,7 +49,7 @@ from tmuxbot.control_plane.tmux_inventory import (
 from tmuxbot.providers.discovery import ProviderDiscovery, ProviderDiscoveryError
 from tmuxbot.backends.claude_code import ClaudeCodeBackend
 from tmuxbot.backends.codex import CodexBackend
-from tmuxbot.backends.pi import PiBackend
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.providers.adapters import (
     get_provider_adapter,
     managed_provider_names,
@@ -142,7 +142,7 @@ def _read_runtime_model(provider_name: str | None, tmux_target: str) -> str | No
     parser = {
         "claude": ClaudeCodeBackend(),
         "codex": CodexBackend(),
-        "pi": PiBackend(),
+        "omp": OmpBackend(),
     }.get(provider_name or "")
     if parser is None:
         return None
@@ -906,6 +906,9 @@ def create_app(
         project = repository.get_project(managed.project_id)
         if provider is None or project is None:
             raise HTTPException(status_code=409, detail="managed session is incomplete")
+        adapter = get_provider_adapter(provider.binary_name)
+        if adapter is None:
+            raise HTTPException(status_code=409, detail="provider is unmanaged")
         values = (
             body.credential_id,
             body.credential_secret or "",
@@ -918,11 +921,7 @@ def create_app(
         if body.channel == "telegram":
             if ":" not in body.credential_id or not body.boss_id.lstrip("-").isdigit():
                 raise HTTPException(status_code=400, detail="invalid Telegram credentials")
-            token_env = {
-                "claude": "TG_BOT_TOKEN",
-                "codex": "TG_CODEX_BOT_TOKEN",
-                "pi": "TG_PI_BOT_TOKEN",
-            }[provider.binary_name]
+            token_env = adapter.telegram_credential_env
             env_values[token_env] = body.credential_id
             env_values["BOSS_USER_ID"] = body.boss_id
             chat_id: int | str = (
@@ -971,11 +970,7 @@ def create_app(
             "chat_id": chat_id,
             "thread_id": None,
             "bot_token_env": token_env,
-            "backend": {
-                "claude": "claude_code",
-                "codex": "codex",
-                "pi": "pi",
-            }[provider.binary_name],
+            "backend": adapter.route_backend,
             "tmux_session": managed.tmux_session,
             "tmux_window": managed.tmux_window,
             "tmux_pane": managed.tmux_pane,

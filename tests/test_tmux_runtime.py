@@ -131,12 +131,12 @@ def submission_runtime_for(
     )
 
 
-def test_pi_busy_detector_requires_a_live_spinner_status_line():
+def test_omp_busy_detector_rejects_old_powerline_and_bare_spinner():
     assert not _is_tui_busy(
         "assistant transcript: Working... must not block a later command\n"
         "░▒▓ 🔌 provider 🤖 model 🧠 high ⚙ bash×2 🪟 ctx 8.0%/360k"
     )
-    assert _is_tui_busy("⠼ Working...\n░▒▓ 🔌 provider 🤖 model 🧠 high")
+    assert not _is_tui_busy("⠼ Working...\n░▒▓ 🔌 provider 🤖 model 🧠 high")
 
 
 def test_paste_settles_before_enter():
@@ -312,7 +312,7 @@ def test_submission_retry_is_bounded():
 ~/project (main)
 ↑12k ↓3k R8k CH66.7% 9.0%/128k (auto)       gpt-5.6-sol • high
 """,
-            "请分析图片\n@/tmp/tmuxbot-feishu/image.png",
+            None,
         ),
         (
             """────────────────────────────────────────
@@ -321,7 +321,7 @@ def test_submission_retry_is_bounded():
 ~/project
 ? /128k (auto)                               gpt-5.6-sol • high
 """,
-            "",
+            None,
         ),
         (
             """● Todos (1/3)
@@ -334,7 +334,7 @@ image caption
 ░▒▓ 🔌 aisupertoken 🤖 gpt 5.6-sol 🧠 high 📁 tmuxbot 🌿 main 🪟 ctx 42.0%/360k
 📄 JSONL 14.0 MB
 """,
-            "image caption\n@/tmp/tmuxbot-attachments/input.jpg",
+            None,
         ),
     ],
 )
@@ -342,12 +342,12 @@ def test_active_input_text_reads_claude_and_codex_composers(pane, expected):
     assert _active_input_text(pane) == expected
 
 
-def test_pi_working_indicator_blocks_input_until_tui_is_idle():
-    assert _is_tui_busy("⠧ Working...\n~/repo\n↑10k ↓2k 8.0%/128k gpt-5.6 • high")
+def test_omp_working_indicator_requires_native_footer_and_escape_hint():
+    assert not _is_tui_busy("⠧ Working...\n~/repo\n↑10k ↓2k 8.0%/128k gpt-5.6 • high")
     assert not _is_tui_busy("~/repo\n↑10k ↓2k 8.0%/128k gpt-5.6 • high")
 
 
-@pytest.mark.parametrize("backend_name", ["claude_code", "codex", "pi"])
+@pytest.mark.parametrize("backend_name", ["claude_code", "codex", "omp"])
 def test_multiline_attachment_prompt_is_submitted_after_settle(tmp_path, backend_name):
     image = tmp_path / "input.png"
     image.write_bytes(b"png")
@@ -456,14 +456,14 @@ def test_launch_from_shell_ignores_stale_busy_scrollback():
     runtime = runtime_for(fake)
 
     launched = asyncio.run(
-        runtime.safe_launch("pane", "pi --session old", allowed_shells={"bash", "zsh"})
+        runtime.safe_launch("pane", "omp --session old", allowed_shells={"bash", "zsh"})
     )
 
     assert launched
-    assert fake.pasted == ["pi --session old"]
+    assert fake.pasted == ["omp --session old"]
     assert fake.operations == [
         "inspect",
-        "paste:pi --session old",
+        "paste:omp --session old",
         "sleep:0.5",
         "key:Enter",
     ]
@@ -503,9 +503,7 @@ def test_launch_from_shell_does_not_require_a_tui_composer():
     )
     fake.foreground = "bash"
 
-    launched = asyncio.run(
-        runtime.safe_launch("pane", "codex", allowed_shells={"bash", "zsh"})
-    )
+    launched = asyncio.run(runtime.safe_launch("pane", "codex", allowed_shells={"bash", "zsh"}))
 
     assert launched
     assert fake.operations == ["inspect", "paste:codex", "sleep:0.5", "key:Enter"]

@@ -4,12 +4,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot.core.events import TerminalState, TerminalStatus
-from tmuxbot.runtime import pi_terminal_health
+from tmuxbot.runtime import omp_terminal_health
 from tmuxbot.state import Binding
 
 
-class PiBackend:
-    name = "pi"
+class OmpBackend:
+    name = "omp"
 
     def __init__(self, transcript: Path, *, state=TerminalState.WORKING, label="⠋ Working..."):
         self.transcript = transcript
@@ -48,14 +48,14 @@ def binding(tmp_path: Path) -> Binding:
         encoding="utf-8",
     )
     return Binding(
-        name="pi-route",
+        name="omp-route",
         chat_id=123,
         thread_id=456,
-        tmux_session="pi-route",
+        tmux_session="omp-route",
         tmux_window=0,
         tmux_pane=0,
         cwd=tmp_path,
-        backend="pi",
+        backend="omp",
         provider_session_id="session-1",
         transcript_path=transcript,
     )
@@ -63,81 +63,97 @@ def binding(tmp_path: Path) -> Binding:
 
 def test_idle_working_retry_and_active_tool_are_silent(tmp_path, monkeypatch):
     route = binding(tmp_path)
-    backend = PiBackend(route.transcript_path)
+    backend = OmpBackend(route.transcript_path)
     frontend = Frontend(route, backend)
     state = SimpleNamespace(
         compaction_status={}, pending_session_handoff_after=None, ensure_locks={}
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nfooter")
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda _target, _name: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nfooter"
+    )
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "provider_has_active_workload", lambda _target, _name: False
+    )
 
     registry = {}
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert frontend.sent == []
 
     backend.status = TerminalStatus(state=TerminalState.IDLE, label="ready")
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     backend.status = TerminalStatus(state=TerminalState.WORKING, label="⠙ Retrying...")
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     backend.status = TerminalStatus(state=TerminalState.WORKING, label="⠹ Working...")
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda _target, _name: True)
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    monkeypatch.setattr(
+        omp_terminal_health, "provider_has_active_workload", lambda _target, _name: True
+    )
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert frontend.sent == []
     assert registry == {}
 
 
 def test_three_unchanged_working_audits_notify_once_at_exact_endpoint(tmp_path, monkeypatch):
     route = binding(tmp_path)
-    backend = PiBackend(route.transcript_path)
+    backend = OmpBackend(route.transcript_path)
     frontend = Frontend(route, backend)
     state = SimpleNamespace(
         compaction_status={}, pending_session_handoff_after=None, ensure_locks={}
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nstatic screen")
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda _target, _name: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nstatic screen"
+    )
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "provider_has_active_workload", lambda _target, _name: False
+    )
 
     registry = {}
     for _ in range(4):
-        asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+        asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
 
     assert len(frontend.sent) == 1
     assert frontend.sent[0][:2] == (123, 456)
     assert "疑似失活" in frontend.sent[0][2]
-    assert "pi-route:0.0" in frontend.sent[0][2]
+    assert "omp-route:0.0" in frontend.sent[0][2]
 
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert len(frontend.sent) == 1
 
 
-def test_transcript_or_screen_progress_resets_stall_and_allows_later_new_alert(tmp_path, monkeypatch):
+def test_transcript_or_screen_progress_resets_stall_and_allows_later_new_alert(
+    tmp_path, monkeypatch
+):
     route = binding(tmp_path)
-    backend = PiBackend(route.transcript_path)
+    backend = OmpBackend(route.transcript_path)
     frontend = Frontend(route, backend)
     state = SimpleNamespace(
         compaction_status={}, pending_session_handoff_after=None, ensure_locks={}
     )
     capture = {"value": "⠋ Working...\nfirst"}
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: capture["value"])
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda _target, _name: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "tmux_capture", lambda _target, _lines: capture["value"]
+    )
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "provider_has_active_workload", lambda _target, _name: False
+    )
 
     registry = {}
     for _ in range(3):
-        asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+        asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert frontend.sent == []
     assert registry[route.name]["stalled_samples"] == 2
 
     capture["value"] = "⠙ Working...\nnew tool output"
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert registry[route.name]["stalled_samples"] == 0
 
     for _ in range(3):
-        asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+        asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert len(frontend.sent) == 1
 
 
@@ -145,7 +161,7 @@ def test_terminal_error_sidecar_notifies_once_without_waiting_for_stall_samples(
     tmp_path, monkeypatch
 ):
     route = binding(tmp_path)
-    backend = PiBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
+    backend = OmpBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
     frontend = Frontend(route, backend)
     state = SimpleNamespace(compaction_status={}, ensure_locks={})
     route.transcript_path.write_text(
@@ -160,13 +176,13 @@ def test_terminal_error_sidecar_notifies_once_without_waiting_for_stall_samples(
         response_id="response-1",
         error_message="503 unavailable",
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "read_session_health", lambda _target, _cwd: health)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(omp_terminal_health, "read_session_health", lambda _target, _cwd: health)
 
     registry = {}
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
 
     assert len(frontend.sent) == 1
     assert frontend.sent[0][:2] == (123, 456)
@@ -193,7 +209,7 @@ def test_aborted_terminal_error_sidecar_is_silent(tmp_path, monkeypatch):
         + "\n",
         encoding="utf-8",
     )
-    backend = PiBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
+    backend = OmpBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
     frontend = Frontend(route, backend)
     state = SimpleNamespace(compaction_status={}, ensure_locks={})
     health = SimpleNamespace(
@@ -203,13 +219,13 @@ def test_aborted_terminal_error_sidecar_is_silent(tmp_path, monkeypatch):
         response_id="response-aborted",
         error_message=message,
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "read_session_health", lambda _target, _cwd: health)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "idle")
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda *_args: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(omp_terminal_health, "read_session_health", lambda _target, _cwd: health)
+    monkeypatch.setattr(omp_terminal_health, "tmux_capture", lambda _target, _lines: "idle")
+    monkeypatch.setattr(omp_terminal_health, "provider_has_active_workload", lambda *_args: False)
 
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, {}))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, {}))
 
     assert frontend.sent == []
 
@@ -222,7 +238,7 @@ def test_stale_terminal_error_is_silent_after_later_user_message(tmp_path, monke
         + '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"retry"}]}}\n',
         encoding="utf-8",
     )
-    backend = PiBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
+    backend = OmpBackend(route.transcript_path, state=TerminalState.IDLE, label="ready")
     frontend = Frontend(route, backend)
     state = SimpleNamespace(compaction_status={}, ensure_locks={})
     health = SimpleNamespace(
@@ -232,21 +248,21 @@ def test_stale_terminal_error_is_silent_after_later_user_message(tmp_path, monke
         response_id="response-1",
         error_message="failed",
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
-    monkeypatch.setattr(pi_terminal_health, "read_session_health", lambda _target, _cwd: health)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "idle")
-    monkeypatch.setattr(pi_terminal_health, "provider_has_active_workload", lambda *_args: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: True)
+    monkeypatch.setattr(omp_terminal_health, "read_session_health", lambda _target, _cwd: health)
+    monkeypatch.setattr(omp_terminal_health, "tmux_capture", lambda _target, _lines: "idle")
+    monkeypatch.setattr(omp_terminal_health, "provider_has_active_workload", lambda *_args: False)
 
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, {}))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, {}))
 
     assert frontend.sent == []
 
 
 def test_notification_registry_is_private_and_survives_bridge_restart(tmp_path, monkeypatch):
-    path = tmp_path / "state" / "pi-terminal-health.json"
+    path = tmp_path / "state" / "omp-terminal-health.json"
     registry = {
-        "pi-route": {
+        "omp-route": {
             "fingerprint": "fingerprint",
             "session_id": "session-1",
             "stalled_samples": 3,
@@ -254,28 +270,30 @@ def test_notification_registry_is_private_and_survives_bridge_restart(tmp_path, 
         }
     }
 
-    pi_terminal_health.save_pi_terminal_health_registry(path, registry)
+    omp_terminal_health.save_omp_terminal_health_registry(path, registry)
 
-    assert pi_terminal_health.load_pi_terminal_health_registry(path) == registry
+    assert omp_terminal_health.load_omp_terminal_health_registry(path) == registry
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
     path.write_text("not json", encoding="utf-8")
-    assert pi_terminal_health.load_pi_terminal_health_registry(path) == {}
+    assert omp_terminal_health.load_omp_terminal_health_registry(path) == {}
 
 
-def test_unpinned_or_unsafe_pi_route_fails_closed(tmp_path, monkeypatch):
+def test_unpinned_or_unsafe_omp_route_fails_closed(tmp_path, monkeypatch):
     route = binding(tmp_path)
     route.provider_session_id = None
-    backend = PiBackend(route.transcript_path)
+    backend = OmpBackend(route.transcript_path)
     frontend = Frontend(route, backend)
     state = SimpleNamespace(
         compaction_status={}, pending_session_handoff_after=None, ensure_locks={}
     )
-    monkeypatch.setattr(pi_terminal_health, "tmux_has_session", lambda _session: True)
-    monkeypatch.setattr(pi_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nstatic")
-    monkeypatch.setattr(pi_terminal_health, "provider_tree_is_safe", lambda _target, _name: False)
+    monkeypatch.setattr(omp_terminal_health, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(
+        omp_terminal_health, "tmux_capture", lambda _target, _lines: "⠋ Working...\nstatic"
+    )
+    monkeypatch.setattr(omp_terminal_health, "provider_tree_is_safe", lambda _target, _name: False)
 
     registry = {}
-    asyncio.run(pi_terminal_health.audit_pi_terminals_once([frontend], state, registry))
+    asyncio.run(omp_terminal_health.audit_omp_terminals_once([frontend], state, registry))
     assert registry == {}
     assert frontend.sent == []

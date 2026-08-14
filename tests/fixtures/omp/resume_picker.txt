@@ -1,0 +1,6 @@
+Resume session
+→ Native adapter migration                 2 minutes ago
+  Release smoke                            yesterday
+↑/↓ navigate • enter select • esc close
+╭── π  > ⬢ GPT-5.6 Sol (AISuperToken) · ◕ high > 📁 ~/claude-project/tmuxbot > ⑂ main > ◫ 43.5%/360K > $0.131 ▶ ──╮
+╰─ ─╯
