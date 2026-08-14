@@ -67,6 +67,8 @@ Uniqueness invariants:
 
 Direct file editing is allowed. `tmuxbot route validate` is available now; `tmuxbot route reload` is planned as a deterministic helper, not an authority boundary. Writes performed by tmuxbot use a temporary file, validate the complete candidate, then atomically replace YAML.
 
+Non-admin OMP project routes use one canonical project key: `<project>-omp`. The route name and its single-pane tmux session must be identical, e.g. `repo-review-omp` → `repo-review-omp:0.0`; the privileged `tmuxbot-admin` route is the explicit exception. Migrate an existing route with `tmuxbot admin rename-project OLD --new-name PROJECT-omp --keep-cwd`: review the plan, then repeat with `--apply`. It preserves the exact endpoint, cwd, adapter, and provider session pin while renaming and respawning the one target; do not rename a bound OMP session manually.
+
 ## Admin DM
 
 The admin route is enabled explicitly. Its default target directory is the dedicated XDG workspace `$XDG_DATA_HOME/tmuxbot/admin` (normally `~/.local/share/tmuxbot/admin`), overridden by `TMUXBOT_ADMIN_CWD`. tmuxbot creates it with mode `0700`. Its CLI is configured by `TMUXBOT_ADMIN_CLI` and may be `omp`, `claude_code`, or `codex`. A persisted `admin: true` YAML record stores session identity only; without `TMUXBOT_ADMIN_ENABLED=1` it is ignored and cannot grant Admin capability.
@@ -107,6 +109,7 @@ tmuxbot admin create-topic --env-file PATH --channel telegram|feishu ... [--crea
 tmuxbot admin bind-topic ... [--create-target] [--apply]
 tmuxbot admin move-topic ROUTE ... [--apply]
 tmuxbot admin verify ROUTE [--json]
+tmuxbot admin rename-project ROUTE --new-name PROJECT-omp --keep-cwd [--apply]
 # Recovery only after an operator directly switched the running OMP TUI session:
 # validate the exact session header + cwd, review plan, then repeat with --apply.
 tmuxbot admin adopt-omp-session ROUTE --session-file /absolute/omp-session.jsonl [--apply]
