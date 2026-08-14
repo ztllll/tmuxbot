@@ -27,6 +27,8 @@
 
 ### Fixed
 
+- 修复 OMP IM 状态栏与当前原生 footer 不一致：保留 TUI 的模型/provider 显示名，按 `model → effort → cwd → branch → context → cost → session → loader` 顺序渲染，识别 `⟲` 自动压缩和尾部会话标题；累计 input/output/cache 仍归 `/info`，不再挤入状态栏。
+
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
 
 ### Changed

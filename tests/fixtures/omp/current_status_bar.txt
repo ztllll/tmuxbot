@@ -1,0 +1,5 @@
+Historical output can contain stale status text.
+────────────────────────────────────────────────────────
+⠸ 读取 OMP 状态栏契约测试 ⟦esc⟧
+╭── π  > ⬢ GPT-5.6 Sol (AISuperToken) · ◕ xhigh > 📁 ~/claude-project/tmuxbot > ⑂ main > ◫ 48.8%/360K ⟲ > $56.80 ▶────────────◀ 将 todo 也改为中文 ──╮
+╰─ ─╯

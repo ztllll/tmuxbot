@@ -1,10 +1,13 @@
+import asyncio
 from pathlib import Path
 
 import pytest
+from tmuxbot import jsonl
 
 from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.command_adapter import handle_semantic_action, handle_tui_action
-from tmuxbot.core.events import TerminalState
+from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState
+from tmuxbot.jsonl import _capture_terminal_status
 from tmuxbot.picker import detect_omp_interaction
 from tmuxbot.state import Binding
 from tmuxbot.tmux import _active_input_text, _is_tui_busy
@@ -45,6 +48,39 @@ def test_idle_footer_parses_only_native_omp_17_3_2_fields():
     assert status.context_limit == 360_000
     assert status.context_used == 151_200
     assert status.cost_usd == pytest.approx(0.125)
+
+
+def test_current_omp_status_bar_keeps_native_labels_order_and_fields(tmp_path, monkeypatch):
+    class MetadataBackend(OmpBackend):
+        def current_runtime_metadata(self, _binding):
+            return ProviderRuntimeMetadata(
+                provider="aisupertoken",
+                model="gpt-5.6-sol",
+                effort="xhigh",
+                session_name="stale transcript title",
+                input_tokens=826_804,
+                output_tokens=96_813,
+                cache_read_tokens=59_213_696,
+                cache_hit_rate=0.9847,
+                cost_usd=57.16,
+            )
+
+    pane = capture("current_status_bar.txt")
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda *_args: pane)
+    backend = MetadataBackend()
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), backend))
+
+    assert status is not None
+    assert status.provider == "AISuperToken"
+    assert status.model == "GPT-5.6 Sol"
+    assert status.session_name == "将 todo 也改为中文"
+    assert status.auto_compact is True
+    assert backend.format_status_footer(status) == (
+        "⬢ GPT-5.6 Sol (AISuperToken) · ◕ xhigh · "
+        "📁 ~/claude-project/tmuxbot · ⑂ main · ◫ 48.8%/360K ⟲ · "
+        "$56.80 · 将 todo 也改为中文 · "
+        "⠸ 读取 OMP 状态栏契约测试 ⟦esc⟧"
+    )
 
 
 def test_active_loader_is_current_and_historical_loader_text_is_not():

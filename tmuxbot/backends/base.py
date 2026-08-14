@@ -91,6 +91,11 @@ class Backend(ABC):
         return None
 
     @property
+    def prefers_native_status_identity(self) -> bool:
+        """Keep provider/model/effort labels captured from the current native footer."""
+        return False
+
+    @property
     def accepts_input_while_busy(self) -> bool:
         return self.capabilities.accepts_input_while_busy
 

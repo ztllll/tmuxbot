@@ -65,7 +65,7 @@ log = logging.getLogger("tmuxbot")
 # footer pair are accepted here.
 _OMP_CONTEXT_RE = re.compile(
     r"(?:(?P<percent>\d+(?:\.\d+)?)%|\?)\s*/\s*"
-    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)\s*(?P<auto>\(auto\))?"
+    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)(?:\s*(?P<auto>\(auto\)|⟲))?"
 )
 _OMP_COST_RE = re.compile(r"(?:^|\s|[•·])\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?")
 _OMP_EFFORT_RE = re.compile(
@@ -86,6 +86,7 @@ _OMP_SESSION_LABEL_RE = re.compile(
     r"(?:^|[•·]\s*)(?:plan|session)\s*[:#]\s*(?P<label>[^•·]+)",
     re.I,
 )
+_OMP_ACTIVE_LABEL_RE = re.compile(r"▶[─━-]*◀\s*(?P<label>.+?)\s*$")
 
 
 def _start_cmd(transcript_path: str | Path | None = None) -> str:
@@ -139,6 +140,22 @@ def _format_omp_tokens(count: int) -> str:
     if count < 10_000_000:
         return f"{count / 1_000_000:.1f}M"
     return f"{round(count / 1_000_000)}M"
+
+
+def _format_omp_status_percent(value: float) -> str:
+    return str(int(value)) if value.is_integer() else f"{value:.1f}"
+
+
+def _format_omp_context_limit(count: int) -> str:
+    if count >= 1_000_000 and count % 1_000_000 == 0:
+        return f"{count // 1_000_000}M"
+    if count >= 1_000 and count % 1_000 == 0:
+        return f"{count // 1_000}K"
+    return _format_omp_tokens(count).replace("k", "K")
+
+
+def _format_omp_cost(value: float) -> str:
+    return f"{value:.3f}" if abs(value) < 1 else f"{value:.2f}"
 
 
 def _parse_omp_location_line(line: str) -> tuple[str | None, str | None, str | None]:
@@ -298,6 +315,10 @@ class OmpBackend(Backend):
     def restart_via_clean_respawn(self) -> bool:
         return True
 
+    @property
+    def prefers_native_status_identity(self) -> bool:
+        return True
+
     def format_remote_interaction_notice(self, binding: "Binding", interaction_label: str) -> str:
         return omp_ssh_interaction_notice(binding, interaction_label=interaction_label)
 
@@ -356,6 +377,7 @@ class OmpBackend(Backend):
         icon_branch_match = _OMP_ICON_BRANCH_RE.search(footer)
         location_match = _OMP_LOCATION_RE.search(footer)
         label_match = _OMP_SESSION_LABEL_RE.search(footer)
+        active_label_match = _OMP_ACTIVE_LABEL_RE.search(top)
         cost_match = _OMP_COST_RE.search(footer)
         cwd = (
             icon_cwd_match.group("cwd").strip()
@@ -379,7 +401,13 @@ class OmpBackend(Backend):
             effort=effort_match.group("effort").lower() if effort_match else None,
             cwd=cwd,
             git_branch=git_branch,
-            session_name=label_match.group("label").strip() if label_match else None,
+            session_name=(
+                active_label_match.group("label").strip()
+                if active_label_match
+                else label_match.group("label").strip()
+                if label_match
+                else None
+            ),
             cost_usd=float(cost_match.group("value")) if cost_match else None,
             subscription=bool(cost_match.group("subscription")) if cost_match else None,
             context_used=context_used,
@@ -705,54 +733,37 @@ class OmpBackend(Backend):
         if status is None:
             return None
         parts: list[str] = []
-        if status.provider:
-            parts.append(f"🔌 {status.provider}")
+
         if status.model:
-            parts.append(f"🤖 {status.model}")
+            identity = f"⬢ {status.model}"
+            if status.provider:
+                identity += f" ({status.provider})"
+            parts.append(identity)
+        elif status.provider:
+            parts.append(f"⬢ {status.provider}")
         if status.effort:
-            parts.append(f"🧠 {status.effort}")
-
-        tokens: list[str] = []
-        if status.input_tokens is not None:
-            tokens.append(f"↑{_format_omp_tokens(status.input_tokens)}")
-        if status.output_tokens is not None:
-            tokens.append(f"↓{_format_omp_tokens(status.output_tokens)}")
-        if tokens:
-            parts.append(f"🔢 {' '.join(tokens)}")
-
-        cache: list[str] = []
-        if status.cache_read_tokens is not None:
-            cache.append(f"R{_format_omp_tokens(status.cache_read_tokens)}")
-        if status.cache_write_tokens is not None:
-            cache.append(f"W{_format_omp_tokens(status.cache_write_tokens)}")
-        if status.cache_hit_rate is not None:
-            cache.append(f"CH{status.cache_hit_rate * 100:.1f}%")
-        if cache:
-            parts.append(f"📦 {' '.join(cache)}")
-        if status.cost_usd is not None or status.subscription:
-            cost = status.cost_usd or 0.0
-            parts.append(f"💸 ${cost:.3f}{' (sub)' if status.subscription else ''}")
-
-        if status.context_limit is not None:
-            context = "?"
-            if status.context_used is not None:
-                context = _format_omp_tokens(status.context_used)
-            context += f"/{_format_omp_tokens(status.context_limit)}"
-            details: list[str] = []
-            if status.context_percent is not None:
-                details.append(f"{status.context_percent:.1f}%")
-            if status.auto_compact:
-                details.append("auto")
-            if details:
-                context += f" ({', '.join(details)})"
-            parts.append(f"🪟 {context}")
-
+            parts.append(f"◕ {status.effort}")
         if status.cwd:
             parts.append(f"📁 {status.cwd}")
         if status.git_branch:
-            parts.append(f"🌿 {status.git_branch}")
+            parts.append(f"⑂ {status.git_branch}")
+
+        if status.context_limit is not None:
+            percent = (
+                f"{_format_omp_status_percent(status.context_percent)}%"
+                if status.context_percent is not None
+                else "?"
+            )
+            context = f"◫ {percent}/{_format_omp_context_limit(status.context_limit)}"
+            if status.auto_compact:
+                context += " ⟲"
+            parts.append(context)
+
+        if status.cost_usd is not None or status.subscription:
+            cost = _format_omp_cost(status.cost_usd or 0.0)
+            parts.append(f"${cost}{' (sub)' if status.subscription else ''}")
         if status.session_name:
-            parts.append(f"🏷 {status.session_name}")
+            parts.append(status.session_name)
         if status.extension_statuses:
             parts.append(" ".join(status.extension_statuses))
         if status.state != TerminalState.IDLE:

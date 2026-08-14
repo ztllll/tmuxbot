@@ -507,13 +507,21 @@ async def _capture_terminal_status(
                 cost_usd=metadata.cost_usd,
             )
         return None
-    # Transcript metadata is authoritative. TUI scrollback can contain a tool/subagent
-    # label (for example ``claude-code-guide``) that looks like a model name.
+    # Transcript metadata fills fields omitted by the TUI. OMP's paired native footer
+    # owns its human-facing provider/model/effort labels; other adapters keep the
+    # historical transcript-authoritative identity policy.
+    prefer_native_identity = bool(getattr(backend, "prefers_native_status_identity", False))
     if any(
         (
-            metadata.provider and status.provider != metadata.provider,
-            metadata.model and status.model != metadata.model,
-            metadata.effort and status.effort != metadata.effort,
+            metadata.provider
+            and status.provider != metadata.provider
+            and not (prefer_native_identity and status.provider),
+            metadata.model
+            and status.model != metadata.model
+            and not (prefer_native_identity and status.model),
+            metadata.effort
+            and status.effort != metadata.effort
+            and not (prefer_native_identity and status.effort),
             status.permission_mode is None and metadata.permission_mode,
             status.session_name is None and metadata.session_name,
             status.input_tokens is None and metadata.input_tokens is not None,
@@ -526,9 +534,21 @@ async def _capture_terminal_status(
     ):
         return replace(
             status,
-            provider=metadata.provider or status.provider,
-            model=metadata.model or status.model,
-            effort=metadata.effort or status.effort,
+            provider=(
+                status.provider
+                if prefer_native_identity and status.provider
+                else metadata.provider or status.provider
+            ),
+            model=(
+                status.model
+                if prefer_native_identity and status.model
+                else metadata.model or status.model
+            ),
+            effort=(
+                status.effort
+                if prefer_native_identity and status.effort
+                else metadata.effort or status.effort
+            ),
             permission_mode=status.permission_mode or metadata.permission_mode,
             session_name=status.session_name or metadata.session_name,
             input_tokens=(
