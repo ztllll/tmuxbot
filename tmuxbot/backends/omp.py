@@ -1289,7 +1289,7 @@ class OmpBackend(Backend):
                 max_iters=20,
                 expect_new_session=True,
                 defer_new_session_persistence=True,
-                done_pattern=re.compile(r"✓\s*New session started", re.I),
+                done_pattern=re.compile(r"[✓✔]\s*New session started", re.I),
                 fallback_summary="✅ <b>OMP 新会话已启动</b>\n· 新会话将在首条回复落盘后绑定",
             ),
             "/fork": CmdOpts(

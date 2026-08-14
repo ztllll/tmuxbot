@@ -36,7 +36,7 @@ class OmpBackend:
                 max_iters=1,
                 expect_new_session=True,
                 defer_new_session_persistence=True,
-                done_pattern=re.compile(r"✓\s*New session started"),
+                done_pattern=re.compile(r"[✓✔]\s*New session started"),
                 fallback_summary="✅ <b>OMP 新会话已启动</b>",
             )
         }
@@ -129,10 +129,10 @@ class Frontend:
         self.pre.append((chat_id, thread_id, text))
 
 
-def test_omp_new_does_not_require_jsonl_before_first_assistant_reply(monkeypatch):
+def test_omp_new_accepts_actual_tui_marker_without_waiting_for_jsonl(monkeypatch):
     item = binding()
     frontend = Frontend()
-    monkeypatch.setattr("tmuxbot.commands.tmux_capture", lambda *_args: "✓ New session started")
+    monkeypatch.setattr("tmuxbot.commands.tmux_capture", lambda *_args: "✔ New session started")
 
     asyncio.run(
         capture_and_push(

@@ -810,6 +810,9 @@ def test_command_options_match_native_omp_control_semantics():
     assert set(opts) == {"/new", "/fork", "/compact", "/clear", "/fresh"}
     assert opts["/new"].expect_new_session is True
     assert opts["/new"].defer_new_session_persistence is True
+    assert opts["/new"].done_pattern is not None
+    assert opts["/new"].done_pattern.search("✓ New session started")
+    assert opts["/new"].done_pattern.search("✔ New session started")
     assert opts["/fork"].expect_new_session is True
     assert opts["/fork"].expect_session_handoff is True
     assert opts["/compact"].expect_compact_done is True
