@@ -1,0 +1,6 @@
+Historical output must not be parsed as current status.
+
+ - 正在分析新版状态栏 [esc]
+
++-- [M] GPT-5.6 Sol (AISuperToken) - [xhi] > [D] ~/claude-project/tmuxbot > @ main - 通用状态适配 < tok: 1.6M < $63.05 < ctx: 66.8%/360K [A] --+
++-                                                                                  -+

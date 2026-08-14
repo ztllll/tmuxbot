@@ -1,0 +1,4 @@
+\ 正在处理窄状态栏 [esc]
+
++-- [M] GPT-5.6 Sol (AISuperToken) - [xhi] > [D] ~/claude-project/tmuxbot > @ main *7 ?1 - 通用状态适配 < tok: 1.6M < $67.24 --+
++-                                                                                  -+

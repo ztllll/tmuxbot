@@ -490,6 +490,9 @@ async def _capture_terminal_status(
                 metadata.cache_write_tokens,
                 metadata.cache_hit_rate,
                 metadata.cost_usd,
+                metadata.context_used,
+                metadata.context_limit,
+                metadata.context_percent,
             )
         ):
             return TerminalStatus(
@@ -505,6 +508,9 @@ async def _capture_terminal_status(
                 cache_write_tokens=metadata.cache_write_tokens,
                 cache_hit_rate=metadata.cache_hit_rate,
                 cost_usd=metadata.cost_usd,
+                context_used=metadata.context_used,
+                context_limit=metadata.context_limit,
+                context_percent=metadata.context_percent,
             )
         return None
     # Transcript metadata fills fields omitted by the TUI. OMP's paired native footer
@@ -530,6 +536,9 @@ async def _capture_terminal_status(
             status.cache_write_tokens is None and metadata.cache_write_tokens is not None,
             status.cache_hit_rate is None and metadata.cache_hit_rate is not None,
             status.cost_usd is None and metadata.cost_usd is not None,
+            status.context_used is None and metadata.context_used is not None,
+            status.context_limit is None and metadata.context_limit is not None,
+            status.context_percent is None and metadata.context_percent is not None,
         )
     ):
         return replace(
@@ -573,6 +582,17 @@ async def _capture_terminal_status(
                 else metadata.cache_hit_rate
             ),
             cost_usd=(status.cost_usd if status.cost_usd is not None else metadata.cost_usd),
+            context_used=(
+                status.context_used if status.context_used is not None else metadata.context_used
+            ),
+            context_limit=(
+                status.context_limit if status.context_limit is not None else metadata.context_limit
+            ),
+            context_percent=(
+                status.context_percent
+                if status.context_percent is not None
+                else metadata.context_percent
+            ),
         )
     return status
 

@@ -29,13 +29,16 @@ _TUI_BUSY_RE = re.compile(
     _TUI_BUSY_VERBS + r"[…\.]*\s*[^\n]{0,30}?\(\s*\d+(?:m\s+\d+)?s",  # 必须 ( 开头时间
     re.I,
 )
-# OMP 17.3.2 weak screen signals. A footer is current only when its native
-# pair is the last two non-empty pane lines; stale scrollback and old powerline
-# status bars deliberately fail closed.
+# OMP screen text is a weak signal. A footer is current only when one known frame
+# pair occupies the last two non-empty pane lines. Field parsing is semantic and
+# lives in OmpBackend; this seam only proves that the candidate is the live footer.
 _OMP_FOOTER_TOP_RE = re.compile(r"^\s*╭── π(?:\s.*)?╮\s*$")
 _OMP_FOOTER_BOTTOM_RE = re.compile(r"^\s*╰─(?:.*)─╯\s*$")
+_OMP_COMPACT_FOOTER_TOP_RE = re.compile(r"^\s*\+--\s+.+\s+--\+\s*$")
+_OMP_COMPACT_FOOTER_BOTTOM_RE = re.compile(r"^\s*\+-[ \t]*-\+\s*$")
+_OMP_STATUS_HINT_RE = re.compile(r"(?:⬢|\[M\]|\bctx\s*:|\d+(?:\.\d+)?%\s*/)", re.I)
 _OMP_LIVE_LOADER_RE = re.compile(
-    r"^\s*[\u2801-\u28ff]\s+.+?\s*⟦esc⟧\s*$",
+    r"^\s*(?:[\u2801-\u28ff]|[-\\|/])[ \t]+.+?[ \t]*(?:⟦esc⟧|\[esc\])[ \t]*$",
     re.I,
 )
 _COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")
@@ -46,16 +49,22 @@ _CODEX_STATUS_RE = re.compile(
 
 
 def find_omp_footer_pair(lines: list[str]) -> tuple[int, int] | None:
-    """Locate the current native OMP footer pair in already de-ANSI lines."""
+    """Locate a current supported OMP footer frame in already de-ANSI lines."""
     nonempty = [index for index, line in enumerate(lines) if line.strip()]
     if len(nonempty) < 2:
         return None
     top_index, bottom_index = nonempty[-2:]
-    if not _OMP_FOOTER_TOP_RE.fullmatch(lines[top_index]):
-        return None
-    if not _OMP_FOOTER_BOTTOM_RE.fullmatch(lines[bottom_index]):
-        return None
-    return top_index, bottom_index
+    top = lines[top_index]
+    bottom = lines[bottom_index]
+    if _OMP_FOOTER_TOP_RE.fullmatch(top) and _OMP_FOOTER_BOTTOM_RE.fullmatch(bottom):
+        return top_index, bottom_index
+    if (
+        _OMP_COMPACT_FOOTER_TOP_RE.fullmatch(top)
+        and _OMP_COMPACT_FOOTER_BOTTOM_RE.fullmatch(bottom)
+        and _OMP_STATUS_HINT_RE.search(top)
+    ):
+        return top_index, bottom_index
+    return None
 
 
 def omp_live_loader(pane: str) -> str | None:

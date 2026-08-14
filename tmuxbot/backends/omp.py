@@ -11,6 +11,7 @@ import asyncio
 import html
 import json
 import logging
+import os
 import re
 import shlex
 import time
@@ -18,6 +19,8 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import yaml
 
 from tmuxbot.backends.base import Backend, CmdOpts
 from tmuxbot.core.capabilities import ProviderCapabilities
@@ -60,24 +63,42 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("tmuxbot")
 
-# OMP 17.3.2 screen text is deliberately a weak, versioned signal.  JSONL owns
-# model/provider/usage; only fields unambiguously present inside the native
-# footer pair are accepted here.
+# OMP screen text is deliberately a weak signal. The tmux seam proves that the
+# candidate is the live footer; these patterns extract semantic fields without
+# depending on one version's frame, icon set, or field order.
 _OMP_CONTEXT_RE = re.compile(
     r"(?:(?P<percent>\d+(?:\.\d+)?)%|\?)\s*/\s*"
-    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)(?:\s*(?P<auto>\(auto\)|⟲))?"
-)
-_OMP_COST_RE = re.compile(r"(?:^|\s|[•·])\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?")
-_OMP_EFFORT_RE = re.compile(
-    r"(?:^|[•·]\s*)(?:effort\s*[:=]?\s*)?"
-    r"(?P<effort>off|minimal|low|medium|high|xhigh|max)"
-    r"(?=\s*(?:[•·]|$))",
+    r"(?P<limit>\d+(?:\.\d+)?[kKmM]?)(?:\s*(?P<auto>\(auto\)|⟲|\[A\]|auto))?",
     re.I,
 )
-_OMP_ICON_MODEL_RE = re.compile(r"⬢\s*(?P<model>.+?)\s+\((?P<provider>[^()]+)\)(?=\s*[·>]|$)")
-_OMP_ICON_EFFORT_RE = re.compile(r"◕\s*(?P<effort>off|minimal|low|medium|high|xhigh|max)\b", re.I)
-_OMP_ICON_CWD_RE = re.compile(r"📁\s*(?P<cwd>.+?)(?=\s*(?:>\s*)?(?:⑂|◫|◕|\$)|\s*[•·]|$)")
-_OMP_ICON_BRANCH_RE = re.compile(r"⑂\s*(?P<branch>\S+)")
+_OMP_COST_RE = re.compile(
+    r"(?:^|\s|[•·<>-])\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
+)
+_OMP_EFFORT_RE = re.compile(
+    r"(?:^|[•·<>-]\s*)(?:effort|thinking)\s*[:=]?\s*"
+    r"(?P<effort>off|minimal|low|medium|high|xhigh|max|auto)"
+    r"(?=\s*(?:[•·<>-]|$))",
+    re.I,
+)
+_OMP_ICON_MODEL_RE = re.compile(
+    r"(?:⬢|\[M\]|model\s*[:=])\s*(?P<model>.+?)\s+"
+    r"\((?P<provider>[^()]+)\)(?=\s*(?:[·><-]|$))",
+    re.I,
+)
+_OMP_LABELED_MODEL_RE = re.compile(
+    r"(?:⬢|\[M\]|model\s*[:=])\s*(?P<model>.+?)(?=\s*(?:[·><-]|$))",
+    re.I,
+)
+_OMP_ICON_EFFORT_RE = re.compile(
+    r"(?:◕\s*(?P<effort>off|minimal|low|medium|high|xhigh|max|auto)\b|"
+    r"\[(?P<short>off|min|low|med|hi|xhi|max|auto)\])",
+    re.I,
+)
+_OMP_ICON_CWD_RE = re.compile(
+    r"(?:📁|\[D\])\s*(?P<cwd>.+?)(?=\s*(?:>\s*)?(?:⑂|@|◫|◕|\$|ctx\s*:)|\s*[•·<]|$)",
+    re.I,
+)
+_OMP_ICON_BRANCH_RE = re.compile(r"(?:⑂|@)\s*(?P<branch>\S+)")
 _OMP_LOCATION_RE = re.compile(
     r"(?:^|[•·]\s*)(?P<cwd>~(?:/[^\s•·()]*)?|/(?:[^\s•·()]+))"
     r"(?:\s+\((?P<branch>[^()\n]+)\))?(?=\s*(?:[•·]|$))"
@@ -87,6 +108,34 @@ _OMP_SESSION_LABEL_RE = re.compile(
     re.I,
 )
 _OMP_ACTIVE_LABEL_RE = re.compile(r"▶[─━-]*◀\s*(?P<label>.+?)\s*$")
+_OMP_COMPACT_LABEL_RE = re.compile(r"@\s*\S+\s*-\s*(?P<label>.+?)\s*<\s*tok\s*:", re.I)
+
+_OMP_EFFORT_ALIASES = {
+    "min": "minimal",
+    "med": "medium",
+    "hi": "high",
+    "xhi": "xhigh",
+}
+
+
+def _normalize_omp_effort(match: re.Match[str] | None) -> str | None:
+    if match is None:
+        return None
+    raw = (match.groupdict().get("effort") or match.groupdict().get("short") or "").lower()
+    return _OMP_EFFORT_ALIASES.get(raw, raw) or None
+
+
+def _omp_footer_content(line: str) -> str:
+    value = line.strip()
+    if value.startswith("╭── π"):
+        value = re.sub(r"^╭── π\s*|\s*╮$", "", value)
+    elif value.startswith("╰─"):
+        value = re.sub(r"^╰─\s*|\s*─╯$", "", value)
+    elif value.startswith("+--"):
+        value = re.sub(r"^\+--\s*|\s*--\+$", "", value)
+    elif value.startswith("+-"):
+        return ""
+    return value.strip(" ─-")
 
 
 def _start_cmd(transcript_path: str | Path | None = None) -> str:
@@ -154,8 +203,12 @@ def _format_omp_context_limit(count: int) -> str:
     return _format_omp_tokens(count).replace("k", "K")
 
 
-def _format_omp_cost(value: float) -> str:
-    return f"{value:.3f}" if abs(value) < 1 else f"{value:.2f}"
+def _format_omp_file_size(size_bytes: int) -> str:
+    if size_bytes >= 1_000_000:
+        return f"{size_bytes / 1_000_000:.1f}MB"
+    if size_bytes >= 1_000:
+        return f"{size_bytes / 1_000:.1f}KB"
+    return f"{size_bytes}B"
 
 
 def _parse_omp_location_line(line: str) -> tuple[str | None, str | None, str | None]:
@@ -262,6 +315,7 @@ class OmpBackend(Backend):
     def __init__(self) -> None:
         self._runtime_metadata_cache: dict[Path, tuple[int, int, ProviderRuntimeMetadata]] = {}
         self._plan_mode_cache: dict[Path, tuple[int, int, PlanModeSnapshot | None]] = {}
+        self._model_context_cache: dict[Path, tuple[int, int, dict[tuple[str, str], int]]] = {}
 
     @property
     def start_cmd(self) -> str:
@@ -353,8 +407,8 @@ class OmpBackend(Backend):
             return None
 
         top_index, bottom_index = pair
-        top = re.sub(r"^\s*╭── π\s*|\s*╮\s*$", "", lines[top_index]).strip(" ─")
-        bottom = re.sub(r"^\s*╰─\s*|\s*─╯\s*$", "", lines[bottom_index]).strip(" ─")
+        top = _omp_footer_content(lines[top_index])
+        bottom = _omp_footer_content(lines[bottom_index])
         footer = " • ".join(part for part in (top, bottom) if part)
         loader = omp_live_loader(clean)
 
@@ -372,12 +426,14 @@ class OmpBackend(Backend):
             auto_compact = bool(context_match.group("auto"))
 
         model_match = _OMP_ICON_MODEL_RE.search(footer)
+        fallback_model_match = None if model_match else _OMP_LABELED_MODEL_RE.search(footer)
         effort_match = _OMP_ICON_EFFORT_RE.search(footer) or _OMP_EFFORT_RE.search(footer)
         icon_cwd_match = _OMP_ICON_CWD_RE.search(footer)
         icon_branch_match = _OMP_ICON_BRANCH_RE.search(footer)
         location_match = _OMP_LOCATION_RE.search(footer)
         label_match = _OMP_SESSION_LABEL_RE.search(footer)
         active_label_match = _OMP_ACTIVE_LABEL_RE.search(top)
+        compact_label_match = _OMP_COMPACT_LABEL_RE.search(top)
         cost_match = _OMP_COST_RE.search(footer)
         cwd = (
             icon_cwd_match.group("cwd").strip()
@@ -395,15 +451,23 @@ class OmpBackend(Backend):
         )
         return TerminalStatus(
             provider=model_match.group("provider").strip() if model_match else None,
-            model=model_match.group("model").strip() if model_match else None,
+            model=(
+                model_match.group("model").strip()
+                if model_match
+                else fallback_model_match.group("model").strip()
+                if fallback_model_match
+                else None
+            ),
             state=TerminalState.WORKING if loader else TerminalState.IDLE,
             label=loader or "ready",
-            effort=effort_match.group("effort").lower() if effort_match else None,
+            effort=_normalize_omp_effort(effort_match),
             cwd=cwd,
             git_branch=git_branch,
             session_name=(
                 active_label_match.group("label").strip()
                 if active_label_match
+                else compact_label_match.group("label").strip()
+                if compact_label_match
                 else label_match.group("label").strip()
                 if label_match
                 else None
@@ -589,10 +653,18 @@ class OmpBackend(Backend):
     def enrich_terminal_status(
         self, b: "Binding", status: TerminalStatus | None
     ) -> TerminalStatus | None:
+        transcript = self.find_active_jsonl(b)
+        session_file_size = None
+        if transcript is not None:
+            try:
+                session_file_size = transcript.stat().st_size
+            except OSError:
+                pass
+
         snapshot = self.read_plan_mode(b)
-        if snapshot is None:
-            return status
         if status is None:
+            if session_file_size is None and snapshot is None:
+                return None
             metadata = self.current_runtime_metadata(b)
             return TerminalStatus(
                 state=TerminalState.IDLE,
@@ -600,15 +672,23 @@ class OmpBackend(Backend):
                 model=metadata.model,
                 effort=metadata.effort,
                 session_name=metadata.session_name,
+                session_file_size_bytes=session_file_size,
                 input_tokens=metadata.input_tokens,
                 output_tokens=metadata.output_tokens,
                 cache_read_tokens=metadata.cache_read_tokens,
                 cache_write_tokens=metadata.cache_write_tokens,
                 cache_hit_rate=metadata.cache_hit_rate,
                 cost_usd=metadata.cost_usd,
-                extension_statuses=(snapshot.footer,),
+                extension_statuses=(snapshot.footer,) if snapshot is not None else (),
             )
-        existing = tuple(status.extension_statuses)
+
+        enriched = status
+        if session_file_size is not None and status.session_file_size_bytes != session_file_size:
+            enriched = replace(status, session_file_size_bytes=session_file_size)
+        if snapshot is None:
+            return enriched
+
+        existing = tuple(enriched.extension_statuses)
         has_plan_status = any(
             re.search(
                 r"(?:^|\s)(?:📝\s*)?plan(?:\s+(?:active|ready|saved|implementing|✓))?(?:\s|$|•)",
@@ -618,12 +698,87 @@ class OmpBackend(Backend):
             for item in existing
         )
         if has_plan_status:
-            return status
-        return replace(status, extension_statuses=(*existing, snapshot.footer))
+            return enriched
+        return replace(enriched, extension_statuses=(*existing, snapshot.footer))
 
     def render_extension_footer(self, b: "Binding") -> str:
         snapshot = self.read_plan_mode(b)
         return snapshot.widget if snapshot is not None else ""
+
+    @staticmethod
+    def _model_config_paths(transcript: Path) -> tuple[Path, ...]:
+        candidates: list[Path] = []
+        configured_root = os.getenv("PI_CODING_AGENT_DIR", "").strip()
+        if configured_root:
+            candidates.append(Path(configured_root).expanduser() / "models.yml")
+        for parent in transcript.parents:
+            if parent.name == "sessions":
+                candidates.append(parent.parent / "models.yml")
+                break
+        candidates.append(Path.home() / ".omp" / "agent" / "models.yml")
+        return tuple(dict.fromkeys(candidates))
+
+    def _model_context_limit(
+        self,
+        transcript: Path,
+        provider: str | None,
+        model: str | None,
+    ) -> int | None:
+        if not model:
+            return None
+        model_key = model.lower()
+        provider_key = provider.lower() if provider else None
+        for config_path in self._model_config_paths(transcript):
+            try:
+                stat = config_path.stat()
+            except OSError:
+                continue
+            cached = self._model_context_cache.get(config_path)
+            if cached is None or cached[:2] != (stat.st_size, stat.st_mtime_ns):
+                contexts: dict[tuple[str, str], int] = {}
+                try:
+                    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                except (OSError, yaml.YAMLError, UnicodeError):
+                    raw = {}
+                providers = raw.get("providers") if isinstance(raw, dict) else None
+                if isinstance(providers, dict):
+                    for raw_provider, provider_config in providers.items():
+                        models = (
+                            provider_config.get("models")
+                            if isinstance(provider_config, dict)
+                            else None
+                        )
+                        if not isinstance(raw_provider, str) or not isinstance(models, list):
+                            continue
+                        for item in models:
+                            if not isinstance(item, dict):
+                                continue
+                            raw_model = item.get("id")
+                            context_window = item.get("contextWindow")
+                            if (
+                                isinstance(raw_model, str)
+                                and type(context_window) is int
+                                and context_window > 0
+                            ):
+                                contexts[(raw_provider.lower(), raw_model.lower())] = context_window
+                self._model_context_cache[config_path] = (
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                    contexts,
+                )
+            else:
+                contexts = cached[2]
+
+            if provider_key is not None:
+                exact = contexts.get((provider_key, model_key))
+                if exact is not None:
+                    return exact
+            matches = {
+                limit for (_, candidate), limit in contexts.items() if candidate == model_key
+            }
+            if len(matches) == 1:
+                return matches.pop()
+        return None
 
     def current_runtime_metadata(self, b: "Binding") -> ProviderRuntimeMetadata:
         transcript = self.find_active_jsonl(b)
@@ -655,7 +810,7 @@ class OmpBackend(Backend):
         canonical_model: tuple[str, str] | None = None
         fallback_provider = fallback_model = effort = None
         input_tokens = output_tokens = cache_read = cache_write = 0
-        latest_cache_hit_rate = None
+        latest_cache_hit_rate = latest_context_used = None
         cost_usd = 0.0
         for row in branch:
             row_type = row.get("type")
@@ -691,11 +846,17 @@ class OmpBackend(Backend):
             current_input = _usage_int(usage, "input")
             current_cache_read = _usage_int(usage, "cacheRead")
             current_cache_write = _usage_int(usage, "cacheWrite")
+            current_output = _usage_int(usage, "output")
             input_tokens += current_input
-            output_tokens += _usage_int(usage, "output")
+            output_tokens += current_output
             cache_read += current_cache_read
             cache_write += current_cache_write
             cost_usd += _usage_cost(usage)
+            current_context = _usage_int(usage, "totalTokens") or (
+                current_input + current_output + current_cache_read + current_cache_write
+            )
+            if current_context:
+                latest_context_used = current_context
             prompt_tokens = current_input + current_cache_read + current_cache_write
             if prompt_tokens:
                 latest_cache_hit_rate = current_cache_read / prompt_tokens
@@ -704,6 +865,12 @@ class OmpBackend(Backend):
             provider, model = canonical_model
         else:
             provider, model = fallback_provider, fallback_model
+        context_limit = self._model_context_limit(transcript, provider, model)
+        context_percent = (
+            latest_context_used / context_limit * 100
+            if latest_context_used is not None and context_limit
+            else None
+        )
         metadata = ProviderRuntimeMetadata(
             provider=provider,
             model=model,
@@ -715,6 +882,9 @@ class OmpBackend(Backend):
             cache_write_tokens=cache_write or None,
             cache_hit_rate=latest_cache_hit_rate,
             cost_usd=cost_usd or None,
+            context_used=latest_context_used,
+            context_limit=context_limit,
+            context_percent=context_percent,
         )
         self._runtime_metadata_cache[transcript] = (
             stat.st_size,
@@ -735,18 +905,12 @@ class OmpBackend(Backend):
         parts: list[str] = []
 
         if status.model:
-            identity = f"⬢ {status.model}"
+            identity = status.model
             if status.provider:
                 identity += f" ({status.provider})"
-            parts.append(identity)
+            parts.append(f"模型 {identity}")
         elif status.provider:
-            parts.append(f"⬢ {status.provider}")
-        if status.effort:
-            parts.append(f"◕ {status.effort}")
-        if status.cwd:
-            parts.append(f"📁 {status.cwd}")
-        if status.git_branch:
-            parts.append(f"⑂ {status.git_branch}")
+            parts.append(f"模型 {status.provider}")
 
         if status.context_limit is not None:
             percent = (
@@ -754,23 +918,13 @@ class OmpBackend(Backend):
                 if status.context_percent is not None
                 else "?"
             )
-            context = f"◫ {percent}/{_format_omp_context_limit(status.context_limit)}"
-            if status.auto_compact:
-                context += " ⟲"
-            parts.append(context)
-
-        if status.cost_usd is not None or status.subscription:
-            cost = _format_omp_cost(status.cost_usd or 0.0)
-            parts.append(f"${cost}{' (sub)' if status.subscription else ''}")
-        if status.session_name:
-            parts.append(status.session_name)
+            parts.append(f"上下文 {percent}/{_format_omp_context_limit(status.context_limit)}")
+        if status.effort:
+            parts.append(f"思考 {status.effort}")
+        if status.session_file_size_bytes is not None:
+            parts.append(f"JSON {_format_omp_file_size(status.session_file_size_bytes)}")
         if status.extension_statuses:
             parts.append(" ".join(status.extension_statuses))
-        if status.state != TerminalState.IDLE:
-            state = status.label or status.state.value
-            if status.duration_seconds is not None:
-                state += f" {self._format_duration(status.duration_seconds)}"
-            parts.append(state)
         return " · ".join(parts) or None
 
     def find_tui_activity_fp(self, pane: str) -> str | None:

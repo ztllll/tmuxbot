@@ -3,10 +3,11 @@ import shlex
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tmuxbot.backends import omp
 from tmuxbot.backends.omp import OmpBackend
-from tmuxbot.core.events import ProviderEventKind
+from tmuxbot.core.events import ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.runtime.omp_plan_mode import current_jsonl_branch
 from tmuxbot.state import Binding
 
@@ -89,6 +90,71 @@ def test_omp_runtime_recognizes_custom_binary_basename(monkeypatch):
 
     assert backend.is_running_command("custom-omp")
     assert backend.running_command_names == frozenset({"omp", "custom-omp"})
+
+
+def test_terminal_status_enrichment_uses_exact_session_file_size(tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    transcript = tmp_path / "session.jsonl"
+    write_transcript(transcript, cwd, [])
+    backend = OmpBackend()
+
+    status = backend.enrich_terminal_status(
+        binding(cwd, transcript),
+        TerminalStatus(state=TerminalState.IDLE, model="GPT-5.6 Sol"),
+    )
+
+    assert status is not None
+    assert status.session_file_size_bytes == transcript.stat().st_size
+    assert f"JSON {transcript.stat().st_size}B" in backend.format_status_footer(status)
+
+
+def test_runtime_metadata_derives_context_from_usage_and_model_config(tmp_path):
+    agent_dir = tmp_path / "agent"
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    transcript = agent_dir / "sessions" / "repo" / "session.jsonl"
+    write_transcript(
+        transcript,
+        cwd,
+        [
+            {
+                "type": "model_change",
+                "id": "model",
+                "parentId": None,
+                "model": "demo/gpt-status",
+            },
+            {
+                "type": "message",
+                "id": "assistant",
+                "parentId": "model",
+                "message": {
+                    "role": "assistant",
+                    "provider": "demo",
+                    "model": "gpt-status",
+                    "usage": {
+                        "input": 1_000,
+                        "output": 2_000,
+                        "cacheRead": 177_000,
+                        "cacheWrite": 0,
+                        "totalTokens": 180_000,
+                    },
+                },
+            },
+        ],
+    )
+    (agent_dir / "models.yml").write_text(
+        yaml.safe_dump(
+            {"providers": {"demo": {"models": [{"id": "gpt-status", "contextWindow": 360_000}]}}}
+        ),
+        encoding="utf-8",
+    )
+
+    metadata = OmpBackend().current_runtime_metadata(binding(cwd, transcript))
+
+    assert metadata.context_used == 180_000
+    assert metadata.context_limit == 360_000
+    assert metadata.context_percent == 50.0
 
 
 def test_current_branch_tolerates_title_bad_lines_and_ignores_old_branch(tmp_path):

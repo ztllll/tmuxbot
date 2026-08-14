@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -75,11 +76,62 @@ def test_current_omp_status_bar_keeps_native_labels_order_and_fields(tmp_path, m
     assert status.model == "GPT-5.6 Sol"
     assert status.session_name == "将 todo 也改为中文"
     assert status.auto_compact is True
+    status = replace(status, session_file_size_bytes=13_000_000)
     assert backend.format_status_footer(status) == (
-        "⬢ GPT-5.6 Sol (AISuperToken) · ◕ xhigh · "
-        "📁 ~/claude-project/tmuxbot · ⑂ main · ◫ 48.8%/360K ⟲ · "
-        "$56.80 · 将 todo 也改为中文 · "
-        "⠸ 读取 OMP 状态栏契约测试 ⟦esc⟧"
+        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 48.8%/360K · 思考 xhigh · JSON 13.0MB"
+    )
+
+
+def test_compact_omp_status_bar_uses_the_same_semantic_contract():
+    pane = capture("status_bar_v17_3_3.txt")
+    backend = OmpBackend()
+    status = backend.parse_terminal_status(pane)
+
+    assert status is not None
+    assert status.state == TerminalState.WORKING
+    assert status.label == "- 正在分析新版状态栏 [esc]"
+    assert status.provider == "AISuperToken"
+    assert status.model == "GPT-5.6 Sol"
+    assert status.effort == "xhigh"
+    assert status.context_percent == 66.8
+    assert status.context_limit == 360_000
+    assert status.auto_compact is True
+    assert _is_tui_busy(pane)
+
+    status = replace(status, session_file_size_bytes=13_000_000)
+    assert backend.format_status_footer(status) == (
+        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 66.8%/360K · 思考 xhigh · JSON 13.0MB"
+    )
+
+
+def test_compact_footer_uses_runtime_context_when_width_hides_ctx(tmp_path, monkeypatch):
+    class MetadataBackend(OmpBackend):
+        def current_runtime_metadata(self, _binding):
+            return ProviderRuntimeMetadata(
+                provider="aisupertoken",
+                model="gpt-5.6-sol",
+                effort="xhigh",
+                context_used=274_520,
+                context_limit=360_000,
+                context_percent=274_520 / 360_000 * 100,
+            )
+
+    pane = capture("status_bar_v17_3_3_narrow.txt")
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda *_args: pane)
+    backend = MetadataBackend()
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), backend))
+
+    assert status is not None
+    assert status.label == "\\ 正在处理窄状态栏 [esc]"
+    assert status.state == TerminalState.WORKING
+    assert _is_tui_busy(pane)
+    assert status.provider == "AISuperToken"
+    assert status.model == "GPT-5.6 Sol"
+    assert status.context_used == 274_520
+    assert status.context_limit == 360_000
+    assert status.context_percent == pytest.approx(76.2555, rel=1e-4)
+    assert backend.format_status_footer(status) == (
+        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 76.3%/360K · 思考 xhigh"
     )
 
 

@@ -42,6 +42,9 @@ class ProviderRuntimeMetadata:
     cache_write_tokens: int | None = None
     cache_hit_rate: float | None = None
     cost_usd: float | None = None
+    context_used: int | None = None
+    context_limit: int | None = None
+    context_percent: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,7 @@ class TerminalStatus:
     cwd: str | None = None
     git_branch: str | None = None
     session_name: str | None = None
+    session_file_size_bytes: int | None = None
     duration_seconds: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
