@@ -32,8 +32,8 @@ _TUI_BUSY_RE = re.compile(
 # OMP screen text is a weak signal. A footer is current only when one known frame
 # pair occupies the last two non-empty pane lines. Field parsing is semantic and
 # lives in OmpBackend; this seam only proves that the candidate is the live footer.
-_OMP_FOOTER_TOP_RE = re.compile(r"^\s*╭── π(?:\s.*)?╮\s*$")
-_OMP_FOOTER_BOTTOM_RE = re.compile(r"^\s*╰─(?:.*)─╯\s*$")
+_OMP_FOOTER_TOP_RE = re.compile(r"^\s*╭──\s+(?:π(?:\s.*)?|.+─{2,})╮\s*$")
+_OMP_FOOTER_BOTTOM_RE = re.compile(r"^\s*╰─(?P<body>.*)─╯\s*$")
 _OMP_COMPACT_FOOTER_TOP_RE = re.compile(r"^\s*\+--\s+.+\s+--\+\s*$")
 _OMP_COMPACT_FOOTER_BOTTOM_RE = re.compile(r"^\s*\+-[ \t]*-\+\s*$")
 _OMP_STATUS_HINT_RE = re.compile(r"(?:⬢|\[M\]|\bctx\s*:|\d+(?:\.\d+)?%\s*/)", re.I)
@@ -42,6 +42,9 @@ _OMP_LIVE_LOADER_RE = re.compile(
     re.I,
 )
 _COMPOSER_SEPARATOR_RE = re.compile(r"^[─━═╌╍┄┅┈┉]{5,}$")
+_OMP_COMPACT_COMPOSER_ROW_RE = re.compile(r"^\s*\|(?P<body>.*)\|\s*$")
+_OMP_COMPACT_COMPOSER_BOTTOM_RE = re.compile(r"^\s*\+-(?P<body>.*)-\+\s*$")
+_OMP_UNICODE_COMPOSER_ROW_RE = re.compile(r"^\s*│(?P<body>.*)│\s*$")
 _CODEX_STATUS_RE = re.compile(
     r"^\s*gpt-[\w.-]+(?:\s+[\w-]+)?\s*[·•]\s*(?:~?/|/)\S+",
     re.I,
@@ -56,7 +59,11 @@ def find_omp_footer_pair(lines: list[str]) -> tuple[int, int] | None:
     top_index, bottom_index = nonempty[-2:]
     top = lines[top_index]
     bottom = lines[bottom_index]
-    if _OMP_FOOTER_TOP_RE.fullmatch(top) and _OMP_FOOTER_BOTTOM_RE.fullmatch(bottom):
+    if (
+        _OMP_FOOTER_TOP_RE.fullmatch(top)
+        and _OMP_FOOTER_BOTTOM_RE.fullmatch(bottom)
+        and (_OMP_STATUS_HINT_RE.search(top) or _OMP_STATUS_HINT_RE.search(bottom))
+    ):
         return top_index, bottom_index
     if (
         _OMP_COMPACT_FOOTER_TOP_RE.fullmatch(top)
@@ -65,6 +72,48 @@ def find_omp_footer_pair(lines: list[str]) -> tuple[int, int] | None:
     ):
         return top_index, bottom_index
     return None
+
+
+def _omp_framed_input_text(lines: list[str]) -> str | None:
+    """Read the active OMP composer while ignoring picker overlays."""
+    styles = (
+        (
+            _OMP_COMPACT_FOOTER_TOP_RE,
+            _OMP_COMPACT_COMPOSER_ROW_RE,
+            _OMP_COMPACT_COMPOSER_BOTTOM_RE,
+        ),
+        (_OMP_FOOTER_TOP_RE, _OMP_UNICODE_COMPOSER_ROW_RE, _OMP_FOOTER_BOTTOM_RE),
+    )
+    frame: tuple[int, re.Pattern[str], re.Pattern[str]] | None = None
+    for index in range(len(lines) - 1, -1, -1):
+        for top_re, row_re, bottom_re in styles:
+            if top_re.fullmatch(lines[index]) and _OMP_STATUS_HINT_RE.search(lines[index]):
+                frame = index, row_re, bottom_re
+                break
+        if frame is not None:
+            break
+    if frame is None:
+        return None
+
+    top_index, row_re, bottom_re = frame
+    bodies: list[str] = []
+    for line in lines[top_index + 1 :]:
+        bottom = bottom_re.fullmatch(line)
+        if bottom is not None:
+            bodies.append(bottom.group("body").strip())
+            break
+        row = row_re.fullmatch(line)
+        if row is None:
+            return None
+        bodies.append(row.group("body").strip())
+    else:
+        return None
+
+    while bodies and not bodies[0]:
+        bodies.pop(0)
+    while bodies and not bodies[-1]:
+        bodies.pop()
+    return "\n".join(bodies) if bodies else None
 
 
 def omp_live_loader(pane: str) -> str | None:
@@ -200,6 +249,9 @@ def _is_tui_busy(pane: str) -> bool:
 def _active_input_text(pane: str) -> str | None:
     """Read only the active Claude/Codex/OMP composer, excluding prompt history."""
     lines = strip_decorations(pane).splitlines()
+    omp_input = _omp_framed_input_text(lines)
+    if omp_input is not None:
+        return omp_input
 
     omp_pair = find_omp_footer_pair(lines)
     if omp_pair is not None:

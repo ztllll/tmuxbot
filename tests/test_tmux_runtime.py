@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -87,6 +88,60 @@ class SubmissionAwareFakeTmux:
 
     async def sleep(self, seconds: float) -> None:
         self.now += seconds
+
+
+class OmpAttachmentAutocompleteFake:
+    def __init__(self, path: str, *, style: str = "compact") -> None:
+        self.path = path
+        self.style = style
+        self.draft = ""
+        self.suggestion_open = False
+        self.enter_count = 0
+        self.submission_count = 0
+
+    def capture(self, _target: str, _lines: int) -> str:
+        if self.style == "unicode":
+            top = (
+                "╭── ⬢ GPT-5.6 Sol (AISuperToken) · ◒ high > 🗑 /tmp "
+                "──────────────── ctx: 5.8%/360K ⟲ ──╮"
+            )
+            if not self.draft:
+                return f"{top}\n╰─{' ' * 80}─╯"
+            parts = self.draft.splitlines()
+            body = [f"│  {part:<78}│" for part in parts[:-1]]
+            body.append(f"╰─ {parts[-1]:<77}─╯")
+        else:
+            top = (
+                "+-- [M] GPT-5.6 Sol (AISuperToken) - [high] > [T] /tmp "
+                "---------------- ctx: 5.8%/360K [A] --+"
+            )
+            if not self.draft:
+                return f"{top}\n+-{' ' * 80}-+"
+            parts = self.draft.splitlines()
+            body = [f"|  {part:<78}|" for part in parts[:-1]]
+            body.append(f"+- {parts[-1]:<77}-+")
+        if self.suggestion_open:
+            body.append(f"> {Path(self.path).name}  {self.path}")
+        return "\n".join([top, *body])
+
+    def pane_command(self, _target: str) -> str:
+        return "omp"
+
+    async def paste(self, _target: str, text: str) -> None:
+        self.draft = text
+        self.suggestion_open = True
+
+    def send_key(self, _target: str, key: str) -> None:
+        assert key == "Enter"
+        self.enter_count += 1
+        if self.suggestion_open:
+            self.suggestion_open = False
+            return
+        self.submission_count += 1
+        self.draft = ""
+
+    async def sleep(self, _seconds: float) -> None:
+        await asyncio.sleep(0)
 
 
 def runtime_for(fake: FakeTmux, *, post_paste_delay: float = 0.5) -> TmuxRuntime:
@@ -208,6 +263,45 @@ def test_multiline_paste_uses_the_rendered_placeholder_as_draft_snapshot():
 
     assert fake.submission_count == 1
     assert fake.enter_count == 1
+
+
+@pytest.mark.parametrize("style", ["compact", "unicode"])
+def test_active_input_text_reads_omp_attachment_composer_and_ignores_overlay(style):
+    path = "/tmp/tmuxbot-attachments/telegram_45626_photo_45626.jpg"
+    fake = OmpAttachmentAutocompleteFake(path, style=style)
+    fake.draft = f"请处理这个图片\n\n@{path}"
+    fake.suggestion_open = True
+
+    assert _active_input_text(fake.capture("pane", 15)) == fake.draft
+
+
+@pytest.mark.parametrize("style", ["compact", "unicode"])
+def test_omp_attachment_autocomplete_is_closed_before_the_prompt_is_submitted(style):
+    path = "/tmp/tmuxbot-attachments/telegram_45626_photo_45626.jpg"
+    prompt = f"请处理这个图片\n\n@{path}"
+    fake = OmpAttachmentAutocompleteFake(path, style=style)
+    runtime = TmuxRuntime(
+        capture_func=fake.capture,
+        pane_command_func=fake.pane_command,
+        paste_func=fake.paste,
+        send_key_func=fake.send_key,
+        busy_detector=lambda _pane: False,
+        sleep_func=fake.sleep,
+        post_paste_delay=0.5,
+        input_reader=_active_input_text,
+        submit_check_delay=0.1,
+        post_render_delay=0.3,
+        paste_render_timeout=0.6,
+        submit_confirm_timeout=0.4,
+        submit_transition_stability=0.3,
+        max_submit_attempts=3,
+    )
+
+    asyncio.run(runtime.send_text("pane", prompt, expected_commands={"omp"}))
+
+    assert fake.enter_count == 2
+    assert fake.submission_count == 1
+    assert fake.draft == ""
 
 
 def test_waits_after_draft_render_before_first_enter():

@@ -198,7 +198,7 @@ journalctl --user -u tmuxbot -f
 - **活性指示**：provider-authored health、JSONL 进展与严格的当前 live loader 共同判定状态；工作中显示 typing（Telegram），飞书无 typing API
 - **消息已读反应**：TG 👀 emoji（Bot API 7.0+）；飞书 👀 OnIt reaction
 - **订阅配额**：`/status` 展示 5h/7d 五窗口 utilization + 精确重置倒计时（走 OAuth API）
-- **健壮性**：tmux paste 等 TUI idle 后提交，并读取 Claude/Codex/OMP 活动输入框确认；OMP steering 是唯一 busy 普通消息例外，控制命令仍 fail fast。Telegram 最终回复逐分片校验 Bot API `message_id`，未确认送达时不推进 JSONL offset、下轮自动重试；tailer 另有 512KB 积压保护、GC 强引用和 offsets debounce。源码部署的 `bin/restart.sh` 会先重装当前 checkout 的 uv tool，避免 systemd 运行旧 wheel
+- **健壮性**：tmux paste 等 TUI idle 后提交，并读取 Claude/Codex/OMP 活动输入框确认；OMP steering 是唯一 busy 普通消息例外，控制命令仍 fail fast。OMP 17.3.3 附件 `@path` 打开文件补全时，首个 Enter 只接受补全也不会把消息留在输入框，tmuxbot 会确认草稿仍在并有限重试提交。Telegram 最终回复逐分片校验 Bot API `message_id`，未确认送达时不推进 JSONL offset、下轮自动重试；tailer 另有 512KB 积压保护、GC 强引用和 offsets debounce。源码部署的 `bin/restart.sh` 会先重装当前 checkout 的 uv tool，避免 systemd 运行旧 wheel
 
 ---
 

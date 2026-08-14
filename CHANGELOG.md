@@ -31,6 +31,8 @@
 
 ### Fixed
 
+- 修复 Telegram/飞书图片在 OMP 17.3.3 compact ASCII 或 Unicode framed composer 中停留未提交：`@path` 会打开文件补全，首个 Enter 只接受补全；tmuxbot 现在解析状态栏下方 `| … |`/`+- … -+` 与 `│ … │`/`╰─ … ─╯` 活动输入框、忽略补全 overlay，并在草稿仍在时通过既有有界状态机发送第二次 Enter。
+
 - 修复 OMP 更新状态栏布局后 IM footer 失配：状态 adapter 改为跨版本语义解析，不再复制单一 TUI 框线和图标；同时支持旧 `╭── π` 与新版 compact `+-- … --+` footer。IM 改为面向会话决策的固定格式，按顺序显示当前上下文已用/上限/余量、会话累计 token、最近一轮缓存命中率、自动压缩、模型和思考强度；会话文件大小退出默认状态栏。OMP `tok` 按上游 `input + output + cacheWrite + orchestrationInput + orchestrationOutput` 口径解析或从 exact current-branch JSONL 补齐，不含 cacheRead。
 
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
