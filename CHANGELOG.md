@@ -16,6 +16,7 @@
 - OMP working/streaming 时的普通文字与附件进入 steering queue；`/new`、`/compact` 等控制命令要求 idle，忙碌时立即拒绝。原生菜单、picker、ask、approval、plan review 与确认全部 SSH-only，IM 只提示精确 pane，不模拟按键。
 - bot `/plan` 改为本地状态/帮助命令：不会向 OMP pane 注入未知 slash command；需要切换 plan mode 时提示 SSH attach 后使用当前默认 `Alt+Shift+P`，并说明自定义 keybinding 可能不同。
 - WebUI、provider scan/probe/create/adopt、模型 picker、通道配置、doctor、Admin CLI、示例配置和当前运维文案统一显示 Oh My Pi，并由 provider registry 解析 OMP capability、路径、启动参数和默认 credential。
+- OMP route naming now applies identically to Admin DM: every OMP route uses `name == tmux_session == <project>-omp`; the default Admin target is `tmuxbot-admin-omp:0.0` and a nonconforming `TMUXBOT_ADMIN_TMUX` fails configuration before the bridge starts.
 
 ---
 

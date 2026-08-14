@@ -25,7 +25,7 @@ Environment="TMUXBOT_ADMIN_ENABLED=1"
 Environment="TMUXBOT_ADMIN_CHANNEL=telegram"
 Environment="TMUXBOT_ADMIN_CHAT_ID=123456789"
 Environment="TMUXBOT_ADMIN_CREDENTIAL=TG_OMP_BOT_TOKEN"
-Environment="TMUXBOT_ADMIN_TMUX=tmuxbot-admin"
+Environment="TMUXBOT_ADMIN_TMUX=tmuxbot-admin-omp"
 Environment="TMUXBOT_ADMIN_CLI=omp"
 Environment="TMUXBOT_ADMIN_CWD=/home/you/.local/share/tmuxbot/admin"
 ```
@@ -176,7 +176,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 ### 2.0 项目命名
 
-非 Admin 的 OMP 项目 route 使用唯一的 canonical project key：`<project>-omp`。route 的 `name` 与 tmux session 必须完全相同，例如 `demo-omp:0.0`；`provision-project`、`create-topic`、`bind-topic` 和低层 `tmuxbot route bind` 都会拒绝不符合该规则的 OMP 新建绑定。`tmuxbot-admin` 是专用管理 DM，不是项目 route，因此不套用后缀规则。需要仅改 route/tmux 名而保留 cwd 与 exact transcript pin 时，使用 `rename-project --keep-cwd`；该事务会重启 pane 和 supervised bridge，之后由受管 OMP 按原 pin 恢复。
+所有 OMP route（包括专用管理 DM）使用唯一的 canonical project key：`<project>-omp`。route 的 `name` 与 tmux session 必须完全相同，例如管理 DM 为 `tmuxbot-admin-omp:0.0`、项目 route 为 `demo-omp:0.0`；`provision-project`、`create-topic`、`bind-topic`、低层 `tmuxbot route bind` 和 OMP Admin 配置都会拒绝不符合该规则的新绑定。需要仅改 route/tmux 名而保留 cwd 与 exact transcript pin 时，使用 `rename-project --keep-cwd`；该事务会重启 pane 和 supervised bridge，之后由受管 OMP 按原 pin 恢复。
 
 ### 2.1 OMP 受管会话、恢复与重启
 
@@ -380,7 +380,7 @@ tmuxbot route unbind NAME
 
 ```text
 Boss DM
-└─ tmuxbot-admin:0.0
+└─ tmuxbot-admin-omp:0.0
    cwd=/home/you/.local/share/tmuxbot/admin
    adapter=omp
    用途=管理 tmux、route、systemd 与项目入口

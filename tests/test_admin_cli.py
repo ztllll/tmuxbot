@@ -1163,6 +1163,53 @@ def test_rename_project_keep_cwd_preserves_omp_session_identity(tmp_path):
     assert runtime.restarts == ["bridge.service"]
 
 
+def test_rename_project_rejects_noncanonical_omp_admin_name(tmp_path, capsys):
+    cwd = tmp_path / "admin"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(
+        bindings,
+        [
+            route(
+                "legacy-admin",
+                cwd=str(cwd),
+                admin=True,
+                channel="telegram",
+                chat_id=123,
+                thread_id=None,
+                bot_token_env="TG_BOT_TOKEN",
+            )
+        ],
+    )
+    runtime = FakeRuntime(
+        {
+            "legacy-admin:0.0": {
+                "state": "running",
+                "target": "legacy-admin:0.0",
+                "cwd": str(cwd),
+                "command": "omp",
+                "dead": False,
+            }
+        }
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "rename-project",
+            "legacy-admin",
+            "--new-name",
+            "tmuxbot-admin",
+            "--keep-cwd",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 2
+    assert "<project>-omp" in capsys.readouterr().out
+
+
 def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failure(tmp_path):
     old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()

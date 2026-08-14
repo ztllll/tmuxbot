@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from tmuxbot.paths import default_admin_cwd
 from tmuxbot.state import Binding, S
 from tmuxbot.utils import load_offsets
-from tmuxbot.validation import ConfigValidationError, validate_bindings
+from tmuxbot.validation import ConfigValidationError, omp_project_naming_error, validate_bindings
 
 log = logging.getLogger("tmuxbot")
 _BINDINGS_WRITE_LOCK = threading.Lock()
@@ -47,9 +47,13 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "FEISHU").strip()
     else:
         raise ConfigValidationError(["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"])
-    tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin").strip()
+    tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin-omp").strip()
     if not tmux_session:
         raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
+    if backend == "omp":
+        error = omp_project_naming_error(tmux_session, tmux_session)
+        if error is not None:
+            raise ConfigValidationError([f"TMUXBOT_ADMIN_TMUX: {error}"])
     configured_cwd = os.getenv("TMUXBOT_ADMIN_CWD", "").strip()
     cwd = (
         Path(configured_cwd).expanduser().resolve()
@@ -73,7 +77,7 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
             [f"TMUXBOT_ADMIN_CWD must be a prepared private directory: {cwd}: {exc}"]
         ) from exc
     return Binding(
-        name="tmuxbot-admin",
+        name=tmux_session,
         chat_id=chat_id,
         thread_id=None,
         tmux_session=tmux_session,

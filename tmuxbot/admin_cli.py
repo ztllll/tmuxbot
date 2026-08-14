@@ -833,7 +833,7 @@ after changing the deployment, bindings path, service name, or Admin workspace.
 - bindings: `{bindings}`
 - environment file: `{env_file}`
 - supervised bridge: `{service}`
-- Admin target: configured by `TMUXBOT_ADMIN_TMUX` (normally `tmuxbot-admin:0.0`)
+- Admin target: configured by `TMUXBOT_ADMIN_TMUX` (normally `tmuxbot-admin-omp:0.0`)
 - source checkout: not implied by this workspace; locate it only when code work is requested
 
 ## How this conversation runs
@@ -1597,7 +1597,7 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                 raise AdminOperationError(
                     "rename-project supports only a single-session target at 0.0"
                 )
-            if existing.backend == "omp" and not existing.admin:
+            if existing.backend == "omp":
                 _require_omp_project_naming(
                     new_name, TmuxTarget(new_name, 0, 0), existing.backend
                 )

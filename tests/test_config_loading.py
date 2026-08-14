@@ -120,7 +120,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_om
 ):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
-    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin-omp")
     monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
     env_file = tmp_path / "runtime.env"
     env_file.write_text(
@@ -128,7 +128,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_om
             (
                 "BOSS_USER_ID=123",
                 "TMUXBOT_ADMIN_ENABLED=1",
-                "TMUXBOT_ADMIN_TMUX=tmuxbot-admin",
+                "TMUXBOT_ADMIN_TMUX=tmuxbot-admin-omp",
                 "TMUXBOT_ADMIN_CLI=omp",
             )
         )
@@ -147,9 +147,10 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_om
     load_config(env_file, bindings_file, tmp_path / "offsets.json")
 
     admin = next(binding for binding in S.bindings if binding.admin)
+    assert admin.name == "tmuxbot-admin-omp"
     assert admin.chat_id == 123
     assert admin.thread_id is None
-    assert admin.tmux_target == "tmuxbot-admin:0.0"
+    assert admin.tmux_target == "tmuxbot-admin-omp:0.0"
     assert admin.cwd == home / ".local/share/tmuxbot/admin"
     assert admin.cwd.is_dir()
     assert admin.cwd.stat().st_mode & 0o777 == 0o700
@@ -160,15 +161,29 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_om
     assert admin.bot_token_env == "TG_BOT_TOKEN"
 
 
+def test_omp_admin_route_rejects_noncanonical_tmux_session_name(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigValidationError, match="<project>-omp"):
+        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
+
+
 def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, tmp_path):
     bindings_file = tmp_path / "bindings.yaml"
     stale = {
-        "name": "tmuxbot-admin",
+        "name": "tmuxbot-admin-omp",
         "channel": "telegram",
         "bot_token_env": "TG_BOT_TOKEN",
         "chat_id": 123,
         "thread_id": None,
-        "tmux_session": "tmuxbot-admin",
+        "tmux_session": "tmuxbot-admin-omp",
         "tmux_window": 0,
         "tmux_pane": 0,
         "cwd": str(tmp_path / "old-admin"),
@@ -182,10 +197,10 @@ def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, 
     )
     new_cwd = tmp_path / "admin"
     binding = Binding(
-        name="tmuxbot-admin",
+        name="tmuxbot-admin-omp",
         chat_id=123,
         thread_id=None,
-        tmux_session="tmuxbot-admin",
+        tmux_session="tmuxbot-admin-omp",
         tmux_window=0,
         tmux_pane=0,
         cwd=new_cwd,
@@ -224,7 +239,7 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     save_binding_identity(bindings_file, admin)
     saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"]
     assert bindings_file.stat().st_mode & 0o777 == 0o600
-    assert [entry["name"] for entry in saved].count("tmuxbot-admin") == 1
+    assert [entry["name"] for entry in saved].count("tmuxbot-admin-omp") == 1
     assert (
         next(entry for entry in saved if entry.get("admin"))["provider_session_id"] == "omp-session"
     )
@@ -236,11 +251,11 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
 
 
 def test_persisted_admin_identity_does_not_enable_admin_without_env(tmp_path):
-    persisted = _binding("tmuxbot-admin")
+    persisted = _binding("tmuxbot-admin-omp")
     persisted.update(
         {
             "chat_id": 123,
-            "tmux_session": "tmuxbot-admin",
+            "tmux_session": "tmuxbot-admin-omp",
             "cwd": "/home/admin",
             "backend": "omp",
             "admin": True,

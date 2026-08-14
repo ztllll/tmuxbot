@@ -14,7 +14,7 @@ The same pane remains attachable over SSH. IM and SSH therefore control one shar
 - **Route**: one persistent endpoint-to-target mapping.
 - **Target**: `(tmux_session, tmux_window, tmux_pane, cwd)`.
 - **Adapter**: provider-specific TUI and transcript behavior (`claude_code`, `codex`, `omp`).
-- **OMP project route**: a non-admin OMP route whose canonical project key is `<project>-omp`. Its route name and tmux session name are identical; the Admin DM is an explicit exception and remains `tmuxbot-admin`.
+- **OMP route**: any OMP route uses canonical project key `<project>-omp`. Its route name and single-pane tmux session name are identical, including the Admin DM `tmuxbot-admin-omp`.
 - **Admin route**: a strictly ACL-protected DM route to a management pane.
 
 A group is only a topic container. A group root with no explicit route never falls through to a project. Each bound topic maps to exactly one pane. Unbound topics remain silent even for legacy `/init`, `/projects`, and `/deinit`; topic routes are created explicitly through YAML, the route CLI, or Admin DM.
@@ -67,7 +67,7 @@ Uniqueness invariants:
 
 Direct file editing is allowed. `tmuxbot route validate` is available now; `tmuxbot route reload` is planned as a deterministic helper, not an authority boundary. Writes performed by tmuxbot use a temporary file, validate the complete candidate, then atomically replace YAML.
 
-Non-admin OMP project routes use one canonical project key: `<project>-omp`. The route name and its single-pane tmux session must be identical, e.g. `repo-review-omp` → `repo-review-omp:0.0`; the privileged `tmuxbot-admin` route is the explicit exception. Migrate an existing route with `tmuxbot admin rename-project OLD --new-name PROJECT-omp --keep-cwd`: review the plan, then repeat with `--apply`. It preserves the exact endpoint, cwd, adapter, and provider session pin while renaming and respawning the one target; do not rename a bound OMP session manually.
+Every OMP route uses one canonical project key: `<project>-omp`. The route name and its single-pane tmux session must be identical, e.g. `repo-review-omp` → `repo-review-omp:0.0` and Admin DM `tmuxbot-admin-omp` → `tmuxbot-admin-omp:0.0`. Migrate an existing route with `tmuxbot admin rename-project OLD --new-name PROJECT-omp --keep-cwd`: review the plan, then repeat with `--apply`. It preserves the exact endpoint, cwd, adapter, and provider session pin while renaming and respawning the one target; do not rename a bound OMP session manually.
 
 ## Admin DM
 
@@ -77,7 +77,7 @@ Suggested environment:
 
 ```env
 TMUXBOT_ADMIN_ENABLED=1
-TMUXBOT_ADMIN_TMUX=tmuxbot-admin
+TMUXBOT_ADMIN_TMUX=tmuxbot-admin-omp
 TMUXBOT_ADMIN_CLI=omp
 # TMUXBOT_ADMIN_CWD=/srv/tmuxbot-admin
 ```
