@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- 修复 OMP `/new` 后 bridge 在首条回复前重启时的 IM 静默：持久化的旧 transcript pin 与 handoff 指向的新 transcript 不同，tailer 现在从 offset 0 消费新文件，不再把已完成的首条回复误当 bootstrap 历史跳过。
 - 修复 Admin 等从旧 `~/.pi/agent/sessions` 精确恢复的 OMP 会话执行 `/new` 后 IM 无法发送首条消息：pending handoff 现在同时接受官方 OMP 与迁移期 Pi sessions root，仍严格校验 exact target/cwd/session/PID；JSONL 尚未由首条消息创建时 tailer 安静等待，不再每 0.5 秒记录 `FileNotFoundError`。
 - 修复 Telegram/飞书图片在 OMP 17.3.3 compact ASCII 或 Unicode framed composer 中停留未提交：`@path` 会打开文件补全，首个 Enter 只接受补全；tmuxbot 现在解析状态栏下方 `| … |`/`+- … -+` 与 `│ … │`/`╰─ … ─╯` 活动输入框、忽略补全 overlay，并在草稿仍在时通过既有有界状态机发送第二次 Enter。
 

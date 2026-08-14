@@ -43,16 +43,17 @@ JSONL_BACKLOG_LIMIT = 512 * 1024  # 512KB
 def _initial_jsonl_offset(b: "Binding", transcript: Path, *, last_file: Path | None) -> int:
     """Choose the first committed offset for one newly observed transcript.
 
-    A bridge restart with a pinned provider identity must skip historical output.
-    A running session switch and a freshly provisioned, still-unpinned route must
-    start at zero: OMP can create and complete its first turn before the 0.5s
-    tailer observes the new file, so treating that file as bootstrap history
-    silently drops the project's first assistant reply.
+    A bridge restart with a still-active pinned provider identity must skip
+    historical output. A different active transcript is a session handoff—even
+    when the process restarted before the first reply created the new file—so
+    it starts at zero and cannot drop that reply.
     """
     if last_file is not None:
         return 0
     pinned_path = Path(b.transcript_path) if b.transcript_path else None
     if b.provider_session_id or pinned_path is not None:
+        if pinned_path is None or transcript != pinned_path:
+            return 0
         return transcript.stat().st_size
     return 0
 

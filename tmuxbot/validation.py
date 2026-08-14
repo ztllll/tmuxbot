@@ -158,3 +158,15 @@ def validate_bindings(bindings: list[Binding], *, require_nonempty: bool = True)
 
     if errors:
         raise ConfigValidationError(errors)
+
+
+def omp_project_naming_error(name: str, tmux_session: str) -> str | None:
+    """Return the naming violation for one non-admin OMP project route."""
+    if not name.endswith("-omp") or name == "-omp":
+        return f"OMP project route name must use '<project>-omp': {name!r}"
+    if tmux_session != name:
+        return (
+            "OMP project tmux session must equal its route name: "
+            f"{tmux_session!r} != {name!r}"
+        )
+    return None

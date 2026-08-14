@@ -14,6 +14,7 @@ import yaml
 
 from tmuxbot.state import Binding
 from tmuxbot.validation import ConfigValidationError, validate_bindings
+from tmuxbot.validation import omp_project_naming_error
 
 
 def binding_from_mapping(item: Mapping[str, Any]) -> Binding:
@@ -282,6 +283,10 @@ def run_route_command(argv: Sequence[str]) -> int:
                 "backend": args.backend,
                 "mention_required": args.mention_required,
             }
+            if args.backend == "omp":
+                error = omp_project_naming_error(args.name, args.tmux_session)
+                if error is not None:
+                    raise ConfigValidationError([error])
             bound = store.bind(item)
             print(f"bound: {bound.name}")
             return 0

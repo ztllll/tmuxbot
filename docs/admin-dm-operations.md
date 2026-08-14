@@ -174,6 +174,10 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 `provision-project` 默认把 route 名作为 tmux session 名并使用 `NAME:0.0`；可用 `--tmux-target` 显式覆盖。目标不存在时 `--apply` 自动事务创建，不再要求操作者额外记 `--create-target`；目标已存在时只在 cwd 完全相同且未被 route 占用时复用。禁止为 route 直接运行 `tmux new-session`。消息懒启动保持不变：新建 pane 初始可为 shell，第一条 IM 消息由 route adapter 启动真实 TUI。
 
+### 2.0 项目命名
+
+非 Admin 的 OMP 项目 route 使用唯一的 canonical project key：`<project>-omp`。route 的 `name` 与 tmux session 必须完全相同，例如 `demo-omp:0.0`；`provision-project`、`create-topic`、`bind-topic` 和低层 `tmuxbot route bind` 都会拒绝不符合该规则的 OMP 新建绑定。`tmuxbot-admin` 是专用管理 DM，不是项目 route，因此不套用后缀规则。需要仅改 route/tmux 名而保留 cwd 与 exact transcript pin 时，使用 `rename-project --keep-cwd`；该事务会重启 pane 和 supervised bridge，之后由受管 OMP 按原 pin 恢复。
+
 ### 2.1 OMP 受管会话、恢复与重启
 
 OMP 的 executable 和 argv 由服务端 provider registry 决定。`OMP_BIN` 只覆盖 executable；受管启动始终是 `omp --approval-mode yolo --extension <受管扩展绝对路径>`。浏览器、自然语言请求和 route YAML 都不能提交任意 binary path 或 argv。
@@ -382,9 +386,9 @@ Boss DM
    用途=管理 tmux、route、systemd 与项目入口
 
 统一项目群
-├─ 话题 8024 → project-a:0.0 → /home/you/projects/a → omp
-├─ 话题 9001 → project-b:0.0 → /home/you/projects/b → claude_code
-└─ 话题 9002 → project-c:0.0 → /home/you/projects/c → codex
+├─ 话题 8024 → project-a-omp:0.0 → /home/you/projects/a → omp
+├─ 话题 9001 → project-b-omp:0.0 → /home/you/projects/b → omp
+└─ 话题 9002 → project-c-omp:0.0 → /home/you/projects/c → omp
 ```
 
 用户在电脑上仍可通过 `tmux attach` 接管同一 pane；Admin DM 和项目话题都只是这些真实 TUI 的远程入口。

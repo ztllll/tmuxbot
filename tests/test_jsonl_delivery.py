@@ -41,6 +41,69 @@ def test_existing_pinned_route_bootstraps_at_end(tmp_path):
     assert _initial_jsonl_offset(current, transcript, last_file=None) == transcript.stat().st_size
 
 
+def test_stale_pinned_identity_reads_replacement_transcript_from_zero(tmp_path):
+    prior = tmp_path / "prior.jsonl"
+    replacement = tmp_path / "replacement.jsonl"
+    prior.write_text("historical reply\n", encoding="utf-8")
+    replacement.write_text("first reply after new\n", encoding="utf-8")
+    current = binding(tmp_path)
+    current.provider_session_id = "prior"
+    current.transcript_path = prior
+
+    assert _initial_jsonl_offset(current, replacement, last_file=None) == 0
+
+
+
+def test_restart_after_new_delivers_first_persisted_reply(tmp_path, monkeypatch):
+    prior = tmp_path / "prior.jsonl"
+    replacement = tmp_path / "replacement.jsonl"
+    prior.write_text("historical reply\n", encoding="utf-8")
+    replacement.write_text("assistant reply\n", encoding="utf-8")
+    current = binding(tmp_path)
+    current.provider_session_id = "prior-session"
+    current.transcript_path = prior
+    delivered = []
+
+    async def record(_binding, kind, body, *_args):
+        delivered.append((kind, body))
+        raise asyncio.CancelledError
+
+    backend = SimpleNamespace(
+        name="omp",
+        poll_provider_events=lambda _binding: [],
+        session_identity=lambda _binding, path: SimpleNamespace(
+            session_id="replacement-session",
+            transcript_path=str(path),
+        ),
+        find_active_jsonl=lambda _binding: replacement,
+        parse_event=lambda _line, **_kwargs: [
+            ProviderEvent(
+                event_id="omp:replacement-session:final:1",
+                kind=ProviderEventKind.FINAL_TEXT,
+                text="assistant reply",
+                provider_session_id="replacement-session",
+            )
+        ],
+    )
+    frontend = SimpleNamespace(bindings=[current], bindings_file=None)
+    state = SimpleNamespace(bg_tasks=set(), offsets={})
+    monkeypatch.setattr("tmuxbot.jsonl.on_tmux_event", record)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            jsonl_poll_loop(
+                current,
+                backend,
+                frontend,
+                state,
+                tmp_path / "offsets.json",
+            )
+        )
+
+    assert delivered == [("assistant_text", "assistant reply")]
+    assert current.provider_session_id == "replacement-session"
+    assert current.transcript_path == replacement
+
 def test_running_session_switch_reads_new_transcript_from_zero(tmp_path):
     transcript = tmp_path / "new.jsonl"
     transcript.write_text("first reply after new\n", encoding="utf-8")

@@ -123,6 +123,42 @@ def test_route_cli_bind_accepts_explicit_mention_policy(tmp_path, capsys):
             str(path),
             "bind",
             "--name",
+            "alpha-omp",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_BOT_TOKEN",
+            "--chat-id",
+            "-1001",
+            "--thread-id",
+            "42",
+            "--tmux-session",
+            "alpha-omp",
+            "--cwd",
+            "/tmp/alpha-omp",
+            "--backend",
+            "omp",
+            "--no-mention-required",
+        ]
+    )
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.strip() == "bound: alpha-omp"
+    stored = yaml.safe_load(path.read_text(encoding="utf-8"))["bindings"][0]
+    assert stored["mention_required"] is False
+    assert "cli_idle_timeout_seconds" not in stored
+
+
+def test_route_cli_bind_rejects_noncanonical_omp_project_name(tmp_path, capsys):
+    path = tmp_path / "bindings.yaml"
+    write_routes(path, [])
+
+    exit_code = run_route_command(
+        [
+            "--file",
+            str(path),
+            "bind",
+            "--name",
             "alpha",
             "--channel",
             "telegram",
@@ -138,15 +174,12 @@ def test_route_cli_bind_accepts_explicit_mention_policy(tmp_path, capsys):
             "/tmp/alpha",
             "--backend",
             "omp",
-            "--no-mention-required",
         ]
     )
 
-    assert exit_code == 0
-    assert capsys.readouterr().out.strip() == "bound: alpha"
-    stored = yaml.safe_load(path.read_text(encoding="utf-8"))["bindings"][0]
-    assert stored["mention_required"] is False
-    assert "cli_idle_timeout_seconds" not in stored
+    assert exit_code == 2
+    assert "<project>-omp" in capsys.readouterr().out
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["bindings"] == []
 
 
 def test_route_cli_list_json_is_machine_readable(tmp_path, capsys):

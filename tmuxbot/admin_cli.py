@@ -32,7 +32,7 @@ from tmuxbot.route_cli import (
     binding_to_mapping,
 )
 from tmuxbot.state import Binding
-from tmuxbot.validation import ConfigValidationError, validate_bindings
+from tmuxbot.validation import ConfigValidationError, omp_project_naming_error, validate_bindings
 
 _CONTRACT_START = "<!-- tmuxbot-admin-contract:start -->"
 _CONTRACT_END = "<!-- tmuxbot-admin-contract:end -->"
@@ -529,6 +529,14 @@ def _route_item(args: argparse.Namespace, target: TmuxTarget, cwd: Path) -> dict
         "backend": args.backend,
         "mention_required": args.mention_required,
     }
+
+
+def _require_omp_project_naming(name: str, target: TmuxTarget, backend: str) -> None:
+    if backend != "omp":
+        return
+    error = omp_project_naming_error(name, target.session)
+    if error is not None:
+        raise AdminOperationError(error)
 
 
 def _preflight_target(
@@ -1167,11 +1175,13 @@ def build_admin_parser() -> argparse.ArgumentParser:
 
     rename_project = subparsers.add_parser(
         "rename-project",
-        help="plan or atomically rename one route, single-pane tmux session, and cwd",
+        help="plan or atomically rename one route, single-pane tmux session, and optionally cwd",
     )
     rename_project.add_argument("name")
     rename_project.add_argument("--new-name", required=True)
-    rename_project.add_argument("--new-cwd", type=Path, required=True)
+    cwd_mode = rename_project.add_mutually_exclusive_group(required=True)
+    cwd_mode.add_argument("--new-cwd", type=Path)
+    cwd_mode.add_argument("--keep-cwd", action="store_true")
     rename_project.add_argument("--apply", action="store_true")
 
     adopt_omp = subparsers.add_parser(
@@ -1235,6 +1245,7 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
             channel = args.channel
             target = parse_tmux_target(args.tmux_target)
             cwd = _resolved_directory(args.cwd)
+            _require_omp_project_naming(args.name, target, args.backend)
             chat_id = _parse_identifier(args.chat_id, channel=channel)
             title = " ".join(args.topic_title.split())
             if not title:
@@ -1392,6 +1403,7 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                     thread_id=thread_id,
                     root_message_id=root_message_id,
                 )
+            _require_omp_project_naming(args.name, target, args.backend)
             if any(binding.name == args.name for binding in store.list()):
                 raise AdminOperationError(f"route name already exists: {args.name!r}")
             if any(binding.tmux_target == target.value for binding in store.list()):
@@ -1529,6 +1541,7 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
         if args.admin_command == "bind-topic":
             target = parse_tmux_target(args.tmux_target)
             cwd = _resolved_directory(args.cwd)
+            _require_omp_project_naming(args.name, target, args.backend)
             item = _route_item(args, target, cwd)
             candidate = [*store.list(), binding_from_mapping(item)]
             validate_bindings(candidate)
@@ -1584,6 +1597,10 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                 raise AdminOperationError(
                     "rename-project supports only a single-session target at 0.0"
                 )
+            if existing.backend == "omp" and not existing.admin:
+                _require_omp_project_naming(
+                    new_name, TmuxTarget(new_name, 0, 0), existing.backend
+                )
             if any(binding.name == new_name for binding in store.list()):
                 raise AdminOperationError(f"route name already exists: {new_name!r}")
             if any(
@@ -1592,15 +1609,18 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
             ):
                 raise AdminOperationError(f"tmux session is already routed: {new_name!r}")
             old_cwd = existing.cwd.expanduser().resolve()
-            new_cwd = args.new_cwd.expanduser().resolve()
-            if old_cwd == new_cwd:
-                raise AdminOperationError("new cwd must differ from the existing cwd")
+            new_cwd = old_cwd if args.keep_cwd else args.new_cwd.expanduser().resolve()
             if not old_cwd.is_dir():
                 raise AdminOperationError(f"existing route cwd is not a directory: {old_cwd}")
-            if new_cwd.exists():
-                raise AdminOperationError(f"new cwd already exists: {new_cwd}")
-            if not new_cwd.parent.is_dir():
-                raise AdminOperationError(f"new cwd parent is not a directory: {new_cwd.parent}")
+            if not args.keep_cwd:
+                if old_cwd == new_cwd:
+                    raise AdminOperationError("new cwd must differ from the existing cwd; use --keep-cwd")
+                if new_cwd.exists():
+                    raise AdminOperationError(f"new cwd already exists: {new_cwd}")
+                if not new_cwd.parent.is_dir():
+                    raise AdminOperationError(
+                        f"new cwd parent is not a directory: {new_cwd.parent}"
+                    )
             old_status = _preflight_target(runtime, old_target, old_cwd, create_target=False)
             if old_status["state"] != "running":
                 raise AdminOperationError(f"tmux target is not running: {old_target.value}")
@@ -1622,11 +1642,16 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                     "name": new_name,
                     "tmux_session": new_name,
                     "cwd": str(new_cwd),
-                    "provider_session_id": None,
-                    "transcript_path": None,
-                    "last_session_id": None,
                 }
             )
+            if not args.keep_cwd:
+                replacement_item.update(
+                    {
+                        "provider_session_id": None,
+                        "transcript_path": None,
+                        "last_session_id": None,
+                    }
+                )
             replacement = binding_from_mapping(replacement_item)
             candidate = [
                 replacement if binding.name == existing.name else binding
@@ -1638,10 +1663,23 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                 "apply": args.apply,
                 "before": binding_to_json(existing),
                 "after": binding_to_json(replacement),
-                "filesystem": {"from": str(old_cwd), "to": str(new_cwd)},
+                "filesystem": (
+                    {"action": "preserve", "cwd": str(old_cwd)}
+                    if args.keep_cwd
+                    else {"action": "move", "from": str(old_cwd), "to": str(new_cwd)}
+                ),
                 "tmux": {"from": old_target.value, "to": new_target.value, "respawn": True},
-                "preserves": ["endpoint", "backend", "mention_required"],
-                "resets": ["provider_session_id", "transcript_path"],
+                "preserves": [
+                    "endpoint",
+                    "backend",
+                    "mention_required",
+                    *(
+                        ["cwd", "provider_session_id", "transcript_path"]
+                        if args.keep_cwd
+                        else []
+                    ),
+                ],
+                "resets": [] if args.keep_cwd else ["provider_session_id", "transcript_path"],
                 "service": args.service,
             }
             if not args.apply:
@@ -1657,8 +1695,9 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
             cwd_moved = False
             session_renamed = False
             try:
-                os.replace(old_cwd, new_cwd)
-                cwd_moved = True
+                if not args.keep_cwd:
+                    os.replace(old_cwd, new_cwd)
+                    cwd_moved = True
                 runtime.rename_session(old_target.session, new_name)
                 session_renamed = True
                 runtime.respawn_target(new_target, new_cwd)
@@ -1675,14 +1714,16 @@ def run_admin_command(argv: Sequence[str], *, runtime: AdminRuntime | None = Non
                 if session_renamed:
                     try:
                         runtime.rename_session(new_name, old_target.session)
-                        runtime.respawn_target(old_target, new_cwd if cwd_moved else old_cwd)
                     except Exception:
                         pass
                 if cwd_moved:
                     try:
                         os.replace(new_cwd, old_cwd)
-                        if session_renamed:
-                            runtime.respawn_target(old_target, old_cwd)
+                    except Exception:
+                        pass
+                if session_renamed:
+                    try:
+                        runtime.respawn_target(old_target, old_cwd)
                     except Exception:
                         pass
                 try:

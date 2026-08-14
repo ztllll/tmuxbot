@@ -14,6 +14,7 @@ The same pane remains attachable over SSH. IM and SSH therefore control one shar
 - **Route**: one persistent endpoint-to-target mapping.
 - **Target**: `(tmux_session, tmux_window, tmux_pane, cwd)`.
 - **Adapter**: provider-specific TUI and transcript behavior (`claude_code`, `codex`, `omp`).
+- **OMP project route**: a non-admin OMP route whose canonical project key is `<project>-omp`. Its route name and tmux session name are identical; the Admin DM is an explicit exception and remains `tmuxbot-admin`.
 - **Admin route**: a strictly ACL-protected DM route to a management pane.
 
 A group is only a topic container. A group root with no explicit route never falls through to a project. Each bound topic maps to exactly one pane. Unbound topics remain silent even for legacy `/init`, `/projects`, and `/deinit`; topic routes are created explicitly through YAML, the route CLI, or Admin DM.
@@ -43,12 +44,12 @@ The readable YAML remains the public route surface. The `bindings:` record shape
 
 ```yaml
 bindings:
-  - name: repo-review
+  - name: repo-review-omp
     channel: telegram
     bot_token_env: TG_OMP_BOT_TOKEN
     chat_id: -1001234567890
     thread_id: 42
-    tmux_session: repo-review
+    tmux_session: repo-review-omp
     tmux_window: 0
     tmux_pane: 0
     cwd: /srv/repos/repo

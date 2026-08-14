@@ -453,7 +453,7 @@ def test_delete_telegram_topic_uses_delete_forum_topic(monkeypatch, tmp_path):
 def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
     monkeypatch, tmp_path, capsys
 ):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -474,7 +474,7 @@ def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "telegram",
             "--credential",
@@ -484,7 +484,7 @@ def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
             "--topic-title",
             "CliproxyApi",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -505,7 +505,7 @@ def test_create_telegram_topic_plan_has_no_remote_or_local_side_effects(
 
 
 def test_create_telegram_topic_apply_creates_endpoint_target_and_route(monkeypatch, tmp_path):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -537,7 +537,7 @@ def test_create_telegram_topic_apply_creates_endpoint_target_and_route(monkeypat
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "telegram",
             "--credential",
@@ -547,7 +547,7 @@ def test_create_telegram_topic_apply_creates_endpoint_target_and_route(monkeypat
             "--topic-title",
             "CliproxyApi",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -561,13 +561,13 @@ def test_create_telegram_topic_apply_creates_endpoint_target_and_route(monkeypat
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("project")
+    bound = RouteStore(bindings).inspect("project-omp")
     assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
         -1003799747978,
         42337,
         None,
     )
-    assert runtime.created == [("project:0.0", cwd)]
+    assert runtime.created == [("project-omp:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
     assert deleted == []
 
@@ -626,7 +626,7 @@ def test_create_feishu_topic_returns_exact_endpoint(monkeypatch, tmp_path):
 def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
     monkeypatch, tmp_path, capsys
 ):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -647,7 +647,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "project",
+            "project-omp",
             "--credential",
             "FEISHU_CODEX",
             "--chat-id",
@@ -655,7 +655,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
             "--topic-title",
             "Network branch",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -676,7 +676,7 @@ def test_create_feishu_topic_plan_has_no_remote_or_local_side_effects(
 
 
 def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch, tmp_path):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -706,7 +706,7 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "project",
+            "project-omp",
             "--credential",
             "FEISHU_CODEX",
             "--chat-id",
@@ -714,7 +714,7 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch
             "--topic-title",
             "Network branch",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -728,14 +728,14 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("project")
+    bound = RouteStore(bindings).inspect("project-omp")
     assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
         "oc_group",
         "omt_topic",
         "om_root",
     )
-    assert bound.tmux_target == "project:0.0"
-    assert runtime.created == [("project:0.0", cwd)]
+    assert bound.tmux_target == "project-omp:0.0"
+    assert runtime.created == [("project-omp:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
     assert deleted == []
 
@@ -743,7 +743,7 @@ def test_create_feishu_topic_apply_creates_endpoint_target_and_route(monkeypatch
 def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
     monkeypatch, tmp_path, capsys
 ):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -774,7 +774,7 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "project",
+            "project-omp",
             "--credential",
             "FEISHU_CODEX",
             "--chat-id",
@@ -782,7 +782,7 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
             "--topic-title",
             "Network branch",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -795,13 +795,13 @@ def test_create_feishu_topic_apply_removes_topic_and_target_on_bind_failure(
 
     assert exit_code == 2
     assert bindings.read_bytes() == original
-    assert runtime.removed == ["project:0.0"]
+    assert runtime.removed == ["project-omp:0.0"]
     assert deleted == ["om_root"]
     assert "restart failed" in capsys.readouterr().out
 
 
 def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -816,7 +816,7 @@ def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target
             "bridge.service",
             "provision-project",
             "--name",
-            "omp-cliproxyapi",
+            "cliproxyapi-omp",
             "--channel",
             "telegram",
             "--credential",
@@ -846,12 +846,44 @@ def test_provision_project_plan_resolves_telegram_topic_link_and_defaults_target
         "thread_root_message_id": None,
         "topic_title": None,
     }
-    assert payload["route"]["tmux_target"] == "omp-cliproxyapi:0.0"
+    assert payload["route"]["tmux_target"] == "cliproxyapi-omp:0.0"
     assert payload["target_action"] == "create"
 
 
-def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
+def test_provision_project_rejects_mismatched_omp_tmux_session(tmp_path, capsys):
     cwd = tmp_path / "project"
+    cwd.mkdir()
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "provision-project",
+            "--name",
+            "project-omp",
+            "--channel",
+            "telegram",
+            "--credential",
+            "TG_CODEX_BOT_TOKEN",
+            "--topic-link",
+            "https://t.me/c/3799747978/42337",
+            "--tmux-target",
+            "other-omp:0.0",
+            "--cwd",
+            str(cwd),
+            "--backend",
+            "omp",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "must equal its route name" in capsys.readouterr().out
+
+
+def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -865,7 +897,7 @@ def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
             "bridge.service",
             "provision-project",
             "--name",
-            "omp-cliproxyapi",
+            "cliproxyapi-omp",
             "--channel",
             "telegram",
             "--credential",
@@ -882,19 +914,19 @@ def test_provision_project_apply_binds_existing_telegram_topic(tmp_path):
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("omp-cliproxyapi")
+    bound = RouteStore(bindings).inspect("cliproxyapi-omp")
     assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
         -1003799747978,
         42337,
         None,
     )
-    assert bound.tmux_target == "omp-cliproxyapi:0.0"
-    assert runtime.created == [("omp-cliproxyapi:0.0", cwd)]
+    assert bound.tmux_target == "cliproxyapi-omp:0.0"
+    assert runtime.created == [("cliproxyapi-omp:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
 
 
 def test_provision_project_apply_creates_feishu_topic_and_route(monkeypatch, tmp_path):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -919,7 +951,7 @@ def test_provision_project_apply_creates_feishu_topic_and_route(monkeypatch, tmp
             "--env-file",
             str(tmp_path / ".env"),
             "--name",
-            "network-branch",
+            "network-branch-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -938,17 +970,17 @@ def test_provision_project_apply_creates_feishu_topic_and_route(monkeypatch, tmp
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("network-branch")
+    bound = RouteStore(bindings).inspect("network-branch-omp")
     assert (bound.chat_id, bound.thread_id, bound.thread_root_message_id) == (
         "oc_group",
         "omt_topic",
         "om_root",
     )
-    assert bound.tmux_target == "network-branch:0.0"
+    assert bound.tmux_target == "network-branch-omp:0.0"
 
 
 def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -959,7 +991,7 @@ def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
             str(bindings),
             "provision-project",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "telegram",
             "--credential",
@@ -984,7 +1016,7 @@ def test_provision_project_rejects_ambiguous_topic_intent(tmp_path, capsys):
 def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
     old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
-    new_cwd = tmp_path / "dida-todo"
+    new_cwd = tmp_path / "dida-todo-omp"
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     original = bindings.read_bytes()
@@ -1009,7 +1041,7 @@ def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
             "rename-project",
             "omp-agent",
             "--new-name",
-            "dida-todo",
+            "dida-todo-omp",
             "--new-cwd",
             str(new_cwd),
         ],
@@ -1024,7 +1056,7 @@ def test_rename_project_plan_has_no_side_effects(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out.split("\nplan only:", 1)[0])
     assert payload["operation"] == "rename-project"
     assert payload["before"]["tmux_target"] == "omp-agent:0.0"
-    assert payload["after"]["tmux_target"] == "dida-todo:0.0"
+    assert payload["after"]["tmux_target"] == "dida-todo-omp:0.0"
     assert payload["after"]["provider_session_id"] is None
 
 
@@ -1032,7 +1064,7 @@ def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
     old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
     (old_cwd / "marker").write_text("ok", encoding="utf-8")
-    new_cwd = tmp_path / "dida-todo"
+    new_cwd = tmp_path / "dida-todo-omp"
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     runtime = FakeRuntime(
@@ -1056,7 +1088,7 @@ def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
             "rename-project",
             "omp-agent",
             "--new-name",
-            "dida-todo",
+            "dida-todo-omp",
             "--new-cwd",
             str(new_cwd),
             "--apply",
@@ -1067,20 +1099,74 @@ def test_rename_project_apply_moves_cwd_session_and_route(tmp_path):
     assert exit_code == 0
     assert not old_cwd.exists()
     assert (new_cwd / "marker").read_text(encoding="utf-8") == "ok"
-    bound = RouteStore(bindings).inspect("dida-todo")
+    bound = RouteStore(bindings).inspect("dida-todo-omp")
     assert bound.cwd == new_cwd
-    assert bound.tmux_target == "dida-todo:0.0"
+    assert bound.tmux_target == "dida-todo-omp:0.0"
     assert bound.provider_session_id is None
     assert bound.transcript_path is None
-    assert runtime.renamed == [("omp-agent", "dida-todo")]
-    assert runtime.respawned == [("dida-todo:0.0", new_cwd)]
+    assert runtime.renamed == [("omp-agent", "dida-todo-omp")]
+    assert runtime.respawned == [("dida-todo-omp:0.0", new_cwd)]
+    assert runtime.restarts == ["bridge.service"]
+
+
+def test_rename_project_keep_cwd_preserves_omp_session_identity(tmp_path):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    transcript = tmp_path / "project.jsonl"
+    bindings = tmp_path / "bindings.yaml"
+    write_routes(
+        bindings,
+        [
+            route(
+                "legacy",
+                cwd=str(cwd),
+                provider_session_id="session-old",
+                transcript_path=str(transcript),
+            )
+        ],
+    )
+    runtime = FakeRuntime(
+        {
+            "legacy:0.0": {
+                "state": "running",
+                "target": "legacy:0.0",
+                "cwd": str(cwd),
+                "command": "omp",
+                "dead": False,
+            }
+        }
+    )
+
+    exit_code = run_admin_command(
+        [
+            "--file",
+            str(bindings),
+            "--service",
+            "bridge.service",
+            "rename-project",
+            "legacy",
+            "--new-name",
+            "project-omp",
+            "--keep-cwd",
+            "--apply",
+        ],
+        runtime=runtime,
+    )
+
+    assert exit_code == 0
+    bound = RouteStore(bindings).inspect("project-omp")
+    assert bound.cwd == cwd
+    assert bound.provider_session_id == "session-old"
+    assert bound.transcript_path == transcript
+    assert runtime.renamed == [("legacy", "project-omp")]
+    assert runtime.respawned == [("project-omp:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
 
 
 def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failure(tmp_path):
     old_cwd = tmp_path / "omp-agent"
     old_cwd.mkdir()
-    new_cwd = tmp_path / "dida-todo"
+    new_cwd = tmp_path / "dida-todo-omp"
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route("omp-agent", cwd=str(old_cwd))])
     original = bindings.read_bytes()
@@ -1106,7 +1192,7 @@ def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failu
             "rename-project",
             "omp-agent",
             "--new-name",
-            "dida-todo",
+            "dida-todo-omp",
             "--new-cwd",
             str(new_cwd),
             "--apply",
@@ -1118,21 +1204,21 @@ def test_rename_project_rolls_back_filesystem_session_and_route_on_restart_failu
     assert bindings.read_bytes() == original
     assert old_cwd.is_dir() and not new_cwd.exists()
     assert "omp-agent:0.0" in runtime.targets
-    assert "dida-todo:0.0" not in runtime.targets
-    assert runtime.renamed == [("omp-agent", "dida-todo"), ("dida-todo", "omp-agent")]
+    assert "dida-todo-omp:0.0" not in runtime.targets
+    assert runtime.renamed == [("omp-agent", "dida-todo-omp"), ("dida-todo-omp", "omp-agent")]
 
 
 def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
     original = bindings.read_text(encoding="utf-8")
     runtime = FakeRuntime(
         {
-            "project:0.0": {
+            "project-omp:0.0": {
                 "state": "running",
-                "target": "project:0.0",
+                "target": "project-omp:0.0",
                 "cwd": str(cwd),
                 "command": "omp",
                 "dead": False,
@@ -1148,7 +1234,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
             "bridge.service",
             "bind-topic",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1160,7 +1246,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
             "--thread-root-message-id",
             "om_root",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -1180,7 +1266,7 @@ def test_bind_topic_plan_does_not_write_or_restart(tmp_path, capsys):
 
 
 def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effects(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -1193,7 +1279,7 @@ def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effect
             str(bindings),
             "bind-topic",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1203,7 +1289,7 @@ def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effect
             "--thread-id",
             "omt_topic",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -1222,15 +1308,15 @@ def test_bind_topic_rejects_feishu_topic_without_durable_root_before_side_effect
 
 
 def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
     runtime = FakeRuntime(
         {
-            "project:0.0": {
+            "project-omp:0.0": {
                 "state": "running",
-                "target": "project:0.0",
+                "target": "project-omp:0.0",
                 "cwd": str(tmp_path / "wrong"),
                 "command": "omp",
                 "dead": False,
@@ -1244,7 +1330,7 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
             str(bindings),
             "bind-topic",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1256,7 +1342,7 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
             "--thread-root-message-id",
             "om_root",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -1270,7 +1356,7 @@ def test_bind_topic_rejects_tmux_cwd_mismatch(tmp_path, capsys):
 
 
 def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
@@ -1284,7 +1370,7 @@ def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
             "bridge.service",
             "bind-topic",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1296,7 +1382,7 @@ def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
             "--thread-root-message-id",
             "om_root",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
@@ -1308,14 +1394,14 @@ def test_bind_topic_apply_creates_target_writes_route_and_restarts(tmp_path):
     )
 
     assert exit_code == 0
-    bound = RouteStore(bindings).inspect("project")
+    bound = RouteStore(bindings).inspect("project-omp")
     assert (bound.chat_id, bound.thread_id, bound.tmux_target) == (
         "oc_group",
         "omt_topic",
-        "project:0.0",
+        "project-omp:0.0",
     )
     assert bound.cwd == cwd
-    assert runtime.created == [("project:0.0", cwd)]
+    assert runtime.created == [("project-omp:0.0", cwd)]
     assert runtime.restarts == ["bridge.service"]
     assert bindings.stat().st_mode & 0o777 == 0o600
 
@@ -1395,7 +1481,7 @@ def test_bind_apply_rejects_duplicate_endpoint_before_creating_target(tmp_path, 
             str(bindings),
             "bind-topic",
             "--name",
-            "duplicate",
+            "duplicate-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1407,7 +1493,7 @@ def test_bind_apply_rejects_duplicate_endpoint_before_creating_target(tmp_path, 
             "--thread-root-message-id",
             "om_old_root",
             "--tmux-target",
-            "must-not-exist:0.0",
+            "duplicate-omp:0.0",
             "--cwd",
             str(requested_cwd),
             "--backend",
@@ -1476,16 +1562,16 @@ def test_move_topic_plan_rejects_duplicate_destination_without_writing(tmp_path,
 
 
 def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
-    cwd = tmp_path / "project"
+    cwd = tmp_path / "project-omp"
     cwd.mkdir()
     bindings = tmp_path / "bindings.yaml"
     write_routes(bindings, [route(cwd=str(tmp_path / "alpha"))])
     original = bindings.read_bytes()
     runtime = FakeRuntime(
         {
-            "project:0.0": {
+            "project-omp:0.0": {
                 "state": "running",
-                "target": "project:0.0",
+                "target": "project-omp:0.0",
                 "cwd": str(cwd),
                 "command": "omp",
                 "dead": False,
@@ -1502,7 +1588,7 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
             "bridge.service",
             "bind-topic",
             "--name",
-            "project",
+            "project-omp",
             "--channel",
             "feishu",
             "--credential",
@@ -1514,7 +1600,7 @@ def test_apply_rolls_back_yaml_when_service_restart_fails(tmp_path, capsys):
             "--thread-root-message-id",
             "om_root",
             "--tmux-target",
-            "project:0.0",
+            "project-omp:0.0",
             "--cwd",
             str(cwd),
             "--backend",
