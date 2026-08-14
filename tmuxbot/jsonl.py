@@ -97,6 +97,11 @@ async def jsonl_poll_loop(
             if jl is None:
                 await asyncio.sleep(JSONL_POLL)
                 continue
+            # OMP /new publishes an exact provider-authored transcript path before
+            # the first user turn creates the JSONL. This is a normal pending state.
+            if not jl.is_file():
+                await asyncio.sleep(JSONL_POLL)
+                continue
             key = str(jl)
             if jl != last_file:
                 if last_file is not None:

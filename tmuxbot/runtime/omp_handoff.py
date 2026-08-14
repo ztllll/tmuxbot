@@ -129,11 +129,14 @@ def _pending_transcript_identity_is_valid(
     if "/" in session_id or not transcript_path.name.endswith(f"_{session_id}.jsonl"):
         return False
     try:
-        sessions_root = (Path.home() / ".omp" / "agent" / "sessions").resolve()
+        sessions_roots = (
+            (Path.home() / ".omp" / "agent" / "sessions").resolve(),
+            (Path.home() / ".pi" / "agent" / "sessions").resolve(),
+        )
         transcript_parent = transcript_path.parent.resolve()
     except (OSError, RuntimeError):
         return False
-    return transcript_parent.is_relative_to(sessions_root)
+    return any(transcript_parent.is_relative_to(root) for root in sessions_roots)
 
 
 def read_handoff(tmux_target: str, cwd: Path) -> OmpHandoff | None:

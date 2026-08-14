@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind
-from tmuxbot.jsonl import _dispatch_provider_events, _initial_jsonl_offset
+from tmuxbot.jsonl import _dispatch_provider_events, _initial_jsonl_offset, jsonl_poll_loop
 from tmuxbot.state import Binding
 
 
@@ -44,6 +47,41 @@ def test_running_session_switch_reads_new_transcript_from_zero(tmp_path):
     current = binding(tmp_path)
 
     assert _initial_jsonl_offset(current, transcript, last_file=tmp_path / "old.jsonl") == 0
+
+
+def test_pending_transcript_waits_without_poll_error(tmp_path, monkeypatch, caplog):
+
+    async def stop_after_first_poll(_delay):
+        raise asyncio.CancelledError
+
+    current = binding(tmp_path)
+    pending = tmp_path / "pending.jsonl"
+    backend = SimpleNamespace(
+        name="omp",
+        poll_provider_events=lambda _binding: [],
+        session_identity=lambda _binding, path: SimpleNamespace(
+            session_id="pending-session",
+            transcript_path=str(path),
+        ),
+        find_active_jsonl=lambda _binding: pending,
+    )
+    frontend = SimpleNamespace(bindings=[current], bindings_file=None)
+    state = SimpleNamespace(bg_tasks=set(), offsets={})
+    monkeypatch.setattr("tmuxbot.jsonl.asyncio.sleep", stop_after_first_poll)
+
+    with caplog.at_level(logging.ERROR, logger="tmuxbot"):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(
+                jsonl_poll_loop(
+                    current,
+                    backend,
+                    frontend,
+                    state,
+                    tmp_path / "offsets.json",
+                )
+            )
+
+    assert "poll err" not in caplog.text
 
 
 def test_provider_delivery_failure_is_reported_to_tailer(tmp_path, monkeypatch):

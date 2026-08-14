@@ -193,6 +193,33 @@ def test_read_handoff_accepts_provider_identity_before_new_transcript_exists(tmp
     assert handoff.transcript_path == transcript
 
 
+def test_read_handoff_accepts_legacy_pi_identity_before_new_transcript_exists(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("TMUXBOT_STATE_DIR", str(tmp_path / "state"))
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    transcript = (
+        tmp_path
+        / "home"
+        / ".pi"
+        / "agent"
+        / "sessions"
+        / "-tmp-project"
+        / "2026-08-14T00-00-00-000Z_legacy-new-session.jsonl"
+    )
+    transcript.parent.mkdir(parents=True)
+    target = "project:0.0"
+    write_handoff(target, cwd, "legacy-new-session", transcript, process_id=123)
+
+    handoff = read_handoff(target, cwd)
+
+    assert handoff is not None
+    assert handoff.session_id == "legacy-new-session"
+    assert handoff.transcript_path == transcript
+
+
 def test_read_handoff_rejects_symlink_sidecar_and_transcript(tmp_path, monkeypatch):
     monkeypatch.setenv("TMUXBOT_STATE_DIR", str(tmp_path / "state"))
     cwd = tmp_path / "project"

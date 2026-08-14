@@ -178,7 +178,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 OMP 的 executable 和 argv 由服务端 provider registry 决定。`OMP_BIN` 只覆盖 executable；受管启动始终是 `omp --approval-mode yolo --extension <受管扩展绝对路径>`。浏览器、自然语言请求和 route YAML 都不能提交任意 binary path 或 argv。
 
-OMP JSONL 通常位于 `~/.omp/agent/sessions/<project-key>/<timestamp>_<id>.jsonl`。受管扩展在 `session_start` 和 `session_switch` 后刷新 `$TMUXBOT_STATE_DIR/omp-session-handoffs/` 与 `omp-session-health/`；handoff 记录精确 `tmuxTarget/cwd/sessionId/transcriptPath/processId`。新 session 文件在首条消息前可能尚未创建，此时只接受官方 sessions root、匹配 session ID 且 `processId` 属于 exact pane 的 pending identity；文件落盘后必须通过 JSONL header/cwd/session ID 校验。tmuxbot 不按 mtime 选择同 cwd 的其他会话。
+OMP JSONL 通常位于 `~/.omp/agent/sessions/<project-key>/<timestamp>_<id>.jsonl`；从旧 Pi 会话精确恢复的迁移会话可继续位于 `~/.pi/agent/sessions/...`。受管扩展在 `session_start` 和 `session_switch` 后刷新 `$TMUXBOT_STATE_DIR/omp-session-handoffs/` 与 `omp-session-health/`；handoff 记录精确 `tmuxTarget/cwd/sessionId/transcriptPath/processId`。新 session 文件在首条消息前可能尚未创建，此时只接受官方 OMP sessions root 或旧 Pi sessions root、匹配 session ID 且 `processId` 属于 exact pane 的 pending identity；tailer 等待文件落盘，不把该正常窗口记录为错误。文件落盘后必须通过 JSONL header/cwd/session ID 校验。tmuxbot 不按 mtime 选择同 cwd 的其他会话。
 
 如果操作者在真实 OMP TUI 中直接执行 `/new`、`/fork`、`/resume` 或 `/import`，正常情况下扩展 sidecar 会让 route 自动收敛到新身份；若这是 channel 命令流之外的切换且回复没有跟随，使用精确 JSONL 路径接管：
 
