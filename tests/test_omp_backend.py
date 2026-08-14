@@ -106,7 +106,7 @@ def test_terminal_status_enrichment_uses_exact_session_file_size(tmp_path):
 
     assert status is not None
     assert status.session_file_size_bytes == transcript.stat().st_size
-    assert f"JSON {transcript.stat().st_size}B" in backend.format_status_footer(status)
+    assert "会话文件" not in backend.format_status_footer(status)
 
 
 def test_runtime_metadata_derives_context_from_usage_and_model_config(tmp_path):
@@ -135,9 +135,10 @@ def test_runtime_metadata_derives_context_from_usage_and_model_config(tmp_path):
                     "usage": {
                         "input": 1_000,
                         "output": 2_000,
-                        "cacheRead": 177_000,
-                        "cacheWrite": 0,
+                        "cacheRead": 176_900,
+                        "cacheWrite": 100,
                         "totalTokens": 180_000,
+                        "orchestration": {"input": 300, "output": 200},
                     },
                 },
             },
@@ -155,6 +156,8 @@ def test_runtime_metadata_derives_context_from_usage_and_model_config(tmp_path):
     assert metadata.context_used == 180_000
     assert metadata.context_limit == 360_000
     assert metadata.context_percent == 50.0
+    assert metadata.session_total_tokens == 3_600
+    assert metadata.cache_hit_rate == pytest.approx(176_900 / 178_000)
 
 
 def test_current_branch_tolerates_title_bad_lines_and_ignores_old_branch(tmp_path):
@@ -320,6 +323,206 @@ def test_event_parser_emits_tool_text_and_plan_file_update():
     assert events[1].event_id.endswith(":call-plan")
     assert events[1].text == "# Ship it"
     assert events[2].text == "Ready &lt;now&gt;"
+
+
+def test_successful_edit_result_projects_only_safe_structured_diffs():
+    row = {
+        "type": "message",
+        "id": "edit-result",
+        "message": {
+            "role": "toolResult",
+            "toolCallId": "call-edit",
+            "toolName": "edit",
+            "isError": False,
+            "details": {
+                "perFileResults": [
+                    {
+                        "path": "src/app.py",
+                        "diff": '-1|print("<old>")\n+1|print("ready & safe")',
+                    },
+                    {
+                        "path": ".env",
+                        "diff": "-TOKEN=old\n+TOKEN=secret",
+                    },
+                ]
+            },
+        },
+    }
+
+    events = OmpBackend().parse_event(json.dumps(row), "session-1")
+
+    assert len(events) == 1
+    assert events[0].kind == ProviderEventKind.TOOL_PROGRESS
+    assert "✅ <b>代码 diff</b>" in events[0].text
+    assert "<code>src/app.py</code>" in events[0].text
+    assert "&lt;old&gt;" in events[0].text
+    assert "ready &amp; safe" in events[0].text
+    assert ".env" not in events[0].text
+    assert "TOKEN=secret" not in events[0].text
+
+
+def test_successful_write_result_projects_cached_local_content_after_commit():
+    backend = OmpBackend()
+    call = {
+        "type": "message",
+        "id": "write-call",
+        "message": {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "toolCall",
+                    "id": "call-write",
+                    "name": "write",
+                    "arguments": {
+                        "path": "src/new.py",
+                        "content": 'print("<ready> & running")',
+                    },
+                }
+            ],
+        },
+    }
+    result = {
+        "type": "message",
+        "id": "write-result",
+        "message": {
+            "role": "toolResult",
+            "toolCallId": "call-write",
+            "toolName": "write",
+            "isError": False,
+        },
+    }
+
+    start_events = backend.parse_event(json.dumps(call), "session-1")
+    result_events = backend.parse_event(json.dumps(result), "session-1")
+
+    assert [event.kind for event in start_events] == [ProviderEventKind.TOOL_PROGRESS]
+    assert len(result_events) == 1
+    assert result_events[0].text == (
+        "✅ <b>写入代码片段</b> <code>src/new.py</code>\n"
+        "<pre>print(&quot;&lt;ready&gt; &amp; running&quot;)</pre>"
+    )
+
+
+def test_failed_internal_and_sensitive_writes_never_project_content():
+    backend = OmpBackend()
+
+    for call_id, path in (
+        ("call-failed", "src/failed.py"),
+        ("call-internal", "xd://lsp"),
+        ("call-secret", "config/api-token.json"),
+    ):
+        backend.parse_event(
+            json.dumps(
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": call_id,
+                                "name": "write",
+                                "arguments": {"path": path, "content": "DO_NOT_SEND"},
+                            }
+                        ],
+                    },
+                }
+            ),
+            "session-1",
+        )
+
+    failed = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-failed",
+                    "toolName": "write",
+                    "isError": True,
+                },
+            }
+        ),
+        "session-1",
+    )
+    internal = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-internal",
+                    "toolName": "write",
+                    "isError": False,
+                },
+            }
+        ),
+        "session-1",
+    )
+    secret = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-secret",
+                    "toolName": "write",
+                    "isError": False,
+                },
+            }
+        ),
+        "session-1",
+    )
+
+    assert len(failed) == 1
+    assert failed[0].text == "⚠️ <b>写入失败</b> <code>src/failed.py</code>"
+    assert failed[0].metadata["tool_call_id"] == "call-failed"
+    assert failed[0].metadata["tool_phase"] == "result"
+    assert internal == []
+    assert secret == []
+
+
+def test_write_preview_is_bounded_before_it_reaches_the_im_aggregator():
+    backend = OmpBackend()
+    content = "\n".join(f"line {index:02d}: " + ("x" * 80) for index in range(80))
+    backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "call-large",
+                            "name": "write",
+                            "arguments": {"path": "src/large.py", "content": content},
+                        }
+                    ],
+                },
+            }
+        ),
+        "session-1",
+    )
+
+    events = backend.parse_event(
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-large",
+                    "toolName": "write",
+                    "isError": False,
+                },
+            }
+        ),
+        "session-1",
+    )
+
+    assert len(events) == 1
+    assert "… 已截断" in events[0].text
+    assert len(events[0].text) < 1_500
 
 
 def test_event_parser_ignores_xd_propose_and_removed_plan_protocols():

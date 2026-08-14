@@ -74,6 +74,10 @@ _OMP_CONTEXT_RE = re.compile(
 _OMP_COST_RE = re.compile(
     r"(?:^|\s|[•·<>-])\$(?P<value>\d+(?:\.\d+)?)(?P<subscription>\s+\(sub\))?"
 )
+_OMP_SESSION_TOKENS_RE = re.compile(
+    r"(?:^|\s|[•·<>-])(?:tok(?:ens?)?\s*[:=])\s*(?P<value>\d+(?:\.\d+)?[kKmM]?)",
+    re.I,
+)
 _OMP_EFFORT_RE = re.compile(
     r"(?:^|[•·<>-]\s*)(?:effort|thinking)\s*[:=]?\s*"
     r"(?P<effort>off|minimal|low|medium|high|xhigh|max|auto)"
@@ -308,6 +312,128 @@ def _format_tool(name: str, arguments: Any) -> str:
     return f"{label} <code>{html.escape(str(detail)[:180])}</code>" if detail else label
 
 
+_OMP_MUTATION_PREVIEW_CHARS = 1_200
+_OMP_MUTATION_PREVIEW_LINES = 48
+_OMP_MUTATION_PREVIEW_FILES = 2
+_OMP_PENDING_WRITE_LIMIT = 128
+_OMP_SECRET_NAME_RE = re.compile(
+    r"(^|[._-])(secret|secrets|credential|credentials|token|tokens|password|passwd)([._-]|$)",
+    re.I,
+)
+
+
+def _safe_mutation_preview_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    path = value.strip()
+    if not path or "://" in path:
+        return None
+    normalized = path.replace("\\", "/").lower()
+    parts = tuple(part for part in normalized.split("/") if part)
+    if not parts:
+        return None
+    name = parts[-1]
+    if (
+        name.startswith(".env")
+        or name in {"bindings.yaml", "bindings.yml", "id_rsa", "id_ed25519"}
+        or name.endswith((".key", ".pem", ".p12", ".pfx"))
+        or any(part in {".ssh", ".gnupg"} for part in parts)
+        or _OMP_SECRET_NAME_RE.search(name)
+    ):
+        return None
+    return path
+
+
+def _bounded_mutation_preview(value: str) -> str:
+    lines = value.strip("\n").splitlines()
+    truncated = len(lines) > _OMP_MUTATION_PREVIEW_LINES
+    preview = "\n".join(lines[:_OMP_MUTATION_PREVIEW_LINES])
+    if len(preview) > _OMP_MUTATION_PREVIEW_CHARS:
+        preview = preview[:_OMP_MUTATION_PREVIEW_CHARS]
+        if "\n" in preview:
+            preview = preview.rsplit("\n", 1)[0]
+        truncated = True
+    if truncated:
+        preview = f"{preview.rstrip()}\n… 已截断"
+    return preview
+
+
+def _format_edit_result_preview(message: dict[str, Any]) -> str | None:
+    details = message.get("details")
+    if not isinstance(details, dict):
+        return None
+    results = details.get("perFileResults")
+    if not isinstance(results, list):
+        return None
+
+    previews: list[tuple[str, str]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        path = _safe_mutation_preview_path(result.get("path"))
+        diff = result.get("diff")
+        if path is None or not isinstance(diff, str) or not diff.strip():
+            continue
+        previews.append((path, _bounded_mutation_preview(diff)))
+
+    if not previews:
+        return None
+    parts = ["✅ <b>代码 diff</b>"]
+    for path, preview in previews[:_OMP_MUTATION_PREVIEW_FILES]:
+        parts.append(f"<code>{html.escape(path[:240])}</code>\n<pre>{html.escape(preview)}</pre>")
+    remaining = len(previews) - _OMP_MUTATION_PREVIEW_FILES
+    if remaining > 0:
+        parts.append(f"<i>另有 {remaining} 个文件 diff 已省略</i>")
+    return "\n".join(parts)
+
+
+def _format_write_result_preview(path: str, preview: str) -> str:
+    return (
+        f"✅ <b>写入代码片段</b> <code>{html.escape(path[:240])}</code>\n"
+        f"<pre>{html.escape(preview)}</pre>"
+    )
+
+
+def _mutation_start(name: str, arguments: Any) -> tuple[str, str] | None:
+    if not isinstance(arguments, dict):
+        return None
+    tool_name = name.lower()
+    paths: list[str] = []
+    if tool_name == "write":
+        path = _safe_mutation_preview_path(arguments.get("path"))
+        content = arguments.get("content")
+        if path is None or not isinstance(content, str) or not content:
+            return None
+        paths.append(path)
+        action = "✏️ 正在写入"
+    elif tool_name == "edit":
+        patch = arguments.get("input")
+        if not isinstance(patch, str) or not patch:
+            return None
+        for match in re.finditer(r"(?m)^\[(?P<path>.+?)#[0-9A-Fa-f]{4}\]\s*$", patch):
+            path = _safe_mutation_preview_path(match.group("path"))
+            if path is not None and path not in paths:
+                paths.append(path)
+        if not paths:
+            return None
+        action = "✂️ 正在编辑"
+    else:
+        return None
+
+    visible_paths = paths[:_OMP_MUTATION_PREVIEW_FILES]
+    path_label = "、".join(visible_paths)
+    if len(paths) > len(visible_paths):
+        path_label += f" 等 {len(paths)} 个文件"
+    return path_label, f"{action} <code>{html.escape(path_label[:240])}</code>"
+
+
+def _format_mutation_completion(tool_name: str, path: str, *, failed: bool) -> str:
+    action = "编辑" if tool_name == "edit" else "写入"
+    marker = "⚠️" if failed else "✅"
+    state = "失败" if failed else "完成"
+    return f"{marker} <b>{action}{state}</b> <code>{html.escape(path[:240])}</code>"
+
+
 class OmpBackend(Backend):
     name = "omp"
     pane_command_name = "omp"
@@ -316,6 +442,8 @@ class OmpBackend(Backend):
         self._runtime_metadata_cache: dict[Path, tuple[int, int, ProviderRuntimeMetadata]] = {}
         self._plan_mode_cache: dict[Path, tuple[int, int, PlanModeSnapshot | None]] = {}
         self._model_context_cache: dict[Path, tuple[int, int, dict[tuple[str, str], int]]] = {}
+        self._pending_write_previews: dict[tuple[str, str], tuple[str, str]] = {}
+        self._pending_mutation_labels: dict[tuple[str, str], tuple[str, str]] = {}
 
     @property
     def start_cmd(self) -> str:
@@ -435,6 +563,7 @@ class OmpBackend(Backend):
         active_label_match = _OMP_ACTIVE_LABEL_RE.search(top)
         compact_label_match = _OMP_COMPACT_LABEL_RE.search(top)
         cost_match = _OMP_COST_RE.search(footer)
+        session_tokens_match = _OMP_SESSION_TOKENS_RE.search(footer)
         cwd = (
             icon_cwd_match.group("cwd").strip()
             if icon_cwd_match
@@ -470,6 +599,11 @@ class OmpBackend(Backend):
                 if compact_label_match
                 else label_match.group("label").strip()
                 if label_match
+                else None
+            ),
+            session_total_tokens=(
+                _scaled_number(session_tokens_match.group("value"))
+                if session_tokens_match
                 else None
             ),
             cost_usd=float(cost_match.group("value")) if cost_match else None,
@@ -540,12 +674,66 @@ class OmpBackend(Backend):
         if row_type != "message":
             return []
         message = row.get("message")
-        if not isinstance(message, dict) or message.get("role") != "assistant":
+        if not isinstance(message, dict):
+            return []
+        role = message.get("role")
+        if role == "toolResult":
+            tool_name = str(message.get("toolName") or "").lower()
+            tool_call_id = message.get("toolCallId")
+            cache_key = (
+                (provider_session_id or "unknown", tool_call_id)
+                if isinstance(tool_call_id, str) and tool_call_id
+                else None
+            )
+            pending_mutation = (
+                self._pending_mutation_labels.pop(cache_key, None)
+                if cache_key is not None
+                else None
+            )
+            pending_write = (
+                self._pending_write_previews.pop(cache_key, None)
+                if cache_key is not None and tool_name == "write"
+                else None
+            )
+            failed = message.get("isError") is True
+            if failed:
+                if pending_mutation is None:
+                    return []
+                preview = _format_mutation_completion(
+                    pending_mutation[0], pending_mutation[1], failed=True
+                )
+            else:
+                preview = _format_edit_result_preview(message) if tool_name == "edit" else None
+                if tool_name == "write" and pending_write is not None:
+                    preview = _format_write_result_preview(*pending_write)
+                if preview is None and pending_mutation is not None:
+                    preview = _format_mutation_completion(
+                        pending_mutation[0], pending_mutation[1], failed=False
+                    )
+            if preview is None:
+                return []
+            native_id = f"{tool_call_id}:mutation" if tool_call_id else row.get("id")
+            return [
+                self.provider_event(
+                    row,
+                    ProviderEventKind.TOOL_PROGRESS,
+                    preview,
+                    provider_session_id=provider_session_id,
+                    native_id=str(native_id) if native_id else None,
+                    metadata={
+                        "tool_call_id": tool_call_id,
+                        "tool_phase": "result",
+                        "tool_name": tool_name,
+                    },
+                )
+            ]
+        if role != "assistant":
             return []
 
         tools: list[str] = []
         texts: list[str] = []
         plan_updates: list[tuple[str, str]] = []
+        mutation_starts: list[tuple[str, str, str]] = []
         content = message.get("content")
         if not isinstance(content, list):
             content = []
@@ -567,9 +755,40 @@ class OmpBackend(Backend):
             elif kind == "toolCall":
                 name = str(block.get("name") or "?")
                 arguments = block.get("arguments")
-                tools.append(_format_tool(name, arguments))
-                plan = plan_text_from_write_block(block)
                 tool_call_id = block.get("id")
+                mutation = (
+                    _mutation_start(name, arguments)
+                    if isinstance(tool_call_id, str) and tool_call_id
+                    else None
+                )
+                if mutation is None:
+                    tools.append(_format_tool(name, arguments))
+                else:
+                    path_label, start_text = mutation
+                    key = (provider_session_id or "unknown", tool_call_id)
+                    self._pending_mutation_labels[key] = (name.lower(), path_label)
+                    mutation_starts.append((tool_call_id, name.lower(), start_text))
+                    if len(self._pending_mutation_labels) > _OMP_PENDING_WRITE_LIMIT:
+                        oldest = next(iter(self._pending_mutation_labels))
+                        self._pending_mutation_labels.pop(oldest, None)
+                if (
+                    name.lower() == "write"
+                    and isinstance(tool_call_id, str)
+                    and tool_call_id
+                    and isinstance(arguments, dict)
+                ):
+                    path = _safe_mutation_preview_path(arguments.get("path"))
+                    write_content = arguments.get("content")
+                    if path is not None and isinstance(write_content, str) and write_content:
+                        key = (provider_session_id or "unknown", tool_call_id)
+                        self._pending_write_previews[key] = (
+                            path,
+                            _bounded_mutation_preview(write_content),
+                        )
+                        if len(self._pending_write_previews) > _OMP_PENDING_WRITE_LIMIT:
+                            oldest = next(iter(self._pending_write_previews))
+                            self._pending_write_previews.pop(oldest, None)
+                plan = plan_text_from_write_block(block)
                 if plan is not None and isinstance(tool_call_id, str) and tool_call_id:
                     plan_updates.append((tool_call_id, plan))
 
@@ -596,6 +815,21 @@ class OmpBackend(Backend):
                     "\n".join(tools),
                     provider_session_id=provider_session_id,
                     native_id=f"{native_id}:tools" if native_id else None,
+                )
+            )
+        for tool_call_id, tool_name, start_text in mutation_starts:
+            events.append(
+                self.provider_event(
+                    row,
+                    ProviderEventKind.TOOL_PROGRESS,
+                    start_text,
+                    provider_session_id=provider_session_id,
+                    native_id=f"{tool_call_id}:start",
+                    metadata={
+                        "tool_call_id": tool_call_id,
+                        "tool_phase": "start",
+                        "tool_name": tool_name,
+                    },
                 )
             )
         for tool_call_id, plan in plan_updates:
@@ -673,6 +907,7 @@ class OmpBackend(Backend):
                 effort=metadata.effort,
                 session_name=metadata.session_name,
                 session_file_size_bytes=session_file_size,
+                session_total_tokens=metadata.session_total_tokens,
                 input_tokens=metadata.input_tokens,
                 output_tokens=metadata.output_tokens,
                 cache_read_tokens=metadata.cache_read_tokens,
@@ -809,7 +1044,7 @@ class OmpBackend(Backend):
 
         canonical_model: tuple[str, str] | None = None
         fallback_provider = fallback_model = effort = None
-        input_tokens = output_tokens = cache_read = cache_write = 0
+        input_tokens = output_tokens = cache_read = cache_write = session_total_tokens = 0
         latest_cache_hit_rate = latest_context_used = None
         cost_usd = 0.0
         for row in branch:
@@ -847,6 +1082,19 @@ class OmpBackend(Backend):
             current_cache_read = _usage_int(usage, "cacheRead")
             current_cache_write = _usage_int(usage, "cacheWrite")
             current_output = _usage_int(usage, "output")
+            orchestration = usage.get("orchestration")
+            orchestration_input = _usage_int(usage, "orchestrationInput")
+            orchestration_output = _usage_int(usage, "orchestrationOutput")
+            if isinstance(orchestration, dict):
+                orchestration_input = orchestration_input or _usage_int(orchestration, "input")
+                orchestration_output = orchestration_output or _usage_int(orchestration, "output")
+            session_total_tokens += (
+                current_input
+                + current_output
+                + current_cache_write
+                + orchestration_input
+                + orchestration_output
+            )
             input_tokens += current_input
             output_tokens += current_output
             cache_read += current_cache_read
@@ -876,6 +1124,7 @@ class OmpBackend(Backend):
             model=model,
             effort=effort,
             session_name=session_name,
+            session_total_tokens=session_total_tokens or None,
             input_tokens=input_tokens or None,
             output_tokens=output_tokens or None,
             cache_read_tokens=cache_read or None,
@@ -904,6 +1153,33 @@ class OmpBackend(Backend):
             return None
         parts: list[str] = []
 
+        if status.context_limit is not None:
+            percent = (
+                f"{_format_omp_status_percent(status.context_percent)}%"
+                if status.context_percent is not None
+                else "?"
+            )
+            context_used = status.context_used
+            if context_used is None and status.context_percent is not None:
+                context_used = round(status.context_percent / 100 * status.context_limit)
+            if context_used is not None:
+                remaining = max(0, status.context_limit - context_used)
+                parts.append(
+                    f"上下文 {percent} "
+                    f"({_format_omp_context_limit(context_used)}/"
+                    f"{_format_omp_context_limit(status.context_limit)}，"
+                    f"余 {_format_omp_context_limit(remaining)})"
+                )
+            else:
+                parts.append(f"上下文 {percent}/{_format_omp_context_limit(status.context_limit)}")
+
+        if status.session_total_tokens is not None:
+            parts.append(f"会话累计 {_format_omp_tokens(status.session_total_tokens)} tok")
+        if status.cache_hit_rate is not None:
+            parts.append(f"缓存命中 {status.cache_hit_rate * 100:.1f}%")
+        if status.auto_compact is not None:
+            parts.append("自动压缩 开" if status.auto_compact else "自动压缩 关")
+
         if status.model:
             identity = status.model
             if status.provider:
@@ -911,18 +1187,8 @@ class OmpBackend(Backend):
             parts.append(f"模型 {identity}")
         elif status.provider:
             parts.append(f"模型 {status.provider}")
-
-        if status.context_limit is not None:
-            percent = (
-                f"{_format_omp_status_percent(status.context_percent)}%"
-                if status.context_percent is not None
-                else "?"
-            )
-            parts.append(f"上下文 {percent}/{_format_omp_context_limit(status.context_limit)}")
         if status.effort:
             parts.append(f"思考 {status.effort}")
-        if status.session_file_size_bytes is not None:
-            parts.append(f"JSON {_format_omp_file_size(status.session_file_size_bytes)}")
         if status.extension_statuses:
             parts.append(" ".join(status.extension_statuses))
         return " · ".join(parts) or None

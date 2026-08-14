@@ -1,8 +1,10 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from tmuxbot import jsonl
+from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState, TerminalStatus
 from tmuxbot.jsonl import _capture_terminal_status, on_tmux_event
 from tmuxbot.attachments import is_image_file
@@ -389,6 +391,83 @@ def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
         assert frontend.sent == [
             ("html", 123, None, "💭 <b>工作中…</b>\n工具输出"),
             ("image", 123, None, image, None),
+        ]
+
+    asyncio.run(run())
+
+
+def test_omp_edit_result_replaces_the_matching_im_working_card_slot(tmp_path, monkeypatch):
+    async def run():
+        frontend = FakeFrontend()
+        state = SimpleNamespace(setup_mode=False, tool_aggregator={}, fire=close_coro)
+        b = binding(tmp_path)
+        backend = OmpBackend()
+        monkeypatch.setattr(jsonl, "tmux_capture", lambda *_args: "")
+        start_events = backend.parse_event(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "edit-call",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": "call-edit",
+                                "name": "edit",
+                                "arguments": {"input": "[src/app.py#ABCD]\nPUT 1.=1:\n+new_value"},
+                            }
+                        ],
+                    },
+                }
+            ),
+            "session-1",
+        )
+        result_events = backend.parse_event(
+            json.dumps(
+                {
+                    "type": "message",
+                    "id": "edit-result",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": "call-edit",
+                        "toolName": "edit",
+                        "isError": False,
+                        "details": {
+                            "perFileResults": [
+                                {
+                                    "path": "src/app.py",
+                                    "diff": "-1|old_value\n+1|new_value",
+                                }
+                            ]
+                        },
+                    },
+                }
+            ),
+            "session-1",
+        )
+
+        assert start_events[0].metadata["tool_phase"] == "start"
+        assert result_events[0].metadata["tool_phase"] == "result"
+        assert await jsonl._dispatch_provider_events(b, start_events, frontend, state, backend)
+        assert await jsonl._dispatch_provider_events(b, result_events, frontend, state, backend)
+
+        assert frontend.sent == [
+            (
+                "html",
+                123,
+                None,
+                "💭 <b>工作中…</b>\n✂️ 正在编辑 <code>src/app.py</code>",
+            ),
+            (
+                "edit",
+                123,
+                101,
+                "💭 <b>工作中…</b>\n"
+                "✅ <b>代码 diff</b>\n"
+                "<code>src/app.py</code>\n"
+                "<pre>-1|old_value\n+1|new_value</pre>",
+            ),
         ]
 
     asyncio.run(run())

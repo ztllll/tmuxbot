@@ -13,7 +13,7 @@ import logging
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
@@ -213,6 +213,7 @@ async def _dispatch_provider_events(
                     frontend,
                     state,
                     backend,
+                    reduced.metadata,
                 )
             except Exception:
                 log.exception(f"[{b.name}] on_tmux_event err; retaining transcript offset")
@@ -271,6 +272,7 @@ async def on_tmux_event(
     frontend: "Frontend",
     state: "State",
     backend: "Backend",
+    event_metadata: Mapping[str, Any] | None = None,
 ) -> None:
     """JSONL tailer → TG 路由 (★ Boss 最终定型规则)。
 
@@ -341,6 +343,15 @@ async def on_tmux_event(
 
     # 走到这: kind == "assistant_tools", 进 aggregator
     body, attachments = split_outbound_attachments(body, cwd=b.cwd)
+    tool_call_id = None
+    tool_phase = None
+    if event_metadata is not None:
+        candidate_id = event_metadata.get("tool_call_id")
+        candidate_phase = event_metadata.get("tool_phase")
+        if isinstance(candidate_id, str) and candidate_id:
+            tool_call_id = candidate_id
+        if isinstance(candidate_phase, str):
+            tool_phase = candidate_phase
     if not body.strip():
         await _send_outbound_attachments(frontend, b, attachments)
         return
@@ -375,10 +386,20 @@ async def on_tmux_event(
                 "content": [header, body],
                 "last_ts": now,
                 "task_footer": task_footer,
+                "tool_slots": {tool_call_id: 1} if tool_call_id is not None else {},
             }
             state.fire(_aggregator_idle_watcher(b, state, frontend, backend))
     else:
-        agg["content"].append(body)
+        slots = agg.setdefault("tool_slots", {})
+        slot = slots.get(tool_call_id) if tool_call_id is not None else None
+        if tool_phase == "result" and isinstance(slot, int) and slot < len(agg["content"]):
+            agg["content"][slot] = body
+        elif tool_phase == "start" and isinstance(slot, int) and slot < len(agg["content"]):
+            agg["content"][slot] = body
+        else:
+            agg["content"].append(body)
+            if tool_call_id is not None:
+                slots[tool_call_id] = len(agg["content"]) - 1
         agg["last_ts"] = now
         agg["task_footer"] = _task_footer(b, backend)
         new_html = _append_footer("\n".join(agg["content"]), agg["task_footer"])
@@ -484,6 +505,7 @@ async def _capture_terminal_status(
                 metadata.effort,
                 metadata.permission_mode,
                 metadata.session_name,
+                metadata.session_total_tokens,
                 metadata.input_tokens,
                 metadata.output_tokens,
                 metadata.cache_read_tokens,
@@ -502,6 +524,7 @@ async def _capture_terminal_status(
                 effort=metadata.effort,
                 permission_mode=metadata.permission_mode,
                 session_name=metadata.session_name,
+                session_total_tokens=metadata.session_total_tokens,
                 input_tokens=metadata.input_tokens,
                 output_tokens=metadata.output_tokens,
                 cache_read_tokens=metadata.cache_read_tokens,
@@ -530,6 +553,7 @@ async def _capture_terminal_status(
             and not (prefer_native_identity and status.effort),
             status.permission_mode is None and metadata.permission_mode,
             status.session_name is None and metadata.session_name,
+            status.session_total_tokens is None and metadata.session_total_tokens is not None,
             status.input_tokens is None and metadata.input_tokens is not None,
             status.output_tokens is None and metadata.output_tokens is not None,
             status.cache_read_tokens is None and metadata.cache_read_tokens is not None,
@@ -560,6 +584,11 @@ async def _capture_terminal_status(
             ),
             permission_mode=status.permission_mode or metadata.permission_mode,
             session_name=status.session_name or metadata.session_name,
+            session_total_tokens=(
+                status.session_total_tokens
+                if status.session_total_tokens is not None
+                else metadata.session_total_tokens
+            ),
             input_tokens=(
                 status.input_tokens if status.input_tokens is not None else metadata.input_tokens
             ),

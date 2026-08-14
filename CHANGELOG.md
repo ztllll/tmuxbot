@@ -21,13 +21,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- OMP 成功执行结构化 `edit` 后，将 provider 返回的受限 per-file diff 追加到同一条 IM 工作卡；普通本地 `write` 成功后显示受限文件片段。`toolCallId` 将开始态与结果态绑定，Telegram 使用 `editMessageText`、飞书使用 Card PATCH 原位替换对应条目，多文件并行调用不会串位。只有成功结果才展示代码，失败结果只显示失败状态；HTML 会转义并限制文件数、行数和字符数，内部 URI、环境文件、credential/token/password 命名文件和私钥格式内容 fail closed。
+
 ### Documentation
 
 - 更新 GitHub 仓库入口、配置与运维说明：新增 Telegram/飞书 credential、精确 route、XDG 路径、systemd、OMP SSH-only、附件/Web 安全的集中配置文档；同步修正生命周期审计、Admin service 名称、route 示例和架构图。
 
 ### Fixed
 
-- 修复 OMP 更新状态栏布局后 IM footer 失配：状态 adapter 改为跨版本语义解析，不再复制单一 TUI 框线和图标；同时支持旧 `╭── π` 与新版 compact `+-- … --+` footer，从稳定标签/数值提取模型、provider、上下文占用率和思考强度，并从 exact session JSONL 补充实时文件大小。IM 使用固定的 `模型 · 上下文 · 思考 · JSON` 格式，后续只需新增内部 layout fixture，不改 channel 调用方。
+- 修复 OMP 更新状态栏布局后 IM footer 失配：状态 adapter 改为跨版本语义解析，不再复制单一 TUI 框线和图标；同时支持旧 `╭── π` 与新版 compact `+-- … --+` footer。IM 改为面向会话决策的固定格式，按顺序显示当前上下文已用/上限/余量、会话累计 token、最近一轮缓存命中率、自动压缩、模型和思考强度；会话文件大小退出默认状态栏。OMP `tok` 按上游 `input + output + cacheWrite + orchestrationInput + orchestrationOutput` 口径解析或从 exact current-branch JSONL 补齐，不含 cacheRead。
 
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
 

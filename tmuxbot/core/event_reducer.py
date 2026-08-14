@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from tmuxbot.core.events import ProviderEvent, ProviderEventKind
 
@@ -11,6 +12,7 @@ from tmuxbot.core.events import ProviderEvent, ProviderEventKind
 class ReducedEvent:
     kind: str
     body: str
+    metadata: Mapping[str, Any] | None = None
 
 
 def reduce_provider_event(event: ProviderEvent) -> list[ReducedEvent]:
@@ -21,7 +23,12 @@ def reduce_provider_event(event: ProviderEvent) -> list[ReducedEvent]:
         route = "assistant_live_text" if event.phase == "live" else "assistant_text"
         return [ReducedEvent(route, event.text)]
     if event.kind == ProviderEventKind.TOOL_PROGRESS:
-        return [ReducedEvent("assistant_tools", event.text)]
+        metadata = {
+            key: event.metadata[key]
+            for key in ("tool_call_id", "tool_phase", "tool_name")
+            if key in event.metadata
+        }
+        return [ReducedEvent("assistant_tools", event.text, metadata or None)]
     if event.kind == ProviderEventKind.PLAN_UPDATE:
         return [ReducedEvent("assistant_plan", event.text)]
     if event.kind == ProviderEventKind.INTERACTION_REQUEST:

@@ -36,6 +36,7 @@ class ProviderRuntimeMetadata:
     effort: str | None = None
     permission_mode: str | None = None
     session_name: str | None = None
+    session_total_tokens: int | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
@@ -59,6 +60,7 @@ class TerminalStatus:
     git_branch: str | None = None
     session_name: str | None = None
     session_file_size_bytes: int | None = None
+    session_total_tokens: int | None = None
     duration_seconds: float | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None

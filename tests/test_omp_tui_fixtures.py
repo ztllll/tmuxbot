@@ -63,6 +63,7 @@ def test_current_omp_status_bar_keeps_native_labels_order_and_fields(tmp_path, m
                 output_tokens=96_813,
                 cache_read_tokens=59_213_696,
                 cache_hit_rate=0.9847,
+                session_total_tokens=1_600_000,
                 cost_usd=57.16,
             )
 
@@ -78,7 +79,8 @@ def test_current_omp_status_bar_keeps_native_labels_order_and_fields(tmp_path, m
     assert status.auto_compact is True
     status = replace(status, session_file_size_bytes=13_000_000)
     assert backend.format_status_footer(status) == (
-        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 48.8%/360K · 思考 xhigh · JSON 13.0MB"
+        "上下文 48.8% (176K/360K，余 184K) · 会话累计 1.6M tok · 缓存命中 98.5% · "
+        "自动压缩 开 · 模型 GPT-5.6 Sol (AISuperToken) · 思考 xhigh"
     )
 
 
@@ -96,11 +98,13 @@ def test_compact_omp_status_bar_uses_the_same_semantic_contract():
     assert status.context_percent == 66.8
     assert status.context_limit == 360_000
     assert status.auto_compact is True
+    assert status.session_total_tokens == 1_600_000
     assert _is_tui_busy(pane)
 
     status = replace(status, session_file_size_bytes=13_000_000)
     assert backend.format_status_footer(status) == (
-        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 66.8%/360K · 思考 xhigh · JSON 13.0MB"
+        "上下文 66.8% (240K/360K，余 120K) · 会话累计 1.6M tok · 自动压缩 开 · "
+        "模型 GPT-5.6 Sol (AISuperToken) · 思考 xhigh"
     )
 
 
@@ -114,6 +118,8 @@ def test_compact_footer_uses_runtime_context_when_width_hides_ctx(tmp_path, monk
                 context_used=274_520,
                 context_limit=360_000,
                 context_percent=274_520 / 360_000 * 100,
+                session_total_tokens=1_600_000,
+                cache_hit_rate=0.996,
             )
 
     pane = capture("status_bar_v17_3_3_narrow.txt")
@@ -130,8 +136,11 @@ def test_compact_footer_uses_runtime_context_when_width_hides_ctx(tmp_path, monk
     assert status.context_used == 274_520
     assert status.context_limit == 360_000
     assert status.context_percent == pytest.approx(76.2555, rel=1e-4)
+    assert status.session_total_tokens == 1_600_000
+    assert status.cache_hit_rate == pytest.approx(0.996)
     assert backend.format_status_footer(status) == (
-        "模型 GPT-5.6 Sol (AISuperToken) · 上下文 76.3%/360K · 思考 xhigh"
+        "上下文 76.3% (275K/360K，余 85K) · 会话累计 1.6M tok · 缓存命中 99.6% · "
+        "模型 GPT-5.6 Sol (AISuperToken) · 思考 xhigh"
     )
 
 

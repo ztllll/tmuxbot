@@ -185,7 +185,7 @@ journalctl --user -u tmuxbot -f
 - **按 route 选择 adapter**：同一 Telegram Bot/飞书 App credential 可按精确 topic/thread route 混合承载 Claude Code、Codex 和 OMP；不同 credential 仍可并行部署
 - **核心命令**：`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`。对 OMP，bot `/plan` 是本地帮助：只报告当前 plan 状态，并提示 SSH attach 后使用默认 `Alt+Shift+P`（自定义 keybinding 可能不同），不会向 pane 注入 `/plan`
 - **TUI 透传**：`/context` `/cost` `/usage` `/compact` `/clear` 等，抓屏结构化反馈
-- **工具调用聚合**：一个 turn 内的 tool_use 流式刷同一条 IM 消息，真说话单独 push 触发通知
+- **工具调用聚合**：一个 turn 内的 tool_use 流式刷同一条 IM 消息，真说话单独 push 触发通知；OMP 成功执行 `edit` 时同步显示受限 diff，成功执行普通本地 `write` 时同步显示受限代码片段，内部工具 URI 和敏感文件内容不外发
 - **Codex 计划跟随**：`update_plan` 会维护一条可编辑的“当前计划”消息，TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态
 - **双向附件**：Telegram/飞书收到的图片/文件会下载到本机并以 `@path` 注入 TUI；AI 回复里的绝对/相对路径、Markdown 文件链接和图片链接会转成原生 IM 附件，聊天内容不暴露服务器绝对路径
 - **统一富消息**：Claude/Codex/OMP 共用 `ReplyDocument`；回复详细信息会显示运行时模型与档位（如 `gpt-5.6-terra medium`）；代码围栏可保留语言与 `filename=...` 标签，Markdown 表格在 Telegram 退化为对齐的原生 `<pre>` 数据块，在飞书使用 Card 2.0 根级 `table` 组件；Telegram 继续使用安全 HTML/可展开引用，飞书使用 header、summary、状态色和可选 CardKit 流式更新
@@ -193,7 +193,7 @@ journalctl --user -u tmuxbot -f
 - **Telegram 状态标识**：Telegram 没有飞书式原生彩色卡片标题，使用 `🟡 工作中`、`🟠 等待输入`、`✅ 已完成`、`🔴 错误/阻塞`、`🔵 信息`、`⚪ 状态未知` 作为文本等价呈现
 - **飞书状态色**：工作中黄色、等待输入橙色、完成/空闲绿色、错误/阻塞红色、普通信息蓝色、未知状态灰色；流式回复从黄色开始并在成功完成后变为绿色
 - **OMP 精确身份**：受管 extension 写入 target-scoped handoff 与 health sidecar；handoff 记录 `tmuxTarget/cwd/sessionId/transcriptPath/processId`，health 记录同一会话身份与状态。新会话 JSONL 首条消息前可能尚未落盘，此时只接受官方 `~/.omp/agent/sessions` 路径、匹配 session ID 且 processId 属于该 pane 的 provider-authored record；文件出现后立即回到 header/cwd 校验。恢复只使用 `omp --resume <absolute transcript path>`，不按 mtime 或 cwd 猜测会话
-- **OMP 原生运行语义**：普通文字和附件在 working/streaming 时进入 steering queue；`/new`、`/compact` 等控制命令要求 idle，忙碌时立即拒绝。状态以 provider-authored sidecar 和 JSONL v3 为权威；`╭── π ... ╮` / `╰─ ... ─╯` footer、紧邻 footer 且以 `⟦esc⟧` 结束的 braille loader 仅作为版本化弱信号
+- **OMP 原生运行语义**：普通文字和附件在 working/streaming 时进入 steering queue；`/new`、`/compact` 等控制命令要求 idle，忙碌时立即拒绝。状态以 provider-authored sidecar 和 JSONL v3 为权威；IM 状态栏优先显示当前上下文已用/上限/余量、会话累计 token、最近一轮缓存命中率、自动压缩、模型与思考强度，用于判断继续、压缩或新建会话。会话文件 MB 不作为 token 指标；原生 footer 仅是版本化弱信号。
 - **OMP 交互安全**：原生菜单、picker、ask、approval、plan review 和确认只通知精确 pane 的 SSH attach 命令；Telegram/飞书不模拟方向键、Enter、批准或取消按键
 - **活性指示**：provider-authored health、JSONL 进展与严格的当前 live loader 共同判定状态；工作中显示 typing（Telegram），飞书无 typing API
 - **消息已读反应**：TG 👀 emoji（Bot API 7.0+）；飞书 👀 OnIt reaction
