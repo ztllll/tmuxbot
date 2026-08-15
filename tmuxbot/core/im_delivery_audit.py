@@ -46,6 +46,7 @@ async def audit_loop(
     *,
     interval_seconds: float = 30.0,
 ) -> None:
+    save(path, registry)
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval_seconds)

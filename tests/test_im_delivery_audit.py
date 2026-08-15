@@ -1,3 +1,4 @@
+import asyncio
 import json
 import stat
 
@@ -26,6 +27,23 @@ def test_im_delivery_audit_records_only_counts_and_body_length(tmp_path):
     save(path, registry)
     assert json.loads(path.read_text())["version"] == 1
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_im_delivery_audit_loop_writes_initial_snapshot_immediately(tmp_path):
+    from tmuxbot.core.im_delivery_audit import audit_loop
+
+    async def run():
+        path = tmp_path / "im-delivery.json"
+        stop = asyncio.Event()
+        task = asyncio.create_task(
+            audit_loop(path, {}, stop, interval_seconds=3600)
+        )
+        await asyncio.sleep(0)
+        assert path.is_file()
+        stop.set()
+        await task
+
+    asyncio.run(run())
 
 
 def test_im_delivery_audit_rejects_unknown_counter():
