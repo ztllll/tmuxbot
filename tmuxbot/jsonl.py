@@ -467,37 +467,21 @@ async def _capture_terminal_status(
         log.exception("[%s] provider status capture failed", b.name)
         return None
     if status is None:
-        if any(
-            value is not None
-            for value in (
-                metadata.provider,
-                metadata.model,
-                metadata.effort,
-                metadata.permission_mode,
-                metadata.session_name,
-                metadata.input_tokens,
-                metadata.output_tokens,
-                metadata.cache_read_tokens,
-                metadata.cache_write_tokens,
-                metadata.cache_hit_rate,
-                metadata.cost_usd,
-            )
-        ):
-            return TerminalStatus(
-                state=TerminalState.IDLE,
-                provider=metadata.provider,
-                model=metadata.model,
-                effort=metadata.effort,
-                permission_mode=metadata.permission_mode,
-                session_name=metadata.session_name,
-                input_tokens=metadata.input_tokens,
-                output_tokens=metadata.output_tokens,
-                cache_read_tokens=metadata.cache_read_tokens,
-                cache_write_tokens=metadata.cache_write_tokens,
-                cache_hit_rate=metadata.cache_hit_rate,
-                cost_usd=metadata.cost_usd,
-            )
-        return None
+        return TerminalStatus(
+            state=TerminalState.IDLE,
+            provider=metadata.provider,
+            model=metadata.model,
+            effort=metadata.effort,
+            permission_mode=metadata.permission_mode,
+            cwd=str(b.cwd),
+            session_name=metadata.session_name,
+            input_tokens=metadata.input_tokens,
+            output_tokens=metadata.output_tokens,
+            cache_read_tokens=metadata.cache_read_tokens,
+            cache_write_tokens=metadata.cache_write_tokens,
+            cache_hit_rate=metadata.cache_hit_rate,
+            cost_usd=metadata.cost_usd,
+        )
     # Transcript metadata is authoritative. TUI scrollback can contain a tool/subagent
     # label (for example ``claude-code-guide``) that looks like a model name.
     if any(
@@ -506,6 +490,7 @@ async def _capture_terminal_status(
             metadata.model and status.model != metadata.model,
             metadata.effort and status.effort != metadata.effort,
             status.permission_mode is None and metadata.permission_mode,
+            status.cwd is None,
             status.session_name is None and metadata.session_name,
             status.input_tokens is None and metadata.input_tokens is not None,
             status.output_tokens is None and metadata.output_tokens is not None,
@@ -521,6 +506,7 @@ async def _capture_terminal_status(
             model=metadata.model or status.model,
             effort=metadata.effort or status.effort,
             permission_mode=status.permission_mode or metadata.permission_mode,
+            cwd=status.cwd or str(b.cwd),
             session_name=status.session_name or metadata.session_name,
             input_tokens=(
                 status.input_tokens

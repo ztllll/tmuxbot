@@ -278,6 +278,42 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
     assert status.permission_mode == "YOLO"
 
 
+def test_status_capture_falls_back_to_binding_cwd_when_tui_omits_path(
+    tmp_path, monkeypatch
+):
+    class BackendWithoutCwd:
+        def parse_terminal_status(self, pane):
+            return TerminalStatus(state=TerminalState.IDLE, model="gpt-5.6-sol")
+
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata(model="gpt-5.6-sol")
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "footer without cwd")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), BackendWithoutCwd()))
+
+    assert status is not None
+    assert status.cwd == str(tmp_path)
+
+
+def test_status_capture_creates_path_only_footer_when_tui_and_transcript_are_pending(
+    tmp_path, monkeypatch
+):
+    class PendingBackend:
+        def parse_terminal_status(self, pane):
+            return None
+
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata()
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "starting")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), PendingBackend()))
+
+    assert status is not None
+    assert status.cwd == str(tmp_path)
+
+
 def test_status_capture_preserves_tui_usage_and_fills_missing_metadata(tmp_path, monkeypatch):
     class BackendWithUsage:
         def parse_terminal_status(self, pane):
@@ -568,6 +604,7 @@ def test_text_delta_stream_finalizes_with_provider_footer(tmp_path, monkeypatch)
             model="gpt-5.6-terra",
             effort="medium",
             permission_mode="YOLO",
+            cwd=str(tmp_path),
         )
 
     asyncio.run(run())
