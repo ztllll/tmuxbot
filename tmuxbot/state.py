@@ -72,11 +72,12 @@ class State:
         self.last_active: dict[str, float] = {}
         # TUI 状态行指纹: binding.name → 上次"含时间+token"行的内容
         self.tui_fp: dict[str, str] = {}
-        # 工具调用聚合器: binding.name → {msg_id, content_lines: list[str], last_ts, target}
-        # tool_use/thinking 类事件累计到一条可编辑消息, text 事件触发"封闭"并发新消息
+        # 每个 route 当前 Turn 的通道无关过程投影与唯一可编辑消息引用。
+        self.turn_projections: dict[str, object] = {}
+        self.progress_messages: dict[str, dict] = {}
+        self.progress_flushes: dict[str, asyncio.Task] = {}
+        # 旧字段保留到过程投影迁移完成，兼容活动进程和历史测试夹具。
         self.tool_aggregator: dict[str, dict] = {}
-        # 最新计划消息: binding.name → {msg_id, chat_id, content}
-        # Codex update_plan 更新时编辑同一条消息, 方便 IM 端持续观察任务状态。
         self.plan_messages: dict[str, dict] = {}
         # 正文准流式消息: binding.name → {msg_id, chat_id, content}
         self.reply_streams: dict[str, dict] = {}

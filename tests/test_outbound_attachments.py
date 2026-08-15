@@ -400,10 +400,9 @@ def test_pi_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
                 "html",
                 123,
                 None,
-                "💭 <b>工作中…</b>\n📋 任务 update\n\n"
-                "● <b>Todos (1/2)</b>\n"
-                "├─ ✓ #1 <s>Audit</s>\n"
-                "└─ ◐ #2 <b>Implement</b> ⛓ #1",
+                "💭 <b>工作进度</b>\n"
+                "· 当前：📋 任务 update\n"
+                "· 统计：工具 1",
             )
         ]
 
@@ -429,9 +428,48 @@ def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
         )
 
         assert frontend.sent == [
-            ("html", 123, None, "💭 <b>工作中…</b>\n工具输出"),
+            (
+                "html", 123, None,
+                "💭 <b>工作进度</b>\n· 当前：工具输出\n· 统计：工具 1",
+            ),
             ("image", 123, None, image, None),
         ]
+
+    asyncio.run(run())
+
+
+def test_tool_and_plan_progress_share_one_card_before_final_result(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(
+            setup_mode=False,
+            progress_messages={},
+            turn_projections={},
+            progress_flushes={},
+            fire=close_coro,
+        )
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取 app.py", frontend, state, backend)
+        await on_tmux_event(
+            b,
+            "assistant_plan",
+            "计划更新\n1. 修改 pending\n2. 测试 in_progress",
+            frontend,
+            state,
+            backend,
+        )
+        await on_tmux_event(b, "assistant_tools", "修改 app.py", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "修改完成。", frontend, state, backend)
+
+        assert [item[0] for item in frontend.sent] == ["html", "finalize", "html"]
+        assert frontend.sent[0][:3] == ("html", 123, None)
+        assert frontend.sent[1][1:3] == (123, 101)
+        assert "过程摘要" in frontend.sent[1][3]
+        assert "工具 2 · 计划 1" in frontend.sent[1][3]
+        assert "读取 app.py；计划更新 0/2 完成，1 项进行中；修改 app.py" in frontend.sent[1][3]
+        assert frontend.sent[2] == ("html", 123, None, "修改完成。")
 
     asyncio.run(run())
 
@@ -488,12 +526,11 @@ def test_assistant_plan_edits_latest_plan_message(tmp_path):
         )
 
         assert frontend.sent == [
-            ("html", 123, None, "📋 当前计划\n→ 第一步 <code>in_progress</code>"),
             (
-                "edit",
-                123,
-                101,
-                "📋 当前计划\n✓ 第一步 <code>completed</code>\n→ 第二步 <code>in_progress</code>",
+                "html", 123, None,
+                "💭 <b>工作进度</b>\n"
+                "· 当前：计划更新 0/1 完成，1 项进行中\n"
+                "· 统计：计划 1",
             ),
         ]
 

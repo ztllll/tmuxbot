@@ -30,6 +30,7 @@
 
 ### Added
 
+- 新增通道无关 `TurnProjection`，将一个 provider Turn 内的工具调用、计划更新和普通生命周期事件压缩为单一可刷新过程卡：过程内容使用确定性摘要与工具/计划/生命周期计数，2 秒节流并按内容去重；最终文字到达时将同一 message ID 压缩为简短过程摘要，再独立发布结果消息。Telegram 与飞书复用同一语义，短任务仍可只发最终结果，Pi 自动压缩专用状态卡保持原流程兼容。
 - Admin DM 默认 cwd 改为独立的 XDG workspace（`~/.local/share/tmuxbot/admin`），启动时以 `0700` 创建，避免用户根目录中的管理指令被所有项目会话继承。`install-contract` 现统一生成跨 Pi/Claude/Codex 的身份与运行职责契约、部署相关 `ADMIN-RUNBOOK.md` 和带 schema/version/hash 的 `tmuxbot-admin-context.json`；新增 `verify-context` 检测缺失、修改或部署参数漂移，核心正确性不再依赖 provider-specific system prompt 或会话记忆。
 - 新增 `tmuxbot admin rename-project`：先输出 plan，再事务式迁移既有 route 名、单 pane tmux session 与 cwd；保留精确 IM endpoint 和 adapter，重置旧 provider transcript identity，并在失败时回滚 bindings、session、目录和 supervised service。
 - 接入 `@narumitw/pi-plan-mode` 0.49.3：Pi backend 从当前精确 JSONL branch 恢复 `plan active / ready / saved / implementing`，在 IM 页面底部显示对应中文 Plan widget，并在回复状态栏补齐 `📝` 状态（兼容 `pi-statusline` 的 `plan ✓` 压缩渲染且不重复）。`plan_mode_complete` 和 `/plan show` 的完整计划作为可编辑 plan card 回推；bridge 重启后从持久 state 恢复状态栏和页面底部，但不会重复发送历史计划卡。`/plan` 与 `/plan tools` 打开原生 TUI 菜单，`/plan start|show|finalize|implement|save|export|exit|off|<prompt>` 直接穿透并返回屏幕回执；Telegram/飞书 Pi 控制面板增加“计划模式”入口，Telegram BotCommand 注册 `/plan`；picker detector 兼容 pi-tui-kit 的 `↑/↓ navigate • enter select • esc close` 底栏，使计划菜单和结构化问题能在远程 IM 被发现；Pi 非空闲时 `/plan` 立即拒绝，不会把工具/模式切换命令塞入 steering queue 后延迟生效。交互按键控制后来在同一 Unreleased 维护线收敛为 SSH-only，见上方 Changed。

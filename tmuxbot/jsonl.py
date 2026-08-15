@@ -19,6 +19,7 @@ from tmuxbot.config import save_binding_identity
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState, TerminalStatus
 from tmuxbot.core.runtime_v2 import RuntimeV2Router
+from tmuxbot.core.turn_projection import ProgressIntent, TurnProjection
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.tmux import tmux_capture
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
@@ -31,8 +32,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("tmuxbot")
 
 JSONL_POLL = 0.5
-AGGREGATOR_MAX_CHARS = 3500    # 累计超此长度封闭, 开新 aggregator
-AGGREGATOR_IDLE_SECONDS = 15   # 静默超此秒数 = turn 结束, watcher 自动封闭
+AGGREGATOR_IDLE_SECONDS = 15   # Legacy in-flight aggregator migration timeout.
 # ★ 积压保护阈值: 单次发现 jsonl 落盘新增超此字节数, 判定为「事务式 flush 爆发」
 # (claude TUI 在派 subagent / 超长 turn 时不实时落盘, 完成后一次性 flush 数 MB)。
 # 逐条推这种积压会瞬间撞 Telegram flood control → 直接跳末尾不回吐。正常单 turn 远 < 此值。
@@ -223,6 +223,115 @@ async def _dispatch_provider_events(
     return True
 
 
+def _turn_projection(state: "State", b: "Binding") -> TurnProjection:
+    projections = getattr(state, "turn_projections", None)
+    if projections is None:
+        projections = {}
+        setattr(state, "turn_projections", projections)
+    projection = projections.get(b.name)
+    if projection is None:
+        projection = TurnProjection()
+        projections[b.name] = projection
+    return projection
+
+
+async def _deliver_progress_intent(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    intent: ProgressIntent,
+) -> None:
+    messages = getattr(state, "progress_messages", None)
+    if messages is None:
+        messages = {}
+        setattr(state, "progress_messages", messages)
+    current = messages.get(b.name)
+    if current is None:
+        if intent.action == "finalize":
+            return
+        status = await _capture_terminal_status(b, backend)
+        send_status = getattr(frontend, "send_status_html", None)
+        if callable(send_status):
+            msg = await send_status(
+                b.chat_id,
+                b.thread_id,
+                intent.body_html,
+                display_state=intent.display_state,
+                footer=status,
+            )
+        else:
+            msg = await frontend.send_html(b.chat_id, b.thread_id, intent.body_html)
+        if msg is not None and hasattr(msg, "message_id"):
+            messages[b.name] = {"msg_id": msg.message_id, "chat_id": b.chat_id}
+        return
+    if intent.action == "finalize":
+        finalize = getattr(frontend, "finalize_status_html", None)
+        if callable(finalize):
+            await finalize(
+                current["chat_id"],
+                current["msg_id"],
+                intent.body_html,
+                display_state=intent.display_state,
+            )
+        else:
+            await frontend.edit_html(
+                current["chat_id"], current["msg_id"], intent.body_html
+            )
+        messages.pop(b.name, None)
+        return
+    await frontend.edit_html(current["chat_id"], current["msg_id"], intent.body_html)
+
+
+async def _project_progress(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    kind: str, body: str, *, now: float,
+) -> None:
+    projection = _turn_projection(state, b)
+    intents = projection.consume(kind, body, now=now)
+    for intent in intents:
+        await _deliver_progress_intent(frontend, b, state, backend, intent)
+    delay = projection.next_update_in(now=now)
+    if delay is not None and delay > 0:
+        flushes = getattr(state, "progress_flushes", None)
+        if flushes is None:
+            flushes = {}
+            setattr(state, "progress_flushes", flushes)
+        task = flushes.get(b.name)
+        if task is None or task.done():
+            fire = getattr(state, "fire", None)
+            coro = _flush_progress_after(frontend, b, state, backend, delay)
+            if callable(fire):
+                flushes[b.name] = fire(coro)
+            else:
+                coro.close()
+
+
+async def _flush_progress_after(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    delay: float,
+) -> None:
+    try:
+        await asyncio.sleep(delay)
+        projection = getattr(state, "turn_projections", {}).get(b.name)
+        if projection is None:
+            return
+        for intent in projection.flush(now=time.time()):
+            await _deliver_progress_intent(frontend, b, state, backend, intent)
+    finally:
+        getattr(state, "progress_flushes", {}).pop(b.name, None)
+
+
+async def _finalize_progress(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+) -> None:
+    projection = getattr(state, "turn_projections", {}).pop(b.name, None)
+    flush_task = getattr(state, "progress_flushes", {}).pop(b.name, None)
+    if flush_task is not None and hasattr(flush_task, "cancel"):
+        flush_task.cancel()
+    if projection is None:
+        return
+    for intent in projection.finalize(now=time.time()):
+        await _deliver_progress_intent(frontend, b, state, backend, intent)
+
+
 async def _close_aggregator(
     b: "Binding", state: "State", frontend: "Frontend", backend: "Backend | None" = None,
 ) -> None:
@@ -265,17 +374,13 @@ async def on_tmux_event(
     b: "Binding", kind: str, body: str,
     frontend: "Frontend", state: "State", backend: "Backend",
 ) -> None:
-    """JSONL tailer → TG 路由 (★ Boss 最终定型规则)。
+    """Project normalized provider events into a result-first IM lifecycle.
 
-    - user: 不回声 (Boss 自己注入的)
-    - assistant_tools (thinking + tool_use): 进 aggregator 一条消息**流式 edit**
-        不触发 TG push 通知 (Boss 静态看一条不断刷新的"工作中"卡片)
-    - assistant_text (真说话): **单独发新消息**, 触发 TG push 通知 → Boss 收到提醒
-        不关闭 aggregator (让工具调用继续累计到同一条)
-    - aggregator 关闭时机:
-        ① watcher 静默 AGGREGATOR_IDLE_SECONDS 秒后自动 close 加 ✓
-        ② 累计 > AGGREGATOR_MAX_CHARS 字符主动 close 开新
-    - attachment: 立刻单独发, 不动 aggregator (上下文外事件)
+    - user: never echoed;
+    - tool/plan/lifecycle progress: one bounded editable card per route Turn;
+    - final assistant text: finalize that progress card, then publish one result;
+    - attachments: native channel delivery without expanding process chatter;
+    - legacy aggregator state: finalized only for safe in-place upgrades.
     """
     if state.setup_mode:
         return
@@ -288,7 +393,12 @@ async def on_tmux_event(
     now = time.time()
 
     if kind == "provider_lifecycle":
-        await _handle_provider_lifecycle(frontend, b, state, backend, body)
+        if b.name in getattr(state, "compaction_status", {}):
+            await _handle_provider_lifecycle(frontend, b, state, backend, body)
+        else:
+            await _project_progress(
+                frontend, b, state, backend, "lifecycle", body, now=now
+            )
         return
 
     if kind == "attachment":
@@ -296,7 +406,7 @@ async def on_tmux_event(
         return
 
     if kind == "assistant_plan":
-        await _send_or_edit_plan(frontend, b, state, body)
+        await _project_progress(frontend, b, state, backend, "plan", body, now=now)
         return
 
     if kind == "assistant_live_text":
@@ -311,10 +421,10 @@ async def on_tmux_event(
 
     if kind == "assistant_text":
         log.info(f"[{b.name}] assistant final text len={len(body)}")
-        # A final provider response is the terminal event that closes a tool
-        # cycle.  Finish the yellow status card immediately instead of leaving
-        # a stale “working” card until the idle watcher wakes up.
+        # Final text closes both a pre-upgrade legacy aggregator and the single
+        # progress projection before publishing a separate result notification.
         await _close_aggregator(b, state, frontend, backend)
+        await _finalize_progress(frontend, b, state, backend)
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
         # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
@@ -332,50 +442,12 @@ async def on_tmux_event(
         await _send_html_with_outbound_attachments(frontend, b, body)
         return
 
-    # 走到这: kind == "assistant_tools", 进 aggregator
-    body, attachments = split_outbound_attachments(body, cwd=b.cwd)
-    if not body.strip():
-        await _send_outbound_attachments(frontend, b, attachments)
-        return
-
-    agg = state.tool_aggregator.get(b.name)
-    if agg and sum(len(s) for s in agg["content"]) > AGGREGATOR_MAX_CHARS:
-        # 累计超长 → 主动 close 开新
-        await _close_aggregator(b, state, frontend, backend)
-        agg = None
-
-    if agg is None:
-        # 新建 aggregator: 发首条 + 缓存 msg_id + 启动 idle watcher
-        header = "💭 <b>工作中…</b>"
-        task_footer = _task_footer(b, backend)
-        initial_html = _append_footer(header + "\n" + body, task_footer)
-        send_status = getattr(frontend, "send_status_html", None)
-        status = await _capture_terminal_status(b, backend)
-        if send_status is None:
-            msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
-        else:
-            msg = await send_status(
-                b.chat_id,
-                b.thread_id,
-                initial_html,
-                display_state="working",
-                footer=status,
-            )
-        if msg is not None and hasattr(msg, "message_id"):
-            state.tool_aggregator[b.name] = {
-                "msg_id": msg.message_id,
-                "chat_id": b.chat_id,
-                "content": [header, body],
-                "last_ts": now,
-                "task_footer": task_footer,
-            }
-            state.fire(_aggregator_idle_watcher(b, state, frontend, backend))
-    else:
-        agg["content"].append(body)
-        agg["last_ts"] = now
-        agg["task_footer"] = _task_footer(b, backend)
-        new_html = _append_footer("\n".join(agg["content"]), agg["task_footer"])
-        await frontend.edit_html(agg["chat_id"], agg["msg_id"], new_html)
+    clean_body, attachments = split_outbound_attachments(body, cwd=b.cwd)
+    if clean_body.strip():
+        progress_kind = "error" if "失败" in clean_body or "⚠️" in clean_body else "tool"
+        await _project_progress(
+            frontend, b, state, backend, progress_kind, clean_body, now=now
+        )
     await _send_outbound_attachments(frontend, b, attachments)
 
 
