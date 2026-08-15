@@ -29,7 +29,6 @@ class ReplyBlock:
 class ReplyDocument:
     title: str
     project_name: str
-    project_path: str
     binding_name: str
     blocks: tuple[ReplyBlock, ...]
     source_text: str
@@ -118,7 +117,6 @@ def build_reply_document(
     return ReplyDocument(
         title=title,
         project_name=binding.cwd.name or binding.name,
-        project_path=str(binding.cwd),
         binding_name=binding.name,
         blocks=_parse_blocks(source),
         source_text=source,
@@ -149,29 +147,15 @@ def render_telegram_document(
 
     header = f"💬 <b>{html.escape(rendered_document.title)} · {html.escape(rendered_document.project_name)}</b>"
     session = f"<i>会话 · <code>{html.escape(rendered_document.binding_name)}</code></i>"
-    project_path = (
-        f"<i>路径 · <code>{html.escape(rendered_document.project_path)}</code></i>"
-    )
     body = "\n\n".join(_render_telegram_block(block) for block in rendered_document.blocks)
-    parts = [header, session, project_path]
+    parts = [header, session]
     state_badge = telegram_state_badge(rendered_document.state)
     if state_badge:
         parts.append(state_badge)
     if body:
         parts.append(body)
     if rendered_document.footer_text:
-        footer_text = rendered_document.footer_text
-        cwd_tokens = {
-            rendered_document.project_path,
-            f"📁 {rendered_document.project_path}",
-        }
-        footer_text = " · ".join(
-            token.strip()
-            for token in footer_text.split(" · ")
-            if token.strip() not in cwd_tokens
-        )
-        if footer_text:
-            parts.append(f"<i>{html.escape(footer_text)}</i>")
+        parts.append(f"<i>{html.escape(rendered_document.footer_text)}</i>")
     return RenderedReply(chat_html="\n\n".join(parts), full_text=full_text)
 
 
