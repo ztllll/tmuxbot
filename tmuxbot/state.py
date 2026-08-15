@@ -46,6 +46,9 @@ class Binding:
     # 由通道注入 /new 或 /clear 前设置；仅本进程内有效，供 transcript 选择器
     # 安全认领本次命令新建的会话，成功切换后由 jsonl tailer 清除。
     pending_session_handoff_after: float | None = None
+    # OMP /exit 已接受、但全新进程尚未完成启动。只在本进程中存在；后续入站消息
+    # 必须等待对应 Event，避免注入将退出的旧 provider。
+    fresh_start_pending: bool = False
 
     @property
     def tmux_target(self) -> str:
@@ -88,6 +91,9 @@ class State:
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction
         self.command_transactions: dict[str, object] = {}
+        # OMP /exit clean reload 栅栏：binding.name → Event。event set 前的后续 IM
+        # 必须等待新 OMP 启动完成，防止写入正在退出的旧会话。
+        self.pending_clean_reloads: dict[str, asyncio.Event] = {}
         # OMP auto-compaction IM 状态卡：binding.name → {msg_id, chat_id, started_at, eta_seconds, ...}
         self.compaction_status: dict[str, dict] = {}
         # 通道连接健康：Telegram/飞书共用同一份运行时审计口径。

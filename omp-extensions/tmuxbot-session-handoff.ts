@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { mkdir, realpath, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, realpath, resolve } from "node:path";
 
 type HealthState = "idle" | "working" | "recovering" | "terminal_error";
 type CandidateError = { message: string; responseId?: string };
@@ -43,6 +43,10 @@ async function writeAtomic(path: string, payload: object): Promise<void> {
   await rename(temporary, path);
 }
 
+function isRootSessionFile(sessionFile: string): boolean {
+  return basename(sessionFile, ".jsonl") === basename(dirname(sessionFile));
+}
+
 export default function tmuxbotSessionHandoff(omp: ExtensionAPI): void {
   let target = "";
   let cwd = "";
@@ -73,6 +77,7 @@ export default function tmuxbotSessionHandoff(omp: ExtensionAPI): void {
     const sessionFile = ctx.sessionManager.getSessionFile();
     const nextSessionId = ctx.sessionManager.getSessionId();
     if (!nextTarget || !sessionFile || !nextSessionId) return;
+    if (!isRootSessionFile(sessionFile)) return;
     const nextCwd = await realpath(resolve(ctx.cwd));
     const nextTranscriptPath = resolve(sessionFile);
     await writeAtomic(recordPath(nextTarget), {

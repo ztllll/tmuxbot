@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from tmuxbot.picker import detect_omp_interaction
 from tmuxbot.tmux import tmux_capture, tmux_send_key, tmux_send_text
 from tmuxbot.utils import strip_decorations
+from tmuxbot.lifecycle import restart_binding
 
 if TYPE_CHECKING:
     from tmuxbot.backends.base import Backend
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from tmuxbot.state import Binding, State
 
 log = logging.getLogger("tmuxbot")
+
+OMP_EXIT_RELOAD_DELAY = 3.0
 
 
 class CommandKind(str, Enum):
@@ -182,6 +185,12 @@ def parse_slash_text(
 
 
 def classify_command(backend: "Backend", command: str, args: str = "") -> CommandSpec:
+    if command == "/exit" and backend.name == "omp":
+        return CommandSpec(
+            command,
+            CommandKind.PASSTHROUGH,
+            description="退出当前受管 OMP；下一条非 /exit 消息会按绑定身份自动恢复。",
+        )
     if command in _BLOCKED_COMMANDS:
         return CommandSpec(command, CommandKind.BLOCKED, notice=_BLOCKED_COMMANDS[command])
     if command == "/plan" and not backend.remote_tui_actions_allowed:
@@ -474,6 +483,9 @@ async def handle_passthrough_command(
         injected_text,
         expected_commands=backend.running_command_names,
     )
+    if spec.command == "/exit" and backend.name == "omp":
+        await _schedule_omp_exit_reload(frontend, backend, b, state, chat_id, thread_id)
+        return
     await frontend.send_html(
         chat_id,
         thread_id,
@@ -491,6 +503,84 @@ async def handle_passthrough_command(
             state=state,
         )
     )
+
+
+async def _schedule_omp_exit_reload(
+    frontend: "Frontend",
+    backend: "Backend",
+    b: "Binding",
+    state: "State",
+    chat_id: int | str,
+    thread_id: int | str | None,
+) -> None:
+    pending_reloads = state.pending_clean_reloads
+    if b.name in pending_reloads:
+        await frontend.send_html(
+            chat_id,
+            thread_id,
+            "⏳ <b>OMP 全新会话重载已排队</b>\n· 当前仍在等待退出后的 clean respawn。",
+        )
+        return
+
+    # Persist removal before the old OMP can terminate: a bridge restart in this
+    # three-second window must not resurrect the prior transcript with --resume.
+    b.provider_session_id = None
+    b.last_session_id = None
+    b.transcript_path = None
+    b.pending_session_handoff_after = None
+    b.fresh_start_pending = True
+    from tmuxbot.config import save_binding_identity
+
+    await asyncio.to_thread(save_binding_identity, getattr(frontend, "bindings_file", None), b)
+    finished = asyncio.Event()
+    pending_reloads[b.name] = finished
+    state.fire(_finish_omp_exit_reload(frontend, backend, b, state, chat_id, thread_id, finished))
+    await frontend.send_html(
+        chat_id,
+        thread_id,
+        "🔄 <b>OMP 已收到 /exit</b>\n"
+        "· 3 秒后将启动不带 <code>--resume</code> 的全新会话，重新加载启动配置和插件。\n"
+        "· 期间后续消息会等待新会话就绪，不会写入旧会话。",
+    )
+
+
+async def _finish_omp_exit_reload(
+    frontend: "Frontend",
+    backend: "Backend",
+    b: "Binding",
+    state: "State",
+    chat_id: int | str,
+    thread_id: int | str | None,
+    finished: asyncio.Event,
+) -> None:
+    try:
+        await restart_binding(
+            backend,
+            b,
+            state,
+            reason="channel-exit-clean-reload",
+            fresh=True,
+            delay=OMP_EXIT_RELOAD_DELAY,
+        )
+    except Exception:
+        log.exception("[%s] OMP clean reload after /exit failed", b.name)
+        await frontend.send_html(
+            chat_id,
+            thread_id,
+            "❌ <b>OMP 全新会话重载失败</b>\n"
+            "· 旧会话 pin 已清除，未回退恢复旧上下文；请检查服务日志后重试 /exit。",
+        )
+    else:
+        await frontend.send_html(
+            chat_id,
+            thread_id,
+            "✅ <b>OMP 全新会话已就绪</b>\n· 已重新读取启动配置和插件；未恢复上一个会话上下文。",
+        )
+    finally:
+        state.command_transactions.pop(b.name, None)
+        if state.pending_clean_reloads.get(b.name) is finished:
+            state.pending_clean_reloads.pop(b.name, None)
+        finished.set()
 
 
 async def probe_passthrough_result(

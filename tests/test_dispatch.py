@@ -91,6 +91,50 @@ def test_channel_new_arms_session_handoff_before_tmux_injection(monkeypatch):
     assert sent[0][1] == "/new"
 
 
+def test_incoming_message_waits_for_queued_omp_clean_reload(monkeypatch):
+    route = _binding()
+    route.backend = "omp"
+    reload_finished = asyncio.Event()
+    calls = []
+
+    class OmpBackend(_Backend):
+        name = "omp"
+        running_command_names = frozenset({"omp"})
+
+    async def ready(*_args, **_kwargs):
+        calls.append("ensure")
+        return True
+
+    async def send_text(*args, **_kwargs):
+        calls.append(("inject", args[1]))
+
+    monkeypatch.setattr("tmuxbot.dispatch.ensure_binding_running", ready)
+    monkeypatch.setattr("tmuxbot.dispatch.tmux_send_text", send_text)
+
+    async def run():
+        task = asyncio.create_task(
+            dispatch_incoming_text(
+                SimpleNamespace(),
+                OmpBackend(),
+                route,
+                SimpleNamespace(
+                    pending_clean_reloads={route.name: reload_finished}, pending_rename={}
+                ),
+                1,
+                None,
+                "new prompt",
+            )
+        )
+        await asyncio.sleep(0)
+        assert calls == []
+        reload_finished.set()
+        await task
+
+    asyncio.run(run())
+
+    assert calls == ["ensure", ("inject", "new prompt")]
+
+
 def test_omp_new_while_working_fails_immediately_without_injection(monkeypatch):
     binding = _binding()
     binding.backend = "omp"

@@ -183,7 +183,7 @@ journalctl --user -u tmuxbot -f
 - **中文控制面板**：`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时读取 `~/.codex/config.toml` 的 `model`；可在当前会话中用原生 `/model` 临时切换，下一次 bot 重启则应用最新配置。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型
 - **@ 策略命令**：`/mention on` 表示无需 @，`/mention off` 表示必须 @，`/mention default` 恢复部署默认，`/mention status` 查看当前策略；设置按 binding 持久化且立即生效
 - **按 route 选择 adapter**：同一 Telegram Bot/飞书 App credential 可按精确 topic/thread route 混合承载 Claude Code、Codex 和 OMP；不同 credential 仍可并行部署
-- **核心命令**：`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`。对 OMP，bot `/plan` 是本地帮助：只报告当前 plan 状态，并提示 SSH attach 后使用默认 `Alt+Shift+P`（自定义 keybinding 可能不同），不会向 pane 注入 `/plan`
+- **核心命令**：`/status` `/info` `/whoami` `/new` `/resume` `/rename` `/esc` `/cc` `/eof` `/screen` `/restart` `/tmuxstop`。OMP route 的 `/exit` 先透传给受管 OMP；随后立即清除旧 transcript pin，并在 3 秒后 clean respawn 一个不带 `--resume` 的全新 OMP 会话。新进程会重新读取 OMP 启动配置和已安装插件，完成后在 IM 回报；它不保留上一个会话上下文。`/restart` 仍是保留精确 provider 会话与 transcript 的受管重启。对 OMP，bot `/plan` 是本地帮助：只报告当前 plan 状态，并提示 SSH attach 后使用默认 `Alt+Shift+P`（自定义 keybinding 可能不同），不会向 pane 注入 `/plan`
 - **TUI 透传**：`/context` `/cost` `/usage` `/compact` `/clear` 等，抓屏结构化反馈
 - **工具调用聚合**：一个 turn 内的 tool_use 流式刷同一条 IM 消息，真说话单独 push 触发通知；OMP 成功执行 `edit` 时同步显示受限 diff，成功执行普通本地 `write` 时同步显示受限代码片段，内部工具 URI 和敏感文件内容不外发
 - **Codex 计划跟随**：`update_plan` 会维护一条可编辑的“当前计划”消息，TG/飞书里持续显示最新 `in_progress` / `pending` / `completed` 状态

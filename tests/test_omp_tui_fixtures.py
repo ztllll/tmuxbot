@@ -212,6 +212,21 @@ def test_distant_or_stale_interaction_controls_fail_closed():
     )
 
 
+def test_distant_selection_row_does_not_validate_current_footer_hint():
+    footer = (
+        "╭── π OMP 17.3.2 • session: native-adapter ╮\n"
+        "╰─ ~/project (main) • high • 10.0%/360k ─╯\n"
+    )
+    screen = (
+        "→ Historical choice\n"
+        + "\n".join("ordinary agent output" for _ in range(30))
+        + "\n↑/↓ navigate • enter select • esc close\n"
+        + footer
+    )
+
+    assert detect_omp_interaction(screen) is None
+
+
 def test_omp_backend_exposes_exact_remote_interaction_policy(tmp_path):
     backend = OmpBackend()
 

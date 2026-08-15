@@ -615,6 +615,11 @@ class OmpBackend(Backend):
         )
 
     def find_active_jsonl(self, b: "Binding") -> Path | None:
+        # `/exit` clears the old pin before the delayed clean respawn. Ignore the
+        # still-live old sidecar during that interval so the tailer cannot bind it
+        # again and persist a stale resume target.
+        if b.fresh_start_pending:
+            return None
         handoff = read_handoff(b.tmux_target, b.cwd)
         if handoff is not None:
             return handoff.transcript_path
@@ -1244,6 +1249,7 @@ class OmpBackend(Backend):
                 continue
             handoff = read_handoff(b.tmux_target, b.cwd)
             if handoff is not None and handoff.updated_at > launch_started_at:
+                b.fresh_start_pending = False
                 return
         raise RuntimeError(
             f"OMP pane {b.tmux_target} 启动后未发布本次启动的有效受管会话身份 sidecar；"

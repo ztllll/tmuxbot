@@ -400,6 +400,8 @@ state、lock 和数据库；它不是多 credential 的默认部署方式。
 4. Codex 使用 `${CODEX_BIN:-codex} resume --dangerously-bypass-approvals-and-sandbox [-m <~/.codex/config.toml 的 model>] <session_id>` 重启；
 5. OMP 只从 provider registry 取得 `${OMP_BIN:-omp} --approval-mode yolo --extension <managed-extension-absolute-path>`。route 有 transcript pin 时仅追加 `--resume <exact-absolute-jsonl-path>`，绝不使用 `--continue`、`--session`、`--approve`、RPC 或 print 参数。pin 的首个有效 `type:"session"` header 必须有受支持 version、非空 ID、canonical cwd 精确匹配；失败时保留 pin 并拒绝静默新建会话。
 
+OMP 的 IM `/exit` 是配置/插件重载入口，不是 resume 操作：tmuxbot 先向当前 OMP 透传原生命令，立刻清除并持久化删除旧 `provider_session_id`/`transcript_path`，3 秒后在 binding 的共享 lifecycle lock 下 clean respawn pane。该启动不带 `--resume`，因此 OMP 会重新读取启动配置和 extension；旧 handoff 在重启完成前不参与 JSONL tail。启动成功后 IM 必须明确回报「全新会话已就绪」，后续普通消息在 lock 后进入新 OMP。`/restart` 保持原有精确 resume 语义。
+
 > `--resume` 不保留 `--dangerously-skip-permissions` 标志(上游 Issue #21974),所以每次都要重传。
 > Codex 在受管会话重启后会应用当前 `~/.codex/config.toml` 的模型默认值；原生 `/model` 仍可用于当前运行会话的临时选择。
 
@@ -409,7 +411,7 @@ state、lock 和数据库；它不是多 credential 的默认部署方式。
 入口共享锁，不会并发重复拉起。Web 控制台对应 `POST /api/managed-sessions/{id}/stop`：只关闭记录指向的 tmux，
 不删除项目、受管记录或通道 binding；活动 TeamRun 会拒绝该操作。
 
-OMP 使用受管 `omp-extensions/tmuxbot-session-handoff.ts` 提供两套 versioned sidecar。identity 写入 `omp-session-handoffs/`，health 写入 `omp-session-health/`；文件名按 exact tmux target 派生。handoff 必须匹配 `tmuxTarget/cwd/sessionId/transcriptPath/processId`，其中 `processId` 必须属于该 pane 的 live OMP process。新 session 的 JSONL 会延迟到首条消息才创建，因此文件尚不存在时只接受 `~/.omp/agent/sessions` 或迁移期 `~/.pi/agent/sessions` 下、文件名匹配 session ID 的 provider-authored pending path；tailer 在文件出现前安静等待，文件出现后必须通过 transcript header/cwd 校验。已有 `omp` 进程但缺少有效 identity sidecar 时 fail closed，提示 `/restart`，禁止按 cwd/mtime 猜测会话。
+OMP 使用受管 `omp-extensions/tmuxbot-session-handoff.ts` 提供两套 versioned sidecar。identity 写入 `omp-session-handoffs/`，health 写入 `omp-session-health/`；文件名按 exact tmux target 派生。extension 只接受主会话 JSONL：根会话文件名必须与其 session 目录同名；嵌套 subagent JSONL 不得覆盖 pane 的 identity。handoff 必须匹配 `tmuxTarget/cwd/sessionId/transcriptPath/processId`，其中 `processId` 必须属于该 pane 的 live OMP process。新 session 的 JSONL 会延迟到首条消息才创建，因此文件尚不存在时只接受 `~/.omp/agent/sessions` 或迁移期 `~/.pi/agent/sessions` 的 provider-authored record；文件出现后立即回到 header/cwd 校验。
 
 health extension 在 `agent_start` 写 `working`，非终止 `agent_end` 保持 `working/recovering`，只有 terminal end 才写 `idle` 或 `terminal_error`。bridge 仅在 exact target/cwd/session/transcript 全部一致时消费错误状态。第二层由 `TMUXBOT_OMP_TERMINAL_HEALTH_ENABLED=1` 启用，默认 `TMUXBOT_OMP_TERMINAL_HEALTH_INTERVAL=600`；它只对同一精确 session 的持续无进展状态去重告警，不重启或中断 OMP。
 
@@ -432,6 +434,7 @@ health extension 在 `agent_start` 写 `working`，非终止 `agent_end` 保持 
 | 命令 | 行为 |
 |---|---|
 | `/esc /cc /eof` | Claude/Codex 可发送对应控制键；OMP 不接受 IM 远程按键，只返回 exact pane 的 SSH attach 提示 |
+| `/exit` | 仅 OMP route 使用配置/插件 clean reload：先透传原生退出，立即清除并持久化删除旧 session pin，3 秒后不带 `--resume` 重启全新 OMP，并向 IM 报告成功或失败；期间后续消息等待本次 reload，不会注入正在退出的旧进程 |
 | `/tmuxstop` | 关闭整个 tmux，保留 binding/历史；下一条消息按需恢复 |
 | `/screen` | 抓 tmux 屏幕推回 |
 | `/info` | 聚合统计(累计 token / 缓存命中率,只读 JSONL) |

@@ -79,6 +79,16 @@ async def dispatch_incoming_text(
     from tmuxbot.commands import capture_and_push
 
     parsed = parse_slash_text(text, bot_username=bot_username, aliases=backend.command_aliases())
+    pending_reload = getattr(state, "pending_clean_reloads", {}).get(b.name)
+    if pending_reload is not None:
+        if parsed and parsed.command == "/exit":
+            await frontend.send_html(
+                chat_id,
+                thread_id,
+                "⏳ <b>OMP 全新会话重载已排队</b>\n· 正在等待退出后的 clean respawn。",
+            )
+            return
+        await pending_reload.wait()
     if parsed and parsed.command == "/tmuxstop":
         stopped = tmux_kill_session(b.tmux_session)
         notice = (

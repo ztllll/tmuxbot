@@ -52,6 +52,7 @@ _OMP_NAVIGATION_RE = re.compile(r"(?:↑/↓|up/down|up\s*/\s*down)", re.I)
 _OMP_HINT_END_RE = re.compile(r"\b(?:esc|escape)\b\s+(?:to\s+)?(?:close|cancel|back)\b", re.I)
 _OMP_MODAL_TOP_RE = re.compile(r"^\s*╭[─━].*[─━]╮\s*$")
 _OMP_MODAL_BOTTOM_RE = re.compile(r"^\s*╰[─━].*[─━]╯\s*$")
+_OMP_FOOTER_INTERACTION_CONTEXT_ROWS = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +75,7 @@ def detect_omp_interaction(raw: str) -> OmpInteraction | None:
         for index in range(footer_index - 1, -1, -1):
             if lines[index].strip():
                 nonempty_before.append(index)
-                if len(nonempty_before) == 3:
+                if len(nonempty_before) == _OMP_FOOTER_INTERACTION_CONTEXT_ROWS:
                     break
         if not nonempty_before:
             return None
@@ -116,11 +117,15 @@ def detect_omp_interaction(raw: str) -> OmpInteraction | None:
     block = "\n".join(
         line.rstrip() for line in lines[top_index : bottom_index + 1] if line.rstrip()
     )
+    selected_near_hint = any(_OMP_SELECTED_ROW_RE.search(lines[index]) for index in hint_indices[:-1])
     if is_input:
         return OmpInteraction(kind="text_input", label="文本输入", block=block)
     if is_confirmation:
         return OmpInteraction(kind="confirmation", label="确认界面", block=block)
-    if is_menu and (_OMP_SELECTED_ROW_RE.search(block) or _OMP_NAVIGATION_RE.search(hint_text)):
+    if is_menu and (
+        (modal_top is not None and _OMP_SELECTED_ROW_RE.search(block))
+        or (modal_top is None and selected_near_hint)
+    ):
         return OmpInteraction(kind="selection", label="选择菜单", block=block)
     return None
 

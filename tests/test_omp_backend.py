@@ -1,3 +1,4 @@
+import asyncio
 import json
 import shlex
 from pathlib import Path
@@ -9,6 +10,7 @@ from tmuxbot.backends import omp
 from tmuxbot.backends.omp import OmpBackend
 from tmuxbot.core.events import ProviderEventKind, TerminalState, TerminalStatus
 from tmuxbot.runtime.omp_plan_mode import current_jsonl_branch
+from tmuxbot.runtime.omp_handoff import OmpHandoff
 from tmuxbot.state import Binding
 
 
@@ -820,3 +822,75 @@ def test_command_options_match_native_omp_control_semantics():
     assert opts["/clear"].expect_new_session is False
     assert opts["/fresh"].expect_new_session is False
     assert OmpBackend().interactive_session_handoff_commands() == frozenset({"/resume", "/import"})
+
+
+def test_omp_ensure_running_restarts_exited_pane_with_managed_resume(tmp_path, monkeypatch):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    transcript = tmp_path / "session.jsonl"
+    write_transcript(transcript, cwd, [])
+    route = binding(cwd, transcript)
+    commands = iter(["bash", "omp"])
+    launches: list[str] = []
+    handoff = OmpHandoff("omp-route:0.0", cwd, "session-1", transcript, float("inf"))
+
+    async def launch(_target, command, **_kwargs):
+        launches.append(command)
+        return True
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(omp, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(omp, "tmux_pane_command", lambda _target: next(commands))
+    monkeypatch.setattr(omp, "tmux_safe_launch", launch)
+    monkeypatch.setattr(omp, "read_handoff", lambda _target, _cwd: handoff)
+    monkeypatch.setattr(omp, "provider_tree_is_safe", lambda _target, _executable: True)
+    monkeypatch.setattr(omp.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(
+        omp.ProviderDiscovery,
+        "resolve_executable",
+        staticmethod(lambda name: "/opt/omp/bin/omp" if name == "omp" else None),
+    )
+    monkeypatch.setattr(omp, "provider_launch_arguments", lambda _name: ("--approval-mode", "yolo"))
+
+    asyncio.run(OmpBackend().ensure_running(route))
+
+    assert launches == ["/opt/omp/bin/omp --approval-mode yolo --resume " + str(transcript)]
+
+
+def test_omp_ensure_running_finishes_fresh_start_without_resume(tmp_path, monkeypatch):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    transcript = tmp_path / "fresh-session.jsonl"
+    write_transcript(transcript, cwd, [])
+    route = binding(cwd)
+    route.fresh_start_pending = True
+    commands = iter(["bash", "omp"])
+    launches: list[str] = []
+    handoff = OmpHandoff("omp-route:0.0", cwd, "session-2", transcript, float("inf"))
+
+    async def launch(_target, command, **_kwargs):
+        launches.append(command)
+        return True
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(omp, "tmux_has_session", lambda _session: True)
+    monkeypatch.setattr(omp, "tmux_pane_command", lambda _target: next(commands))
+    monkeypatch.setattr(omp, "tmux_safe_launch", launch)
+    monkeypatch.setattr(omp, "read_handoff", lambda _target, _cwd: handoff)
+    monkeypatch.setattr(omp, "provider_tree_is_safe", lambda _target, _executable: True)
+    monkeypatch.setattr(omp.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(
+        omp.ProviderDiscovery,
+        "resolve_executable",
+        staticmethod(lambda name: "/opt/omp/bin/omp" if name == "omp" else None),
+    )
+    monkeypatch.setattr(omp, "provider_launch_arguments", lambda _name: ("--approval-mode", "yolo"))
+
+    asyncio.run(OmpBackend().ensure_running(route))
+
+    assert launches == ["/opt/omp/bin/omp --approval-mode yolo"]
+    assert route.fresh_start_pending is False

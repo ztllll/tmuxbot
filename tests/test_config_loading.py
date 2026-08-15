@@ -175,6 +175,37 @@ def test_omp_admin_route_rejects_noncanonical_tmux_session_name(monkeypatch, tmp
         load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
 
 
+def test_save_binding_identity_removes_cleared_omp_session_pin(tmp_path):
+    bindings_file = tmp_path / "bindings.yaml"
+    entry = _binding("omp-route")
+    entry.update(
+        {
+            "backend": "omp",
+            "provider_session_id": "old-session",
+            "transcript_path": str(tmp_path / "old-session.jsonl"),
+        }
+    )
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [entry]}, sort_keys=False), encoding="utf-8"
+    )
+    binding = Binding(
+        name="omp-route",
+        chat_id=1,
+        thread_id=None,
+        tmux_session="omp-route-claude",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=tmp_path / "omp-route",
+        backend="omp",
+    )
+
+    save_binding_identity(bindings_file, binding)
+
+    saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"][0]
+    assert "provider_session_id" not in saved
+    assert "transcript_path" not in saved
+
+
 def test_admin_identity_persistence_refreshes_admin_route_metadata(monkeypatch, tmp_path):
     bindings_file = tmp_path / "bindings.yaml"
     stale = {

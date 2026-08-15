@@ -83,8 +83,21 @@ async def ensure_binding_running(
         return True
 
 
-async def restart_binding(backend: "Backend", b: "Binding", state: "State", *, reason: str) -> bool:
+async def restart_binding(
+    backend: "Backend",
+    b: "Binding",
+    state: "State",
+    *,
+    reason: str,
+    fresh: bool = False,
+    delay: float = 0.0,
+) -> bool:
     """Restart one route under its lifecycle lock.
+
+    ``fresh`` deliberately drops the provider identity before the clean respawn;
+    it is only used by OMP's `/exit` configuration/extension reload path. The
+    optional delay is held under the same route lock so later IM cannot reach the
+    provider which is about to exit.
 
     Returns True when an existing provider was restarted and False when a missing
     provider/session was only started. OMP opts into a clean pane respawn so IM
@@ -99,6 +112,14 @@ async def restart_binding(backend: "Backend", b: "Binding", state: "State", *, r
 
     lock = state.ensure_locks.setdefault(b.name, asyncio.Lock())
     async with lock:
+        if delay:
+            await asyncio.sleep(delay)
+        if fresh:
+            b.provider_session_id = None
+            b.last_session_id = None
+            b.transcript_path = None
+            b.pending_session_handoff_after = None
+            b.fresh_start_pending = True
         if not tmux_has_session(b.tmux_session):
             await _ensure_backend_running(backend, b, reason=reason)
             return False

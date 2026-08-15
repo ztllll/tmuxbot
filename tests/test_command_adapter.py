@@ -16,6 +16,8 @@ from tmuxbot.command_adapter import (
     semantic_actions_from_body,
     probe_passthrough_result,
 )
+from tmuxbot.command_adapter import CommandSpec, handle_passthrough_command
+from tmuxbot.state import Binding
 
 
 class FakeBackend:
@@ -96,6 +98,11 @@ def test_omp_builtin_command_matrix_uses_native_interactions_and_capture_command
     assert classify_command(backend, "/quit").kind == CommandKind.BLOCKED
 
 
+def test_omp_exit_is_passthrough_but_other_backends_remain_blocked():
+    assert classify_command(OmpBackend(), "/exit").kind == CommandKind.PASSTHROUGH
+    assert classify_command(FakeBackend(), "/exit").kind == CommandKind.BLOCKED
+
+
 def test_tui_action_commands():
     assert action_from_command("/down", "") == "down"
     assert action_from_command("/key", "return") == "enter"
@@ -133,6 +140,90 @@ def test_passthrough_probe_always_reports_a_tui_receipt(monkeypatch):
     assert len(sent) == 1
     assert "/reload 已执行，TUI 回执如下" in sent[0][2]
     assert "Reloaded extensions" in sent[0][2]
+
+
+def test_omp_exit_clears_identity_then_reports_clean_reload(monkeypatch, tmp_path):
+    sent = []
+    injected = []
+    tasks = []
+
+    class Frontend:
+        bindings_file = None
+
+        async def send_html(self, chat_id, thread_id, text):
+            sent.append((chat_id, thread_id, text))
+
+    class Backend:
+        name = "omp"
+        running_command_names = frozenset({"omp"})
+
+    class TestState:
+        command_transactions = {}
+        pending_clean_reloads = {}
+        ensure_locks = {}
+
+        def fire(self, coro):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+    async def send_text(*args, **_kwargs):
+        injected.append(args)
+
+    async def clean_restart(backend, route, state, **kwargs):
+        assert backend.name == "omp"
+        assert route.provider_session_id is None
+        assert route.last_session_id is None
+        assert route.transcript_path is None
+        assert route.fresh_start_pending is True
+        assert kwargs == {
+            "reason": "channel-exit-clean-reload",
+            "fresh": True,
+            "delay": 3.0,
+        }
+        return True
+
+    route = Binding(
+        name="omp-route",
+        chat_id=1,
+        thread_id=None,
+        tmux_session="omp-route",
+        tmux_window=0,
+        tmux_pane=0,
+        cwd=tmp_path,
+        backend="omp",
+        provider_session_id="old-session",
+        last_session_id="old-session",
+        transcript_path=tmp_path / "old.jsonl",
+    )
+    state = TestState()
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_capture", lambda *_args: "OMP ready")
+    monkeypatch.setattr("tmuxbot.command_adapter.tmux_send_text", send_text)
+    monkeypatch.setattr("tmuxbot.command_adapter.restart_binding", clean_restart)
+
+    async def run():
+        await handle_passthrough_command(
+            Frontend(),
+            Backend(),
+            route,
+            state,
+            123,
+            None,
+            CommandSpec("/exit", CommandKind.PASSTHROUGH),
+            "/exit",
+        )
+        await asyncio.gather(*tasks)
+
+    asyncio.run(run())
+
+    assert injected[0][1] == "/exit"
+    assert route.provider_session_id is None
+    assert route.last_session_id is None
+    assert route.transcript_path is None
+    assert route.fresh_start_pending is True
+    assert state.pending_clean_reloads == {}
+    assert any("3 秒后" in text for _, _, text in sent)
+    assert any("全新会话已就绪" in text for _, _, text in sent)
 
 
 def test_binding_token_round_trip():

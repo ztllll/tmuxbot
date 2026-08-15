@@ -248,3 +248,53 @@ def test_restart_binding_cleanly_respawns_omp_without_tui_keys(monkeypatch, tmp_
     assert calls == [("respawn", b.tmux_target, b.cwd), "ensure"]
     assert b.provider_session_id == "session-id"
     assert b.transcript_path == transcript
+
+
+def test_restart_binding_fresh_respawn_drops_provider_identity(monkeypatch, tmp_path):
+    calls = []
+
+    class OmpBackend:
+        restart_via_clean_respawn = True
+
+        def is_running_command(self, command):
+            return command == "omp"
+
+        async def ensure_running(self, route):
+            calls.append("ensure")
+            assert route.provider_session_id is None
+            assert route.last_session_id is None
+            assert route.transcript_path is None
+            assert route.fresh_start_pending is True
+
+    async def no_sleep(_delay):
+        return None
+
+    monkeypatch.setattr("tmuxbot.tmux.tmux_has_session", lambda _session: True)
+    monkeypatch.setattr("tmuxbot.tmux.tmux_pane_command", lambda _target: "omp")
+    monkeypatch.setattr(
+        "tmuxbot.tmux.tmux_respawn_pane",
+        lambda target, cwd: calls.append(("respawn", target, cwd)) or True,
+    )
+    monkeypatch.setattr("tmuxbot.lifecycle.asyncio.sleep", no_sleep)
+
+    b = binding("omp-route")
+    b.provider_session_id = "old-session"
+    b.last_session_id = "old-session"
+    b.transcript_path = tmp_path / "old.jsonl"
+
+    was_running = asyncio.run(
+        restart_binding(
+            OmpBackend(),
+            b,
+            SimpleNamespace(ensure_locks={}),
+            reason="channel-exit-clean-reload",
+            fresh=True,
+            delay=3.0,
+        )
+    )
+
+    assert was_running is True
+    assert calls == [("respawn", b.tmux_target, b.cwd), "ensure"]
+    assert b.provider_session_id is None
+    assert b.last_session_id is None
+    assert b.transcript_path is None

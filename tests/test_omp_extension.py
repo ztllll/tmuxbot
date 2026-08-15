@@ -47,3 +47,5 @@ def test_managed_omp_extension_uses_public_identity_and_agent_lifecycle_events()
     assert "agent_settled" not in source
     assert "await refreshIdentity(ctx)" in source
     assert "processId: process.pid" in source
+    assert 'function isRootSessionFile(sessionFile: string): boolean' in source
+    assert 'if (!isRootSessionFile(sessionFile)) return;' in source
