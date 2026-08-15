@@ -208,6 +208,8 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    admin_cwd = tmp_path / "admin"
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(admin_cwd))
     bindings_file = tmp_path / "bindings.yaml"
     bindings_file.write_text(
         yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
@@ -229,6 +231,8 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     reloaded = next(binding for binding in S.bindings if binding.admin)
     assert reloaded.provider_session_id == "pi-session"
     assert reloaded.transcript_path == tmp_path / "session.jsonl"
+    assert reloaded.cwd == admin_cwd
+    assert (admin_cwd / "tmuxbot-admin-context.json").is_file()
 
 
 def test_persisted_admin_identity_does_not_enable_admin_without_env(tmp_path):
@@ -297,6 +301,24 @@ def test_admin_dm_route_can_override_channel_credential_endpoint_and_cwd(monkeyp
     )
     assert admin.cwd == admin_cwd
     assert admin.backend == "codex"
+
+
+def test_admin_dm_route_rejects_user_home_as_admin_cwd(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("tmuxbot.config.Path.home", lambda: home)
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(home))
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="must not be the user home directory"):
+        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
 
 
 def test_admin_dm_route_creates_configured_private_cwd(monkeypatch, tmp_path):

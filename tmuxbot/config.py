@@ -61,6 +61,14 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         if configured_cwd
         else default_admin_cwd(os.environ)
     )
+    if cwd == Path.home().expanduser().resolve():
+        raise ConfigValidationError(
+            [
+                "TMUXBOT_ADMIN_CWD must not be the user home directory; "
+                "use a dedicated private workspace such as "
+                f"{default_admin_cwd(os.environ)}"
+            ]
+        )
     try:
         cwd.mkdir(parents=True, exist_ok=True, mode=0o700)
         if cwd.is_symlink() or not cwd.is_dir():

@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Admin DM 配置现在拒绝直接使用 Unix 用户根目录作为 `TMUXBOT_ADMIN_CWD`，强制使用独立私有 workspace，避免受管 `AGENTS.md` / `CLAUDE.md` 被普通项目沿目录树继承；配置测试显式使用临时 Admin cwd，不再覆盖真实 workspace 的 manifest。
 - 修复 Telegram/飞书回复底部 provider 状态栏不稳定显示 route 项目路径：当 Pi/Claude/Codex 的实时 TUI footer 因窄终端、自定义状态栏或新 transcript pending 而省略 cwd 时，`TerminalStatus` 使用权威 `binding.cwd` 兜底；完整路径继续按原设计显示在底部状态栏的 `📁` 字段中，不另加卡片顶部路径行。
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
 
