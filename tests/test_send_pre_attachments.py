@@ -76,7 +76,11 @@ def test_feishu_send_pre_sends_screen_paths_as_real_attachments(tmp_path):
         assert sent[0][0:2] == ("card", "oc_x")
         card = json.loads(sent[0][2])
         assert card["schema"] == "2.0"
-        assert card["body"]["elements"][0]["content"] == "```\nscreen\n```"
+        markdown = next(
+            element for element in card["body"]["elements"]
+            if element["tag"] == "markdown"
+        )
+        assert markdown["content"] == "```\nscreen\n```"
         assert sent[1] == ("image", "oc_x", None, image, None)
 
     asyncio.run(run())

@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- 修复 Telegram/飞书回复底部偶尔不显示 route 项目路径：当 Pi/Claude/Codex 的实时 TUI footer 因窄终端、自定义状态栏或新 transcript pending 而省略 cwd 时，IM `TerminalStatus` 现在使用权威 `binding.cwd` 兜底；即使 provider metadata 尚未建立，也会至少显示当前 route 的完整路径。
+- 修复 Telegram/飞书回复不稳定显示 route 项目路径：所有回复和状态卡现在固定渲染独立的完整 `路径` 字段，不再把路径藏在可选 provider footer；当 Pi/Claude/Codex 的实时 TUI footer 因窄终端、自定义状态栏或新 transcript pending 而省略 cwd 时，`TerminalStatus` 同时使用权威 `binding.cwd` 兜底，并从 provider footer 去除重复路径。
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
 
 ### Changed

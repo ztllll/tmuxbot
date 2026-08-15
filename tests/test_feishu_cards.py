@@ -73,6 +73,11 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert card["config"]["summary"]["content"].startswith("结论 完成 部署")
     assert card["header"]["title"]["content"] == f"💬 回复 · {tmp_path.name}"
     assert card["header"]["subtitle"]["content"] == "会话 · alpha"
+    path = next(
+        element for element in card["body"]["elements"]
+        if element.get("element_id") == "reply_project_path"
+    )
+    assert path["text"]["content"] == f"路径 · {tmp_path}"
     assert card["header"]["template"] == "yellow"
     assert "text_tag_list" not in card["header"]
 
@@ -95,6 +100,7 @@ def test_build_feishu_card_v2_has_structured_header_summary_body_and_no_buttons(
     assert status["tag"] == "div"
     assert status["text"]["text_size"] == "notation"
     assert status["text"]["text_color"] == "grey"
+    assert str(tmp_path) not in status["text"]["content"]
 
     assert not any(element["tag"] == "button" for element in elements)
 
@@ -117,6 +123,11 @@ def test_channel_headers_share_project_and_session_identity(tmp_path):
 
     assert card["header"]["title"]["content"] == "💬 工作中 · project-alpha"
     assert card["header"]["subtitle"]["content"] == "会话 · alpha"
+    path = next(
+        element for element in card["body"]["elements"]
+        if element.get("element_id") == "reply_project_path"
+    )
+    assert path["text"]["content"] == f"路径 · {project}"
     state = next(
         element for element in card["body"]["elements"]
         if element.get("element_id") == "reply_state"

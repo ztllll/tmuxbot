@@ -38,11 +38,13 @@ def test_render_assistant_reply_adds_context_header_and_footer(tmp_path):
 
     assert result.chat_html.startswith(
         f"💬 <b>回复 · {tmp_path.name}</b>\n\n<i>会话 · <code>alpha</code></i>"
+        f"\n\n<i>路径 · <code>{tmp_path}</code></i>"
     )
     assert "<b>结论</b>" in result.chat_html
     assert '<pre><code class="language-python">print(1)</code></pre>' in result.chat_html
     assert "```python" not in result.chat_html
     assert "• Working (9s • esc to interrupt)" in result.chat_html
+    assert result.chat_html.count(str(tmp_path)) == 1
     assert "屏幕底部:" not in result.chat_html
     assert "backend=codex" not in result.chat_html
     assert "tmux=codex-tmuxbot:0.0" not in result.chat_html
@@ -221,6 +223,7 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
     expected = f"工作中 · {tmp_path.name}"
     assert expected in calls[0][1]
     assert "会话 · <code>alpha</code>" in calls[0][1]
+    assert f"路径 · <code>{tmp_path}</code>" in calls[0][1]
     assert "gpt-5.6-terra" in calls[0][1]
     assert expected in calls[1][1]
     assert "gpt-5.6-terra" in calls[1][1]

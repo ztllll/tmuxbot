@@ -37,6 +37,19 @@ def build_feishu_card_v2(
     streaming: bool = False,
 ) -> dict[str, Any]:
     elements = [_block_element(block, index) for index, block in enumerate(document.blocks)]
+    elements.insert(
+        0,
+        {
+            "tag": "div",
+            "element_id": "reply_project_path",
+            "text": {
+                "tag": "plain_text",
+                "content": f"路径 · {document.project_path}",
+                "text_size": "notation",
+                "text_color": "grey",
+            },
+        },
+    )
     state_badge = plain_state_badge(document.state)
     if state_badge:
         elements.insert(
@@ -52,18 +65,25 @@ def build_feishu_card_v2(
             },
         )
     if document.footer_text:
-        elements.append(
-            {
-                "tag": "div",
-                "element_id": "reply_status",
-                "text": {
-                    "tag": "plain_text",
-                    "content": document.footer_text,
-                    "text_size": "notation",
-                    "text_color": "grey",
-                },
-            }
+        cwd_tokens = {document.project_path, f"📁 {document.project_path}"}
+        footer_text = " · ".join(
+            token.strip()
+            for token in document.footer_text.split(" · ")
+            if token.strip() not in cwd_tokens
         )
+        if footer_text:
+            elements.append(
+                {
+                    "tag": "div",
+                    "element_id": "reply_status",
+                    "text": {
+                        "tag": "plain_text",
+                        "content": footer_text,
+                        "text_size": "notation",
+                        "text_color": "grey",
+                    },
+                }
+            )
 
     action_specs = (
         (("确认中断", "ctrl_c", "danger"), ("取消", "refresh", "default"))

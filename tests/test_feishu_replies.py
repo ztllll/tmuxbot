@@ -91,7 +91,9 @@ def test_feishu_assistant_reply_promotes_relative_image_without_exposing_path(tm
 
     assert result.message_id == "om_124"
     assert str(image) not in sent[0][2]
-    assert "图表：趋势" in json.loads(sent[0][2])["body"]["elements"][0]["content"]
+    elements = json.loads(sent[0][2])["body"]["elements"]
+    markdown = next(element for element in elements if element["tag"] == "markdown")
+    assert "图表：趋势" in markdown["content"]
     assert sent[1] == ("image", "oc_123", image, "chart.png")
 
 
