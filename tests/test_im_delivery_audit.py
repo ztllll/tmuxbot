@@ -29,6 +29,16 @@ def test_im_delivery_audit_records_only_counts_and_body_length(tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_bridge_main_saves_initial_im_audit_before_background_loop():
+    from pathlib import Path
+
+    source = Path("tmuxbot/__main__.py").read_text(encoding="utf-8")
+
+    assert source.index("save_im_delivery_audit(") < source.index(
+        "S.fire(im_delivery_audit_loop("
+    )
+
+
 def test_im_delivery_audit_loop_writes_initial_snapshot_immediately(tmp_path):
     from tmuxbot.core.im_delivery_audit import audit_loop
 

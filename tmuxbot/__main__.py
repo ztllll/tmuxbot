@@ -268,8 +268,12 @@ async def main(paths: RuntimePaths | None = None) -> None:
 
     # Atomic content-free audit files serve every installed frontend.
     S.fire(channel_health_audit_loop(S.channel_health, paths.channel_health_file, stop))
-    from tmuxbot.core.im_delivery_audit import audit_loop as im_delivery_audit_loop
+    from tmuxbot.core.im_delivery_audit import (
+        audit_loop as im_delivery_audit_loop,
+        save as save_im_delivery_audit,
+    )
 
+    save_im_delivery_audit(paths.im_delivery_audit_file, S.im_delivery_metrics)
     S.fire(im_delivery_audit_loop(paths.im_delivery_audit_file, S.im_delivery_metrics, stop))
 
     # 多个 frontend 并发 polling
