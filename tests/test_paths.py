@@ -27,6 +27,7 @@ def test_paths_default_to_xdg_under_empty_home(tmp_path: Path):
     assert paths.lock_file == home / ".local/state/tmuxbot/tmuxbot.lock"
     assert paths.hook_spool_file == home / ".local/state/tmuxbot/claude-hooks.jsonl"
     assert paths.pi_terminal_health_file == home / ".local/state/tmuxbot/pi-terminal-health.json"
+    assert paths.im_delivery_audit_file == home / ".local/state/tmuxbot/im-delivery-audit.json"
 
 
 def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
@@ -43,6 +44,7 @@ def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
             "TMUXBOT_LOCK": str(tmp_path / "bridge.lock"),
             "TMUXBOT_HOOK_SPOOL": str(tmp_path / "hooks.jsonl"),
             "TMUXBOT_PI_TERMINAL_HEALTH_FILE": str(tmp_path / "pi-health.json"),
+            "TMUXBOT_IM_DELIVERY_AUDIT_FILE": str(tmp_path / "im-audit.json"),
         },
         home=tmp_path / "home",
     )
@@ -55,6 +57,7 @@ def test_explicit_tmuxbot_overrides_win_over_xdg(tmp_path: Path):
     assert paths.lock_file == tmp_path / "bridge.lock"
     assert paths.hook_spool_file == tmp_path / "hooks.jsonl"
     assert paths.pi_terminal_health_file == tmp_path / "pi-health.json"
+    assert paths.im_delivery_audit_file == tmp_path / "im-audit.json"
 
 
 def test_legacy_data_dir_override_keeps_state_files_together(tmp_path: Path):
@@ -69,6 +72,7 @@ def test_legacy_data_dir_override_keeps_state_files_together(tmp_path: Path):
     assert paths.lock_file == data_dir / "tmuxbot.lock"
     assert paths.hook_spool_file == data_dir / "claude-hooks.jsonl"
     assert paths.pi_terminal_health_file == data_dir / "pi-terminal-health.json"
+    assert paths.im_delivery_audit_file == data_dir / "im-delivery-audit.json"
 
 
 def test_explicit_xdg_paths_work_when_home_is_empty(tmp_path: Path):

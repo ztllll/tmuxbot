@@ -34,6 +34,7 @@ class RuntimePaths:
     hook_spool_file: Path
     channel_health_file: Path
     pi_terminal_health_file: Path
+    im_delivery_audit_file: Path
 
     @classmethod
     def discover(
@@ -83,6 +84,8 @@ class RuntimePaths:
             or state_dir / "channel-health.json",
             pi_terminal_health_file=_path(environ, "TMUXBOT_PI_TERMINAL_HEALTH_FILE")
             or state_dir / "pi-terminal-health.json",
+            im_delivery_audit_file=_path(environ, "TMUXBOT_IM_DELIVERY_AUDIT_FILE")
+            or state_dir / "im-delivery-audit.json",
         )
 
     def ensure_private_directories(self) -> None:

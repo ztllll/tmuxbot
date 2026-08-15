@@ -103,7 +103,40 @@ def test_managed_pi_provider_error_is_deferred_but_legacy_error_is_delivered(
             binding(tmp_path), [event], SimpleNamespace(), SimpleNamespace(), backend
         )
     ) is True
-    assert delivered_events == [("assistant_tools", "failed")]
+    assert delivered_events == [("provider_error", "failed")]
+
+
+def test_interaction_and_provider_error_keep_distinct_attention_routes(tmp_path, monkeypatch):
+    delivered_events = []
+
+    async def capture(_binding, kind, body, *_args):
+        delivered_events.append((kind, body))
+
+    monkeypatch.setattr("tmuxbot.jsonl.on_tmux_event", capture)
+    events = [
+        ProviderEvent(
+            event_id="claude:s1:interaction:1",
+            kind=ProviderEventKind.INTERACTION_REQUEST,
+            text="请选择目标环境",
+            provider_session_id="s1",
+        ),
+        ProviderEvent(
+            event_id="claude:s1:error:1",
+            kind=ProviderEventKind.PROVIDER_ERROR,
+            text="授权失败",
+            provider_session_id="s1",
+        ),
+    ]
+
+    assert asyncio.run(
+        _dispatch_provider_events(
+            binding(tmp_path), events, SimpleNamespace(), SimpleNamespace(), SimpleNamespace()
+        )
+    ) is True
+    assert delivered_events == [
+        ("interaction_request", "请选择目标环境"),
+        ("provider_error", "授权失败"),
+    ]
 
 
 def test_provider_delivery_success_allows_offset_commit(tmp_path, monkeypatch):

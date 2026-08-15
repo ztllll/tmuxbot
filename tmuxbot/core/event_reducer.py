@@ -25,9 +25,9 @@ def reduce_provider_event(event: ProviderEvent) -> list[ReducedEvent]:
     if event.kind == ProviderEventKind.PLAN_UPDATE:
         return [ReducedEvent("assistant_plan", event.text)]
     if event.kind == ProviderEventKind.INTERACTION_REQUEST:
-        return [ReducedEvent("assistant_tools", event.text)]
+        return [ReducedEvent("interaction_request", event.text)]
     if event.kind == ProviderEventKind.PROVIDER_ERROR:
-        return [ReducedEvent("assistant_tools", event.text)]
+        return [ReducedEvent("provider_error", event.text)]
     if event.kind == ProviderEventKind.LIFECYCLE_CHANGE:
         lifecycle = event.metadata.get("lifecycle")
         if lifecycle in {"compaction_start", "compaction_end", "compaction_failed"}:

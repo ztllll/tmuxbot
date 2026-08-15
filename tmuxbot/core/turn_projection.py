@@ -19,17 +19,29 @@ class ProgressIntent:
 class TurnProjection:
     """Compress provider progress into one bounded, editable channel projection."""
 
-    def __init__(self, *, update_interval_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        *,
+        progress_delay_seconds: float = 0.0,
+        update_interval_seconds: float = 2.0,
+        max_steps: int = 3,
+    ) -> None:
+        self.progress_delay_seconds = max(0.0, progress_delay_seconds)
         self.update_interval_seconds = max(0.0, update_interval_seconds)
         self.tool_count = 0
         self.plan_count = 0
         self.lifecycle_count = 0
         self.error_count = 0
         self._seen: set[tuple[str, str]] = set()
-        self._recent: deque[str] = deque(maxlen=3)
+        self._recent: deque[str] = deque(maxlen=max(1, max_steps))
         self._current = ""
         self._last_rendered = ""
         self._last_update_at: float | None = None
+        self._opened_at: float | None = None
+
+    @property
+    def progress_was_published(self) -> bool:
+        return bool(self._last_rendered)
 
     def consume(self, kind: str, body_html: str, *, now: float) -> list[ProgressIntent]:
         summary = _plan_summary(body_html) if kind == "plan" else _summary(body_html)
@@ -37,6 +49,8 @@ class TurnProjection:
         if not summary or key in self._seen:
             return []
         self._seen.add(key)
+        if self._opened_at is None:
+            self._opened_at = now
         self._current = summary
         self._recent.append(summary)
         if kind == "plan":
@@ -51,6 +65,9 @@ class TurnProjection:
         rendered = self._render_working()
         if rendered == self._last_rendered:
             return []
+        delay = self.next_update_in(now=now)
+        if not self.progress_was_published and delay is not None and delay > 0:
+            return []
         if (
             self._last_update_at is not None
             and now - self._last_update_at < self.update_interval_seconds
@@ -64,6 +81,9 @@ class TurnProjection:
         rendered = self._render_working()
         if rendered == self._last_rendered:
             return None
+        if not self.progress_was_published:
+            opened_at = self._opened_at if self._opened_at is not None else now
+            return max(0.0, self.progress_delay_seconds - (now - opened_at))
         if self._last_update_at is None:
             return 0.0
         return max(0.0, self.update_interval_seconds - (now - self._last_update_at))
@@ -89,9 +109,25 @@ class TurnProjection:
             )
         ]
 
-    def close_without_result(self, *, now: float) -> list[ProgressIntent]:
-        """Finalize a lifecycle-only turn that has no separate assistant result."""
-        return self.finalize(now=now)
+    def close_without_result(
+        self, *, now: float, display_state: str, heading: str,
+    ) -> list[ProgressIntent]:
+        """Finalize a waiting/failed turn that has no separate assistant result."""
+        del now
+        if not self._seen:
+            return []
+        recent = "；".join(self._recent)
+        return [
+            ProgressIntent(
+                "finalize",
+                display_state,
+                (
+                    f"{heading}\n"
+                    f"· 统计：{self._stats()}\n"
+                    f"· 最近：{html.escape(recent)}"
+                ),
+            )
+        ]
 
     def _display_state(self) -> str:
         return "error" if self.error_count else "working"

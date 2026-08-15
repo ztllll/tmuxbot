@@ -266,9 +266,11 @@ async def main(paths: RuntimePaths | None = None) -> None:
         except Exception:
             pass
 
-    # One atomic audit file serves every installed frontend. WebUI and operators
-    # can inspect the exact same surface regardless of Telegram or Feishu.
+    # Atomic content-free audit files serve every installed frontend.
     S.fire(channel_health_audit_loop(S.channel_health, paths.channel_health_file, stop))
+    from tmuxbot.core.im_delivery_audit import audit_loop as im_delivery_audit_loop
+
+    S.fire(im_delivery_audit_loop(paths.im_delivery_audit_file, S.im_delivery_metrics, stop))
 
     # 多个 frontend 并发 polling
     polling_tasks = [asyncio.create_task(fe.start_polling()) for fe in frontends]

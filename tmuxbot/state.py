@@ -72,6 +72,9 @@ class State:
         self.last_active: dict[str, float] = {}
         # TUI 状态行指纹: binding.name → 上次"含时间+token"行的内容
         self.tui_fp: dict[str, str] = {}
+        from tmuxbot.core.im_presentation import IMPresentationPolicy
+
+        self.im_presentation = IMPresentationPolicy.from_environment()
         # 每个 route 当前 Turn 的通道无关过程投影与唯一可编辑消息引用。
         self.turn_projections: dict[str, object] = {}
         self.progress_messages: dict[str, dict] = {}
@@ -79,10 +82,12 @@ class State:
         # 旧字段保留到过程投影迁移完成，兼容活动进程和历史测试夹具。
         self.tool_aggregator: dict[str, dict] = {}
         self.plan_messages: dict[str, dict] = {}
-        # 正文准流式消息: binding.name → {msg_id, chat_id, content}
-        self.reply_streams: dict[str, dict] = {}
-        # 已提前推送的 Codex live 文本,用于跳过随后重复落盘的最终 message。
-        self.live_text_recent: dict[str, list[str]] = {}
+        # ResultDraft 只在内存累计，不直接占用 IM 历史；final 统一发布。
+        self.result_drafts: dict[str, str] = {}
+        # 当前 provider session 最近一次已确认发布的最终正文，用于抑制重复 final。
+        self.published_results: dict[str, str] = {}
+        # 不含正文的生命周期审计计数，供日志/状态文件观察消息噪声。
+        self.im_delivery_metrics: dict[str, dict[str, int]] = {}
         # ensure_running 串行锁: 避免消息入口和后台巡检同时拉起同一个 pane
         self.ensure_locks: dict[str, asyncio.Lock] = {}
         # slash command transactions: binding.name -> CommandTransaction

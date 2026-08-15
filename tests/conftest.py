@@ -2,6 +2,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _fast_im_progress_policy(monkeypatch):
+    """Keep unit tests deterministic; production compact mode defaults to 4s."""
+    monkeypatch.setenv("TMUXBOT_IM_PROGRESS_DELAY", "0")
+
+
+@pytest.fixture(autouse=True)
 def isolate_provider_binary_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep host deployment paths from changing test discovery and launch commands."""
     monkeypatch.delenv("CLAUDE_BIN", raising=False)

@@ -196,7 +196,26 @@ TMUXBOT_PI_TERMINAL_HEALTH_INTERVAL=600
 
 该审计不会自动 `/restart`、`/new`、停止或杀进程。
 
-## 8. 附件与 Web 安全
+## 8. IM 结果优先展示
+
+默认 `compact` 模式把一个 provider Turn 压缩为至多一张可编辑过程卡和一条独立最终结果；短于延迟阈值的任务只发最终结果。
+
+```dotenv
+TMUXBOT_IM_PRESENTATION=compact
+TMUXBOT_IM_PROGRESS_DELAY=4
+TMUXBOT_IM_PROGRESS_UPDATE_INTERVAL=2
+TMUXBOT_IM_PROGRESS_MAX_STEPS=3
+```
+
+- `result_only`：隐藏普通工具、计划和生命周期过程；用户交互、阻塞/失败和最终结果仍独立通知。
+- `compact`：超过延迟阈值后创建一张过程卡，按内容变化和节流窗口原地更新，最终压缩为摘要。
+- `verbose`：立即创建过程卡，但仍复用同一 message ID，不回吐终端日志。
+
+`TEXT_DELTA` 和 provider live text 只写入内存 ResultDraft；`FINAL_TEXT` 统一经过 ReplyEnvelope、通道分页、附件和 footer 后发布一次。过程卡 edit/PATCH 失败会创建替代摘要，不阻断或重复最终结果。
+
+内容无关的计数默认写入 `$XDG_STATE_HOME/tmuxbot/im-delivery-audit.json`，仅包含 create/edit/finalize/result/attention 次数与结果字符数，不记录正文。可通过 `TMUXBOT_IM_DELIVERY_AUDIT_FILE` 覆盖路径。
+
+## 9. 附件与 Web 安全
 
 ```dotenv
 TMUXBOT_ATTACHMENT_DIR=/tmp/tmuxbot-attachments
@@ -214,7 +233,7 @@ AI 回复里的本地文件仅允许从 route cwd、attachment 目录、系统�
 
 WebUI 默认只能监听 localhost。远程访问必须使用带 TLS 和身份认证的反向代理，不要直接开放 `8765`。
 
-## 9. 常用检查
+## 10. 常用检查
 
 ```bash
 tmuxbot doctor

@@ -80,6 +80,10 @@ async def dispatch_incoming_text(
     """
     from tmuxbot.commands import capture_and_push
 
+    if not text.lstrip().startswith("/"):
+        getattr(state, "published_results", {}).pop(b.name, None)
+        getattr(state, "result_drafts", {}).pop(b.name, None)
+
     parsed = parse_slash_text(
         text, bot_username=bot_username, aliases=backend.command_aliases()
     )
