@@ -286,11 +286,11 @@ uv run tmuxbot web
 # 等价: uv run python -m tmuxbot.web
 ```
 
-启动流程为 `WebSettings.from_env()` → 控制面 SQLite migration → FastAPI/uvicorn；它不会读取 route、credential、Telegram polling 或飞书 WebSocket。SQLite 仅为旧 API 兼容而打开，Terminal Wall 页面不读取项目、Provider、通道或 TeamRun 数据；它只提供宿主机 tmux window inventory 和原始终端 attach，默认监听 `127.0.0.1:8765`。
+启动流程为 `WebSettings.from_env()` → 控制面 SQLite migration → FastAPI/uvicorn；它不会读取 route、credential、Telegram polling 或飞书 WebSocket。SQLite 仅为旧 API 兼容而打开，Terminal Wall 页面不读取项目、Provider、通道或 TeamRun 数据；它通过 tmux Control Mode 提供宿主机 window inventory、pane snapshot、实时输出和原始键盘输入，默认监听 `127.0.0.1:8765`。
 
-推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片 attach 一个真实 `session:window`，浏览器输入和 resize 直接写入 attach PTY；卡片内保留该 window 原生 pane 布局。
+推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片打开一条 `tmux -CC` 控制连接，先发送 `capture-pane` 快照，再流式转发目标 pane 输出与浏览器原始键盘输入。
 
-Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。卡片默认是**镜像模式**：resize 只更新 attach PTY，不会改变 SSH/Tabby 正在使用的共享 tmux layout。每张卡片可显式“接管尺寸”，此时 resize 才执行 `tmux resize-window` 并成为该 window 唯一尺寸权威，会影响同一 window 的 SSH/Tabby；关闭接管卡片时撤销该 window 的手动尺寸策略，恢复 tmux 自身默认行为。
+Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。浏览器卡片使用 Control Mode 镜像已有 tmux layout：缩放只调整 xterm 字形，不向 tmux 提交尺寸，因此不会改变 SSH/Tabby 正在使用的共享 pane layout。
 
 ### 开发启动 (tmux session)
 

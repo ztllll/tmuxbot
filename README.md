@@ -172,7 +172,7 @@ Terminal Wall 默认监听 `127.0.0.1:8765`。它不提供登录或访问控制�
 
 ## 当前能力
 
-- **本机 tmux Terminal Wall**：`tmuxbot serve --open` 展示宿主机全部 tmux window；xterm.js 直接 attach 真实 window，保留原生 pane 排列、颜色、快捷键、粘贴和 resize。卡片可任意拖动、八向缩放、置顶、横/纵/网格排列与全屏；浏览器布局存入 localStorage。
+- **本机 tmux Terminal Wall**：`tmuxbot serve --open` 展示宿主机全部 tmux window；xterm.js 经 tmux Control Mode 镜像真实 pane，并保留颜色、快捷键、粘贴和交互。卡片可任意拖动、八向缩放、置顶、横/纵/网格排列与全屏；卡片缩放不改变 SSH/Tabby 的共享 tmux 尺寸，浏览器布局存入 localStorage。
 - **Web 纯终端层**：WebUI 不管理项目、Provider、IM 通道或 TeamRun，也不解析 IM `/` 命令；Telegram/飞书 bridge 与其 route、投递、回推和 TeamRun 能力继续独立运行。
 - **TeamRun 多 LLM**:确定性 Coordinator / Implementer / Reviewer 三角色协作，唯一写租约、DAG、mailbox、Artifact、重试、独立验收和恢复；Implementer 交付证据后 Reviewer 自动收到只读审查包
 - **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
