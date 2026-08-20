@@ -1108,8 +1108,11 @@ def create_app(
             if resize is None:
                 await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
-            rows, cols, apply_window = resize
-            await terminal.resize(rows, cols, apply_window=apply_window)
+            kind, rows, cols, apply_window = resize
+            if kind == "release":
+                await terminal.release_window_size()
+            else:
+                await terminal.resize(rows, cols, apply_window=apply_window)
 
     @app.websocket("/api/wall/ws")
     async def wall_terminal(websocket: WebSocket, target: str = Query(...)) -> None:

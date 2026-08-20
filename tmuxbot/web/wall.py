@@ -41,6 +41,7 @@ class TerminalConnection(Protocol):
     async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes: ...
     async def write(self, data: bytes) -> None: ...
     async def resize(self, rows: int, cols: int, *, apply_window: bool = False) -> None: ...
+    async def release_window_size(self) -> None: ...
     async def close(self) -> None: ...
 
 
@@ -184,6 +185,12 @@ class PtyTerminal:
         except (OSError, subprocess.SubprocessError) as exc:
             raise TmuxWallError("tmux window resize failed") from exc
 
+    async def release_window_size(self) -> None:
+        if not self.applied_window_size:
+            return
+        await asyncio.to_thread(self._restore_auto_size)
+        self.applied_window_size = False
+
     async def close(self) -> None:
         if self.closed:
             return
@@ -192,8 +199,7 @@ class PtyTerminal:
             os.close(self.master_fd)
         except OSError:
             pass
-        if self.applied_window_size:
-            await asyncio.to_thread(self._restore_auto_size)
+        await self.release_window_size()
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -221,16 +227,20 @@ async def open_terminal(target: str) -> TerminalConnection:
     return await asyncio.to_thread(PtyTerminal.open, target)
 
 
-def parse_resize_message(raw: str) -> tuple[int, int, bool] | None:
+def parse_resize_message(raw: str) -> tuple[str, int, int, bool] | None:
     import json
     try:
         value = json.loads(raw)
     except (TypeError, ValueError):
         return None
-    if not isinstance(value, dict) or value.get("type") != "resize":
+    if not isinstance(value, dict):
+        return None
+    if value.get("type") == "release_window_size":
+        return "release", 0, 0, False
+    if value.get("type") != "resize":
         return None
     rows, cols = value.get("rows"), value.get("cols")
     apply_window = value.get("apply_window", False)
     if not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool) or not isinstance(apply_window, bool) or not 1 <= rows <= TERMINAL_MAX_ROWS or not 1 <= cols <= TERMINAL_MAX_COLS:
         return None
-    return rows, cols, apply_window
+    return "resize", rows, cols, apply_window

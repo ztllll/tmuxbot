@@ -119,6 +119,7 @@ def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
             return b""
         async def write(self, data): opened.append(("write", data))
         async def resize(self, rows, cols, *, apply_window=False): opened.append(("resize", rows, cols, apply_window))
+        async def release_window_size(self): opened.append(("release",))
         async def close(self): opened.append(("close",))
     async def open_terminal(_target): return Terminal()
     monkeypatch.setattr("tmuxbot.web.app.open_wall_terminal", open_terminal)
@@ -133,3 +134,32 @@ def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
     assert ("write", b"hello") in opened
     assert ("resize", 40, 120, False) in opened
     assert ("close",) in opened
+
+
+def test_wall_websocket_releases_manual_window_size(monkeypatch, tmp_path):
+    output = b"alpha\t0\tbash\t/repo\n"
+    def tmux_run(argv, **kwargs):
+        stdout = b"80x24\n" if "display-message" in argv else output
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr=b"")
+    monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", tmux_run)
+    opened = []
+    class Terminal:
+        async def read(self, _max=65536):
+            if not hasattr(self, "ready"):
+                self.ready = True
+                return b"ready"
+            await asyncio.sleep(1)
+            return b""
+        async def write(self, _data): pass
+        async def resize(self, _rows, _cols, *, apply_window=False): pass
+        async def release_window_size(self): opened.append("released")
+        async def close(self): pass
+    async def open_terminal(_target): return Terminal()
+    monkeypatch.setattr("tmuxbot.web.app.open_wall_terminal", open_terminal)
+    with TestClient(app(tmp_path)).websocket_connect("/api/wall/ws?target=alpha:0") as websocket:
+        websocket.receive_json(); websocket.receive_bytes()
+        websocket.send_json({"type": "release_window_size"})
+        for _ in range(30):
+            if opened: break
+            asyncio.run(asyncio.sleep(.001))
+    assert opened == ["released"]

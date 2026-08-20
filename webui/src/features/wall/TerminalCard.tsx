@@ -5,50 +5,64 @@ import "@xterm/xterm/css/xterm.css";
 import type { TerminalLayout } from "./layout";
 
 const terminalTheme = { background: "#101820", foreground: "#d9e1e8", cursor: "#efb64d", black: "#17212b", brightBlack: "#657481", red: "#c95a64", brightRed: "#ee7b83", green: "#4f9a76", brightGreen: "#76bd96", yellow: "#cba35d", brightYellow: "#e6c477", blue: "#6f9de6", brightBlue: "#96baff", magenta: "#ad83d1", brightMagenta: "#c8a3ea", cyan: "#5caeba", brightCyan: "#81cbd5", white: "#c6d0d8", brightWhite: "#edf3f6" };
-
 type Props = { card: TerminalLayout; unavailable: boolean; onFocus: () => void; onClose: () => void; onChange: (next: TerminalLayout) => void };
+type WindowSize = { cols: number; rows: number };
 
 export default function TerminalCard({ card, unavailable, onFocus, onClose, onChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const ownsSizeRef = useRef(false);
+  const remoteSizeRef = useRef<WindowSize | null>(null);
   const [state, setState] = useState(unavailable ? "目标已失效" : "正在连接");
   const [ownsSize, setOwnsSize] = useState(false);
-  const resizeTimer = useRef<number | undefined>(undefined);
+
+  function sendResize(applyWindow: boolean) {
+    const terminal = terminalRef.current, socket = socketRef.current;
+    if (terminal && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols, apply_window: applyWindow }));
+  }
+
+  function renderRemoteSize(size: WindowSize) {
+    const terminal = terminalRef.current, surface = host.current;
+    if (!terminal || !surface) return;
+    const cellWidth = surface.clientWidth / size.cols;
+    const cellHeight = surface.clientHeight / size.rows;
+    terminal.options.fontSize = Math.max(8, Math.min(18, Math.floor(Math.min(cellWidth / 0.61, cellHeight / 1.2) * 10) / 10));
+    terminal.resize(size.cols, size.rows);
+    terminal.refresh(0, size.rows - 1);
+  }
+
   useEffect(() => {
     if (unavailable || !host.current) return;
     const terminal = new Terminal({ cursorBlink: true, convertEol: true, fontFamily: "IBM Plex Mono, SFMono-Regular, Consolas, monospace", fontSize: 14, theme: terminalTheme });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
+    terminalRef.current = terminal; fitRef.current = fit;
     let disposed = false;
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${scheme}//${location.host}/api/wall/ws?target=${encodeURIComponent(card.target)}`);
-    ws.binaryType = "arraybuffer";
-    const resize = () => {
-      fit.fit();
-      if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current);
-      resizeTimer.current = window.setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols, apply_window: ownsSize }));
-      }, 80);
-    };
-    const observer = new ResizeObserver(resize); observer.observe(host.current);
-    ws.onopen = () => { if (!disposed) { setState("已连接"); resize(); terminal.focus(); } };
+    ws.binaryType = "arraybuffer"; socketRef.current = ws;
+    const observer = new ResizeObserver(() => {
+      if (ownsSizeRef.current) { fit.fit(); sendResize(true); }
+      else if (remoteSizeRef.current) renderRemoteSize(remoteSizeRef.current);
+    });
+    observer.observe(host.current);
+    ws.onopen = () => { if (!disposed) { setState("已连接 · 镜像模式"); terminal.focus(); } };
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) { terminal.write(new Uint8Array(event.data)); return; }
       if (typeof event.data !== "string") return;
       try {
         const message = JSON.parse(event.data) as { type?: string; cols?: number; rows?: number };
         if (message.type !== "window_size" || !message.cols || !message.rows) return;
-        const surface = host.current;
-        if (surface) {
-          const cellWidth = surface.clientWidth / message.cols;
-          const cellHeight = surface.clientHeight / message.rows;
-          terminal.options.fontSize = Math.max(8, Math.min(18, Math.floor(Math.min(cellWidth / 0.61, cellHeight / 1.2) * 10) / 10));
-        }
-        terminal.resize(message.cols, message.rows);
-      } catch { /* terminal byte stream is the only expected non-JSON payload */ }
+        const size = { cols: message.cols, rows: message.rows };
+        remoteSizeRef.current = size;
+        if (!ownsSizeRef.current) renderRemoteSize(size);
+      } catch { /* terminal bytes are binary; only control frames are JSON */ }
     };
     ws.onclose = (event) => { if (!disposed) setState(event.code === 4404 ? "目标已失效" : "连接已断开"); };
     terminal.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data)); });
-    return () => { disposed = true; observer.disconnect(); if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current); ws.close(); terminal.dispose(); };
-  }, [card.target, unavailable, ownsSize]);
+    return () => { disposed = true; observer.disconnect(); ws.close(); socketRef.current = null; terminalRef.current = null; fitRef.current = null; terminal.dispose(); };
+  }, [card.target, unavailable]);
 
   function pointer(event: React.PointerEvent, action: "move" | "resize") {
     event.preventDefault(); onFocus();
@@ -63,11 +77,20 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
     const end = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", end);
   }
+
   function toggleSizeOwner() {
-    const next = !ownsSize;
-    setOwnsSize(next);
-    setState(next ? "尺寸接管 · 将影响 SSH/Tabby" : "镜像模式 · 不改变共享 tmux 尺寸");
+    const next = !ownsSizeRef.current;
+    ownsSizeRef.current = next; setOwnsSize(next);
+    if (next) {
+      fitRef.current?.fit(); sendResize(true);
+      setState("尺寸接管 · 将影响 SSH/Tabby");
+    } else {
+      socketRef.current?.send(JSON.stringify({ type: "release_window_size" }));
+      if (remoteSizeRef.current) renderRemoteSize(remoteSizeRef.current);
+      setState("镜像模式 · 不改变共享 tmux 尺寸");
+    }
   }
+
   return <article className={`wall-card ${unavailable ? "is-unavailable" : ""}`} style={{ left: card.x, top: card.y, width: card.width, height: card.height, zIndex: card.z }} onPointerDown={onFocus}>
     <header onPointerDown={(event) => pointer(event, "move")}><div><strong>{card.target}</strong><small>{state}</small></div><div className="wall-card-actions"><button className={ownsSize ? "is-owner" : ""} title="接管会改变同一 tmux window 的 SSH/Tabby 尺寸" onPointerDown={(event) => event.stopPropagation()} onClick={toggleSizeOwner}>{ownsSize ? "释放尺寸" : "接管尺寸"}</button><button aria-label={`关闭 ${card.target}`} onPointerDown={(event) => event.stopPropagation()} onClick={onClose}>×</button></div></header>
     <div className="wall-terminal" ref={host}>{unavailable && <p>该 tmux window 已不存在。</p>}</div>
