@@ -23,6 +23,36 @@ def test_wall_inventory_groups_panes_by_window(monkeypatch):
     assert [(window.target, window.pane_count, window.commands) for window in TmuxWall().list_windows()] == [("alpha:0", 2, ("bash", "python")), ("alpha:1", 1, ("claude",))]
 
 
+def test_pty_resize_updates_attach_tty_and_real_tmux_window(monkeypatch):
+    from tmuxbot.web.wall import PtyTerminal
+
+    calls = []
+    monkeypatch.setattr("tmuxbot.web.wall.fcntl.ioctl", lambda *args: calls.append(("ioctl", args)))
+    monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", lambda argv, **kwargs: calls.append(("tmux", argv, kwargs)) or SimpleNamespace(returncode=0))
+    terminal = PtyTerminal(99, SimpleNamespace(poll=lambda: 0), "alpha:0")
+
+    asyncio.run(terminal.resize(40, 120))
+
+    assert calls[0][0] == "ioctl"
+    assert calls[1][1] == ["tmux", "resize-window", "-t", "alpha:0", "-x", "120", "-y", "40"]
+
+
+def test_pty_close_restores_inherited_window_size_policy(monkeypatch):
+    from tmuxbot.web.wall import PtyTerminal
+
+    commands = []
+    monkeypatch.setattr("tmuxbot.web.wall.os.close", lambda _fd: None)
+    monkeypatch.setattr(
+        "tmuxbot.web.wall.subprocess.run",
+        lambda argv, **kwargs: commands.append(argv) or SimpleNamespace(returncode=0),
+    )
+    terminal = PtyTerminal(99, SimpleNamespace(poll=lambda: 0), "alpha:0")
+
+    asyncio.run(terminal.close())
+
+    assert commands == [["tmux", "set-window-option", "-u", "-t", "alpha:0", "window-size"]]
+
+
 def test_wall_api_returns_windows(monkeypatch, tmp_path):
     output = b"alpha\t0\tbash\t/repo\n"
     monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=output, stderr=b""))

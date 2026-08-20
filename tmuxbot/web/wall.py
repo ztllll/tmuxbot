@@ -93,8 +93,15 @@ def _summary(values: list[str]) -> str:
 
 
 class PtyTerminal:
-    def __init__(self, master_fd: int, process: subprocess.Popen[bytes]) -> None:
-        self.master_fd, self.process, self.closed = master_fd, process, False
+    def __init__(
+        self, master_fd: int, process: subprocess.Popen[bytes], target: str
+    ) -> None:
+        self.master_fd, self.process, self.target, self.closed = (
+            master_fd,
+            process,
+            target,
+            False,
+        )
 
     @classmethod
     def open(cls, target: str) -> "PtyTerminal":
@@ -109,7 +116,7 @@ class PtyTerminal:
             os.close(master_fd); os.close(slave_fd)
             raise
         os.close(slave_fd)
-        return cls(master_fd, process)
+        return cls(master_fd, process, target)
 
     async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes:
         try:
@@ -123,7 +130,40 @@ class PtyTerminal:
         await asyncio.to_thread(os.write, self.master_fd, data)
 
     async def resize(self, rows: int, cols: int) -> None:
-        await asyncio.to_thread(fcntl.ioctl, self.master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        """Synchronize both the attach TTY and the real tmux window layout.
+
+        ``TIOCSWINSZ`` alone updates the browser attach PTY, but tmux may retain
+        another attached client's dimensions under its normal ``window-size``
+        arbitration. Explicitly resizing the verified target gives Terminal Wall
+        the same deterministic resize behaviour as a native terminal client.
+        """
+        await asyncio.to_thread(
+            fcntl.ioctl,
+            self.master_fd,
+            termios.TIOCSWINSZ,
+            struct.pack("HHHH", rows, cols, 0, 0),
+        )
+        await asyncio.to_thread(self._resize_window, rows, cols)
+
+    def _resize_window(self, rows: int, cols: int) -> None:
+        try:
+            subprocess.run(
+                [
+                    "tmux",
+                    "resize-window",
+                    "-t",
+                    self.target,
+                    "-x",
+                    str(cols),
+                    "-y",
+                    str(rows),
+                ],
+                capture_output=True,
+                check=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise TmuxWallError("tmux window resize failed") from exc
 
     async def close(self) -> None:
         if self.closed:
@@ -131,6 +171,18 @@ class PtyTerminal:
         self.closed = True
         try:
             os.close(self.master_fd)
+        except OSError:
+            pass
+        # ``resize-window`` makes the per-window policy manual. Restore the
+        # inherited automatic policy once Terminal Wall lets go of this window.
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["tmux", "set-window-option", "-u", "-t", self.target, "window-size"],
+                capture_output=True,
+                check=False,
+                timeout=3,
+            )
         except OSError:
             pass
         if self.process.poll() is None:
