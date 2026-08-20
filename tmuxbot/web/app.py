@@ -1072,9 +1072,10 @@ def create_app(
         while data := await terminal.read(WALL_MAX_FRAME_BYTES):
             await websocket.send_bytes(data)
 
-    async def wall_size_loop(websocket: WebSocket, target: str) -> None:
+    async def wall_size_loop(
+        websocket: WebSocket, target: str, last_size: tuple[int, int]
+    ) -> None:
         wall = TmuxWall()
-        last_size: tuple[int, int] | None = None
         while True:
             try:
                 size = await asyncio.to_thread(wall.window_size, target)
@@ -1128,10 +1129,23 @@ def create_app(
             await websocket.accept()
             await websocket.close(code=1011)
             return
+        try:
+            initial_size = await asyncio.to_thread(TmuxWall().window_size, target)
+        except TmuxWallError:
+            await terminal.close()
+            await websocket.accept()
+            await websocket.close(code=1013)
+            return
         await websocket.accept()
+        # The xterm grid must exist at the real tmux dimensions before it sees
+        # the initial full-screen ANSI repaint. Otherwise xterm wraps the first
+        # frame at its default 80 columns and leaves a visually stale canvas.
+        await websocket.send_json(
+            {"type": "window_size", "cols": initial_size[0], "rows": initial_size[1]}
+        )
         output = asyncio.create_task(wall_output_loop(websocket, terminal, target))
         input_ = asyncio.create_task(wall_input_loop(websocket, terminal))
-        size = asyncio.create_task(wall_size_loop(websocket, target))
+        size = asyncio.create_task(wall_size_loop(websocket, target, initial_size))
         try:
             done, pending = await asyncio.wait({output, input_, size}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:

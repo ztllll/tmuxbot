@@ -123,6 +123,7 @@ def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
     async def open_terminal(_target): return Terminal()
     monkeypatch.setattr("tmuxbot.web.app.open_wall_terminal", open_terminal)
     with TestClient(app(tmp_path)).websocket_connect("/api/wall/ws?target=alpha:0") as websocket:
+        assert websocket.receive_json() == {"type": "window_size", "cols": 80, "rows": 24}
         assert websocket.receive_bytes() == b"ready"
         websocket.send_bytes(b"hello")
         websocket.send_json({"type": "resize", "rows": 40, "cols": 120})
