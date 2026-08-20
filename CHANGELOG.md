@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 attach PTY 传输原始终端字节；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
+
 ### Documentation
 
 - 更新 GitHub 仓库入口、配置与运维说明：新增 Telegram/飞书 credential、精确 route、XDG 路径、systemd、Pi SSH-only、附件/Web 安全的集中配置文档；同步修正生命周期审计、Admin service 名称、route 示例和架构图。

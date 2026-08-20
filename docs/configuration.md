@@ -223,15 +223,11 @@ TMUXBOT_ATTACHMENT_ALLOWED_ROOTS=/srv/reports:/home/you/shared
 
 TMUXBOT_WEB_HOST=127.0.0.1
 TMUXBOT_WEB_PORT=8765
-TMUXBOT_WEB_SECURE_COOKIE=false
-# 反向代理 HTTPS 后：
-# TMUXBOT_WEB_PUBLIC_ORIGIN=https://tmuxbot.example.com
-# TMUXBOT_WEB_SECURE_COOKIE=true
 ```
 
 AI 回复里的本地文件仅允许从 route cwd、attachment 目录、系统临时目录和显式 trusted roots 上传。目录、设备、socket、不存在文件和白名单外路径都会拒绝。
 
-WebUI 默认只能监听 localhost。远程访问必须使用带 TLS 和身份认证的反向代理，不要直接开放 `8765`。
+Terminal Wall 默认只能监听 localhost，且不内置认证。远程访问由部署者自己的 TLS、反向代理和访问控制负责；不要直接开放 `8765`，它可完整操作当前 Unix 用户的 tmux。
 
 ## 10. 常用检查
 

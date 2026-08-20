@@ -166,18 +166,14 @@ tmuxbot install-service --now
 journalctl --user -u tmuxbot -f
 ```
 
-**不要把 Web 端口直接暴露到公网。** 远程访问应通过带 TLS 和访问控制的反向代理,
-并设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 与准确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
-`deploy/systemd/tmuxbot-web.service` 提供独立 unit 示例;其中凭证只从 `.env` 读取,
-不会出现在 `ExecStart` 命令行。
+Terminal Wall 默认监听 `127.0.0.1:8765`。它不提供登录或访问控制；如需远程访问，使用老板已有的访问控制/反向代理体系。直接暴露端口等于直接暴露当前 Unix 用户的 tmux，别让终端墙变成许愿池。
 
 ---
 
 ## 当前能力
 
-- **零配置中文 WebUI**:`uv tool install 'tmuxbot[full]'` 后运行 `tmuxbot serve --open`；可验证项目目录、显示 Git 与已有 pane、扫描/探测 tmux、Claude Code、Codex、Pi，登记项目并启动受管 CLI。已有 pane 可先以只读模式直接查看，手动接管后才允许输入；模型候选仍由当前 CLI 的原生 `/model` picker 提供。
-- **原生 Web TUI**:xterm.js 直接 attach 已登记 tmux target，默认只观察；显式接管后才允许键盘输入，断开浏览器不会终止 tmux 会话
-- **Web 通道向导**:可为受管会话配置 Telegram 或飞书，密钥只写入本机 `0600` 配置，不通过 API 回显
+- **本机 tmux Terminal Wall**：`tmuxbot serve --open` 展示宿主机全部 tmux window；xterm.js 直接 attach 真实 window，保留原生 pane 排列、颜色、快捷键、粘贴和 resize。卡片可任意拖动、八向缩放、置顶、横/纵/网格排列与全屏；浏览器布局存入 localStorage。
+- **Web 纯终端层**：WebUI 不管理项目、Provider、IM 通道或 TeamRun，也不解析 IM `/` 命令；Telegram/飞书 bridge 与其 route、投递、回推和 TeamRun 能力继续独立运行。
 - **TeamRun 多 LLM**:确定性 Coordinator / Implementer / Reviewer 三角色协作，唯一写租约、DAG、mailbox、Artifact、重试、独立验收和恢复；Implementer 交付证据后 Reviewer 自动收到只读审查包
 - **双前端**:Telegram(DM / 普通群 / supergroup forum topic)+ 飞书(群聊 / 私聊,Card JSON 2.0 收发/编辑；操作统一使用 `/` 命令)
 - **中文控制面板**:`/menu` 主动打开轻量面板（`/panel`、`/settings` 兼容保留），可切换群聊 @ 策略、执行 `/status` `/screen` `/new` `/compact` `/resume` `/esc` `/cc`。模型候选由当前 tmux CLI 的原生 `/model` 选择器实时提供，面板会显示已读取的当前模型。受管 Codex 会话在新建与重启恢复时读取 `~/.codex/config.toml` 的 `model`；可在当前会话中用原生 `/model` 临时切换，下一次 bot 重启则应用最新配置。面板也提供带二次确认的“重启 CLI”，Codex/Claude 都会恢复原 provider 会话与 transcript，保留上下文；Claude 模型卡额外提供“仅本会话”，避免修改未来新会话默认模型

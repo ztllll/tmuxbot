@@ -89,6 +89,14 @@ from tmuxbot.web.terminal import (
     TerminalTicket,
     parse_resize_message,
 )
+from tmuxbot.web.wall import (
+    TERMINAL_MAX_FRAME_BYTES as WALL_MAX_FRAME_BYTES,
+    TerminalConnection as WallTerminalConnection,
+    TmuxWall,
+    TmuxWallError,
+    open_terminal as open_wall_terminal,
+    parse_resize_message as parse_wall_resize,
+)
 
 
 COOKIE_NAME = "tmuxbot_session"
@@ -1039,6 +1047,81 @@ def create_app(
             "providers": provider_items,
             "binding_count": len(bindings),
         }
+
+    @app.get("/api/tmux/windows")
+    def tmux_windows() -> list[dict[str, object]]:
+        try:
+            windows = TmuxWall().list_windows()
+        except TmuxWallError as exc:
+            raise HTTPException(status_code=503, detail="tmux inventory unavailable") from exc
+        return [
+            {
+                "target": window.target,
+                "session_name": window.session_name,
+                "window_index": window.window_index,
+                "pane_count": window.pane_count,
+                "commands": list(window.commands),
+                "cwd_summary": window.cwd_summary,
+            }
+            for window in windows
+        ]
+
+    async def wall_output_loop(websocket: WebSocket, terminal: WallTerminalConnection) -> None:
+        while data := await terminal.read(WALL_MAX_FRAME_BYTES):
+            await websocket.send_bytes(data)
+
+    async def wall_input_loop(websocket: WebSocket, terminal: WallTerminalConnection) -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is not None:
+                if len(data) > WALL_MAX_FRAME_BYTES:
+                    await websocket.close(code=1009)
+                    return
+                await terminal.write(data)
+                continue
+            text = message.get("text")
+            if text is None or len(text.encode("utf-8")) > WALL_MAX_FRAME_BYTES:
+                await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
+                continue
+            resize = parse_wall_resize(text)
+            if resize is None:
+                await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
+                continue
+            await terminal.resize(*resize)
+
+    @app.websocket("/api/wall/ws")
+    async def wall_terminal(websocket: WebSocket, target: str = Query(...)) -> None:
+        try:
+            exists = TmuxWall().has_window(target)
+        except TmuxWallError:
+            await websocket.accept()
+            await websocket.close(code=1013)
+            return
+        if not exists:
+            await websocket.accept()
+            await websocket.close(code=4404)
+            return
+        try:
+            terminal = await open_wall_terminal(target)
+        except Exception:
+            await websocket.accept()
+            await websocket.close(code=1011)
+            return
+        await websocket.accept()
+        output = asyncio.create_task(wall_output_loop(websocket, terminal))
+        input_ = asyncio.create_task(wall_input_loop(websocket, terminal))
+        try:
+            done, pending = await asyncio.wait({output, input_}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in done | pending:
+                with suppress(asyncio.CancelledError, WebSocketDisconnect):
+                    await task
+        finally:
+            await terminal.close()
 
     @app.get("/api/tmux/sessions")
     def tmux_sessions(

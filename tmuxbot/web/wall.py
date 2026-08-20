@@ -1,0 +1,163 @@
+"""Local tmux window inventory and direct browser terminal relay."""
+from __future__ import annotations
+
+import asyncio
+import errno
+import fcntl
+import os
+import pty
+import re
+import struct
+import subprocess
+import termios
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Protocol
+
+from tmuxbot.tmux import tmux_error_is_no_server
+
+
+TERMINAL_MAX_FRAME_BYTES = 65_536
+TERMINAL_MAX_COLS = 500
+TERMINAL_MAX_ROWS = 300
+_TARGET = re.compile(r"^[^:\x00]+:\d+$")
+
+
+class TmuxWallError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class TmuxWindow:
+    target: str
+    session_name: str
+    window_index: int
+    pane_count: int
+    commands: tuple[str, ...]
+    cwd_summary: str
+
+
+class TerminalConnection(Protocol):
+    async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes: ...
+    async def write(self, data: bytes) -> None: ...
+    async def resize(self, rows: int, cols: int) -> None: ...
+    async def close(self) -> None: ...
+
+
+class TmuxWall:
+    def __init__(self, *, timeout_seconds: float = 3.0) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    def list_windows(self) -> list[TmuxWindow]:
+        output = self._run(["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{window_index}\t#{pane_current_command}\t#{pane_current_path}"], allow_no_server=True)
+        if output is None or not output:
+            return []
+        groups: dict[tuple[str, int], list[tuple[str, str]]] = {}
+        for line in output.decode(errors="replace").splitlines():
+            fields = line.split("\t")
+            if len(fields) != 4 or not fields[1].isdigit() or not fields[0]:
+                raise TmuxWallError("tmux inventory output was malformed")
+            groups.setdefault((fields[0], int(fields[1])), []).append((fields[2], fields[3]))
+        return [
+            TmuxWindow(
+                target=f"{session}:{index}",
+                session_name=session,
+                window_index=index,
+                pane_count=len(panes),
+                commands=tuple(sorted({command for command, _ in panes if command})),
+                cwd_summary=_summary(sorted({cwd for _, cwd in panes if cwd})),
+            )
+            for (session, index), panes in sorted(groups.items())
+        ]
+
+    def has_window(self, target: str) -> bool:
+        return _TARGET.fullmatch(target) is not None and any(item.target == target for item in self.list_windows())
+
+    def _run(self, argv: list[str], *, allow_no_server: bool = False) -> bytes | None:
+        try:
+            result = subprocess.run(argv, capture_output=True, check=False, timeout=self.timeout_seconds)
+        except FileNotFoundError as exc:
+            raise TmuxWallError("tmux executable is unavailable") from exc
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise TmuxWallError("tmux inventory is unavailable") from exc
+        if result.returncode:
+            stderr = result.stderr.rstrip(b"\n")
+            if allow_no_server and tmux_error_is_no_server(stderr):
+                return None
+            raise TmuxWallError("tmux inventory is unavailable")
+        return result.stdout
+
+
+def _summary(values: list[str]) -> str:
+    return "" if not values else values[0] if len(values) == 1 else f"{values[0]} +{len(values) - 1}"
+
+
+class PtyTerminal:
+    def __init__(self, master_fd: int, process: subprocess.Popen[bytes]) -> None:
+        self.master_fd, self.process, self.closed = master_fd, process, False
+
+    @classmethod
+    def open(cls, target: str) -> "PtyTerminal":
+        master_fd, slave_fd = pty.openpty()
+        try:
+            env = os.environ.copy()
+            env["TERM"] = "xterm-256color"
+            env.pop("TMUX", None)
+            env.pop("TMUX_PANE", None)
+            process = subprocess.Popen(["tmux", "attach-session", "-t", target], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True, shell=False, env=env)
+        except BaseException:
+            os.close(master_fd); os.close(slave_fd)
+            raise
+        os.close(slave_fd)
+        return cls(master_fd, process)
+
+    async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes:
+        try:
+            return await asyncio.to_thread(os.read, self.master_fd, max_bytes)
+        except OSError as exc:
+            if exc.errno == errno.EIO:
+                return b""
+            raise
+
+    async def write(self, data: bytes) -> None:
+        await asyncio.to_thread(os.write, self.master_fd, data)
+
+    async def resize(self, rows: int, cols: int) -> None:
+        await asyncio.to_thread(fcntl.ioctl, self.master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            os.close(self.master_fd)
+        except OSError:
+            pass
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                await asyncio.to_thread(self.process.wait, timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                await asyncio.to_thread(self.process.wait, timeout=2)
+
+
+TerminalFactory = Callable[[str], Awaitable[TerminalConnection]]
+
+
+async def open_terminal(target: str) -> TerminalConnection:
+    return await asyncio.to_thread(PtyTerminal.open, target)
+
+
+def parse_resize_message(raw: str) -> tuple[int, int] | None:
+    import json
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("type") != "resize":
+        return None
+    rows, cols = value.get("rows"), value.get("cols")
+    if not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool) or not 1 <= rows <= TERMINAL_MAX_ROWS or not 1 <= cols <= TERMINAL_MAX_COLS:
+        return None
+    return rows, cols

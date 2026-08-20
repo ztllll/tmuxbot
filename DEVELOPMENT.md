@@ -29,11 +29,11 @@ tmuxbot/                       ← 仓库根
 │   ├── __init__.py
 │   ├── __main__.py            ← CLI 与 bridge 装配入口
 │   ├── core/                  ← provider/channel 事件、消息、回复与 Runtime V2 契约
-│   ├── control_plane/         ← SQLite migration/repository + tmux inventory
+│   ├── control_plane/         ← SQLite migration/repository（IM TeamRun 等后台能力）
 │   ├── providers/             ← CLI discovery、能力与统一启动参数
 │   ├── runtime/               ← 串行 tmux runtime/input queue
-│   ├── teamrun/               ← DAG、worker、worktree、mailbox、artifact、scheduler
-│   ├── web/                   ← FastAPI、认证、setup、terminal 与静态 WebUI
+│   ├── teamrun/               ← DAG、worker、worktree、mailbox、artifact、scheduler（IM/后台保留）
+│   ├── web/                   ← FastAPI Terminal Wall、tmux window inventory 与静态 WebUI
 │   ├── channels/              ← 通道传输契约与 Telegram/飞书适配器
 │   ├── hooks/                 ← Claude hook 安装与本地 spool
 │   ├── state.py               ← Binding + State + fire()
@@ -286,46 +286,11 @@ uv run tmuxbot web
 # 等价: uv run python -m tmuxbot.web
 ```
 
-启动流程为 `load_config()` → `WebSettings.from_env()` → SQLite migration →
-FastAPI/uvicorn; 它不会创建 Telegram polling 或飞书 WebSocket。当前进程提供
-中文 WebUI、认证后的项目/provider/managed-session/channel/TeamRun API、只读 tmux
-inventory，以及显式授权后的终端接管。默认只监听 `127.0.0.1:8765`。
+启动流程为 `WebSettings.from_env()` → 控制面 SQLite migration → FastAPI/uvicorn；它不会读取 route、credential、Telegram polling 或飞书 WebSocket。SQLite 仅为旧 API 兼容而打开，Terminal Wall 页面不读取项目、Provider、通道或 TeamRun 数据；它只提供宿主机 tmux window inventory 和原始终端 attach，默认监听 `127.0.0.1:8765`。
 
-推荐统一运行 `tmuxbot serve --open`：WebUI 常驻并监督独立 bridge child；缺少 IM
-配置时 WebUI 仍可完成首次设置。纯 `tmuxbot web` 适合开发或拆分部署。
+推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片 attach 一个真实 `session:window`，浏览器输入和 resize 直接写入 attach PTY；卡片内保留该 window 原生 pane 布局。
 
-首次启动的底层 API 顺序如下（浏览器 WebUI 会自动完成同一流程）:
-
-1. 保持 listener 为 loopback,不要启动反向代理。
-2. `tmuxbot serve --open` 会生成短时一次性本机 setup grant；固定部署也可运行
-   `openssl rand -hex 32`，把输出写入 `.env` 的 `TMUXBOT_WEB_SETUP_TOKEN`。
-3. 启动 Web 进程。若不用浏览器，可先 GET status 取得 bootstrap CSRF cookie/token,
-   再携带 `X-CSRF-Token` 与 `X-Setup-Token` POST setup:
-
-```bash
-curl -sS -c /tmp/tmuxbot-web.cookies \
-  http://127.0.0.1:8765/api/auth/status
-export CSRF_TOKEN='<csrf_token from the previous response>'
-export SETUP_TOKEN='<TMUXBOT_WEB_SETUP_TOKEN from the local .env>'
-curl -sS -b /tmp/tmuxbot-web.cookies -c /tmp/tmuxbot-web.cookies \
-  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-  -H "X-Setup-Token: ${SETUP_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  --data '{"password":"replace-with-a-strong-password"}' \
-  http://127.0.0.1:8765/api/auth/setup
-```
-
-4. setup 成功后删除 `TMUXBOT_WEB_SETUP_TOKEN`,重启 Web 进程。
-5. 最后设置 secure cookie/public origin 并启用 TLS 反向代理。
-
-浏览器或未来 UI 也必须通过 header 提交一次性 setup secret。直接 peer 必须为
-loopback,且 setup secret 必须常量时间匹配;`X-Forwarded-For` 不参与授权。status
-返回的 bootstrap CSRF 不是授权,响应不会返回 setup secret。
-
-**禁止将该端口直接暴露到公网。** 需要远程访问时,使用 TLS 反向代理,
-设置 `TMUXBOT_WEB_SECURE_COOKIE=true` 和精确的 `TMUXBOT_WEB_PUBLIC_ORIGIN`。
-`deploy/systemd/tmuxbot-web.service` 通过 `EnvironmentFile` 读取配置与密钥,
-不在 `ExecStart` 中传递密码或 secret。根据实际安装位置修改 unit 内三处路径。
+Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。一个 session 同时以不同尺寸 attach 时，最终 window 尺寸遵循 tmux 自身的 `window-size` 策略。
 
 ### 开发启动 (tmux session)
 
