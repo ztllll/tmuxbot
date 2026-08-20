@@ -60,7 +60,9 @@ def test_control_wall_forwards_raw_input_and_resizes_active_terminal(monkeypatch
             await asyncio.sleep(1)
             return b""
         async def write(self, data): events.append(("write", data))
-        async def resize(self, rows, cols): events.append(("resize", rows, cols))
+        async def resize(self, rows, cols):
+            events.append(("resize", rows, cols))
+            self.snapshot = "resized-snapshot"
         async def close(self): events.append(("close",))
     async def open_terminal(_target): return Terminal()
     monkeypatch.setattr("tmuxbot.web.app.open_control_terminal", open_terminal)
@@ -72,6 +74,7 @@ def test_control_wall_forwards_raw_input_and_resizes_active_terminal(monkeypatch
         for _ in range(30):
             if events: break
             asyncio.run(asyncio.sleep(.001))
+        assert websocket.receive_json() == {"type": "snapshot", "data": "resized-snapshot", "cols": 120, "rows": 40}
     assert ("write", b"hello") in events
     assert ("resize", 40, 120) in events
     assert ("close",) in events

@@ -1102,7 +1102,12 @@ def create_app(
             # Terminal Wall is intentionally exclusive with SSH/Tabby: the
             # active browser is the current terminal and owns the pane geometry.
             await terminal.resize(rows, cols)
-
+            # Control Mode accepts resize asynchronously. Give tmux one redraw
+            # turn, then replace xterm's old frame with a fresh pane snapshot.
+            await asyncio.sleep(0.12)
+            await websocket.send_json(
+                {"type": "snapshot", "data": terminal.snapshot, "cols": cols, "rows": rows}
+            )
     @app.websocket("/api/wall/ws")
     async def wall_terminal(websocket: WebSocket, target: str = Query(...)) -> None:
         try:
