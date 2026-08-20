@@ -52,9 +52,10 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         raise ConfigValidationError(
             ["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"]
         )
-    tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin").strip()
-    if not tmux_session:
-        raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
+    configured_tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "").strip()
+    if configured_tmux_session and not configured_tmux_session.startswith("pi-"):
+        raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must start with 'pi-' for Pi admin routes"])
+    tmux_session = configured_tmux_session or "pi-tmuxbot-admin"
     configured_cwd = os.getenv("TMUXBOT_ADMIN_CWD", "").strip()
     cwd = (
         Path(configured_cwd).expanduser().resolve()

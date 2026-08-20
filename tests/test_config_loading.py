@@ -88,7 +88,7 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
             "chat_id": "oc_group",
             "thread_id": "omt_topic",
             "thread_root_message_id": "om_root_old",
-            "tmux_session": "feishu-topic",
+            "tmux_session": "pi-feishu-topic",
             "cwd": "/tmp/feishu-topic",
             "backend": "pi",
             "bot_token_env": "FEISHU",
@@ -111,14 +111,14 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
     saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"][0]
     assert saved["thread_root_message_id"] == "om_root_new"
     assert saved["thread_id"] == "omt_topic"
-    assert saved["tmux_session"] == "feishu-topic"
+    assert saved["tmux_session"] == "pi-feishu-topic"
     assert bindings_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi(monkeypatch, tmp_path):
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
-    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "pi-tmuxbot-admin")
     monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
     env_file = tmp_path / "runtime.env"
     env_file.write_text(
@@ -126,7 +126,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi
             (
                 "BOSS_USER_ID=123",
                 "TMUXBOT_ADMIN_ENABLED=1",
-                "TMUXBOT_ADMIN_TMUX=tmuxbot-admin",
+                "TMUXBOT_ADMIN_TMUX=pi-tmuxbot-admin",
                 "TMUXBOT_ADMIN_CLI=pi",
             )
         )
@@ -147,7 +147,7 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi
     admin = next(binding for binding in S.bindings if binding.admin)
     assert admin.chat_id == 123
     assert admin.thread_id is None
-    assert admin.tmux_target == "tmuxbot-admin:0.0"
+    assert admin.tmux_target == "pi-tmuxbot-admin:0.0"
     assert admin.cwd == home / ".local/share/tmuxbot/admin"
     assert admin.cwd.is_dir()
     assert admin.cwd.stat().st_mode & 0o777 == 0o700
