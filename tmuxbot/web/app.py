@@ -89,13 +89,11 @@ from tmuxbot.web.terminal import (
     TerminalTicket,
     parse_resize_message,
 )
+from tmuxbot.web.control_mode import ControlModeTerminal, open_control_terminal
 from tmuxbot.web.wall import (
     TERMINAL_MAX_FRAME_BYTES as WALL_MAX_FRAME_BYTES,
-    TerminalConnection as WallTerminalConnection,
     TmuxWall,
     TmuxWallError,
-    open_terminal as open_wall_terminal,
-    parse_resize_message as parse_wall_resize,
 )
 
 
@@ -1067,28 +1065,14 @@ def create_app(
         ]
 
     async def wall_output_loop(
-        websocket: WebSocket, terminal: WallTerminalConnection, _target: str
+        websocket: WebSocket, terminal: ControlModeTerminal, _target: str
     ) -> None:
         while data := await terminal.read(WALL_MAX_FRAME_BYTES):
             await websocket.send_bytes(data)
 
-    async def wall_size_loop(
-        websocket: WebSocket, target: str, last_size: tuple[int, int]
+    async def wall_input_loop(
+        websocket: WebSocket, terminal: ControlModeTerminal, target: str
     ) -> None:
-        wall = TmuxWall()
-        while True:
-            try:
-                size = await asyncio.to_thread(wall.window_size, target)
-            except TmuxWallError:
-                return
-            if size != last_size:
-                await websocket.send_json(
-                    {"type": "window_size", "cols": size[0], "rows": size[1]}
-                )
-                last_size = size
-            await asyncio.sleep(0.5)
-
-    async def wall_input_loop(websocket: WebSocket, terminal: WallTerminalConnection) -> None:
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
@@ -1104,15 +1088,22 @@ def create_app(
             if text is None or len(text.encode("utf-8")) > WALL_MAX_FRAME_BYTES:
                 await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
-            resize = parse_wall_resize(text)
-            if resize is None:
+            control: dict[str, object] = {}
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    control = parsed
+                rows, cols = control.get("rows"), control.get("cols")
+            except ValueError:
+                rows = cols = None
+            if control.get("type") != "resize" or not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool):
                 await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
-            kind, rows, cols, apply_window = resize
-            if kind == "release":
-                await terminal.release_window_size()
-            else:
-                await terminal.resize(rows, cols, apply_window=apply_window)
+            # tmux windows own one shared pane layout.  A Control Mode client
+            # may report a per-client geometry, but accepting arbitrary browser
+            # resizes still causes tmux to recalculate that shared layout. Keep
+            # this card a non-invasive mirror; the browser scales its own grid.
+            del rows, cols
 
     @app.websocket("/api/wall/ws")
     async def wall_terminal(websocket: WebSocket, target: str = Query(...)) -> None:
@@ -1127,30 +1118,28 @@ def create_app(
             await websocket.close(code=4404)
             return
         try:
-            terminal = await open_wall_terminal(target)
+            terminal = await open_control_terminal(target)
         except Exception:
             await websocket.accept()
             await websocket.close(code=1011)
             return
         try:
-            initial_size = await asyncio.to_thread(TmuxWall().window_size, target)
+            snapshot = terminal.snapshot
+            cols, rows = await asyncio.to_thread(TmuxWall().window_size, target)
         except TmuxWallError:
             await terminal.close()
             await websocket.accept()
             await websocket.close(code=1013)
             return
         await websocket.accept()
-        # The xterm grid must exist at the real tmux dimensions before it sees
-        # the initial full-screen ANSI repaint. Otherwise xterm wraps the first
-        # frame at its default 80 columns and leaves a visually stale canvas.
         await websocket.send_json(
-            {"type": "window_size", "cols": initial_size[0], "rows": initial_size[1]}
+            {"type": "snapshot", "data": snapshot, "cols": cols, "rows": rows}
         )
+        pump = asyncio.create_task(terminal.pump())
         output = asyncio.create_task(wall_output_loop(websocket, terminal, target))
-        input_ = asyncio.create_task(wall_input_loop(websocket, terminal))
-        size = asyncio.create_task(wall_size_loop(websocket, target, initial_size))
+        input_ = asyncio.create_task(wall_input_loop(websocket, terminal, target))
         try:
-            done, pending = await asyncio.wait({output, input_, size}, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait({pump, output, input_}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
             for task in done | pending:
