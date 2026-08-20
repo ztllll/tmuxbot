@@ -11,19 +11,19 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const [state, setState] = useState(unavailable ? "目标已失效" : "正在连接");
+  const [fontSize, setFontSize] = useState(15);
+  const fontSizeRef = useRef(15);
 
   function resize() {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    // Mirror the shared tmux grid at a larger/smaller font; never resize tmux
-    // from a free-form browser card because SSH/Tabby shares its pane layout.
-    const surface = host.current;
-    if (!surface) return;
-    const cols = terminal.cols || 80, rows = terminal.rows || 24;
-    const cellWidth = surface.clientWidth / cols, cellHeight = surface.clientHeight / rows;
-    terminal.options.fontSize = Math.max(8, Math.min(48, Math.floor(Math.min(cellWidth / 0.61, cellHeight / 1.2) * 10) / 10));
+    // Readability wins: card geometry never shrinks the shared tmux grid into
+    // illegible text. Wider content gets native xterm horizontal scrolling.
+    terminal.options.fontSize = fontSizeRef.current;
     terminal.refresh(0, terminal.rows - 1);
   }
+
+  useEffect(() => { fontSizeRef.current = fontSize; resize(); }, [fontSize]);
 
   useEffect(() => {
     if (unavailable || !host.current) return;
@@ -67,7 +67,7 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
   }
 
   return <article className={`wall-card ${unavailable ? "is-unavailable" : ""}`} style={{ left: card.x, top: card.y, width: card.width, height: card.height, zIndex: card.z }} onPointerDown={onFocus}>
-    <header onPointerDown={(event) => pointer(event, "move")}><div><strong>{card.target}</strong><small>{state}</small></div><button aria-label={`关闭 ${card.target}`} onPointerDown={(event) => event.stopPropagation()} onClick={onClose}>×</button></header>
+    <header onPointerDown={(event) => pointer(event, "move")}><div><strong>{card.target}</strong><small>{state}</small></div><div className="wall-card-actions"><button aria-label={`${card.target} 缩小字号`} onPointerDown={(event) => event.stopPropagation()} onClick={() => setFontSize((value) => Math.max(11, value - 1))}>A−</button><button aria-label={`${card.target} 放大字号`} onPointerDown={(event) => event.stopPropagation()} onClick={() => setFontSize((value) => Math.min(28, value + 1))}>A+</button><button aria-label={`关闭 ${card.target}`} onPointerDown={(event) => event.stopPropagation()} onClick={onClose}>×</button></div></header>
     <div className="wall-terminal" ref={host}>{unavailable && <p>该 tmux window 已不存在。</p>}</div>
     {["n", "e", "s", "w", "ne", "se", "sw", "nw"].map((direction) => <i key={direction} className={`resize-handle ${direction}`} data-direction={direction} onPointerDown={(event) => pointer(event, "resize")} />)}
   </article>;
