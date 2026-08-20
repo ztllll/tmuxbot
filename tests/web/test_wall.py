@@ -33,8 +33,11 @@ def test_pty_resize_updates_attach_tty_and_real_tmux_window(monkeypatch):
 
     asyncio.run(terminal.resize(40, 120))
 
-    assert calls[0][0] == "ioctl"
-    assert calls[1][1] == ["tmux", "resize-window", "-t", "alpha:0", "-x", "120", "-y", "40"]
+    assert [kind for kind, *_ in calls] == ["ioctl"]
+
+    asyncio.run(terminal.resize(40, 120, apply_window=True))
+
+    assert calls[2][1] == ["tmux", "resize-window", "-t", "alpha:0", "-x", "120", "-y", "40"]
 
 
 def test_pty_close_restores_inherited_window_size_policy(monkeypatch):
@@ -47,6 +50,20 @@ def test_pty_close_restores_inherited_window_size_policy(monkeypatch):
         lambda argv, **kwargs: commands.append(argv) or SimpleNamespace(returncode=0),
     )
     terminal = PtyTerminal(99, SimpleNamespace(poll=lambda: 0), "alpha:0")
+
+    asyncio.run(terminal.close())
+
+    assert commands == []
+
+
+def test_pty_close_restores_size_policy_only_after_size_takeover(monkeypatch):
+    from tmuxbot.web.wall import PtyTerminal
+
+    commands = []
+    monkeypatch.setattr("tmuxbot.web.wall.os.close", lambda _fd: None)
+    monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", lambda argv, **kwargs: commands.append(argv) or SimpleNamespace(returncode=0))
+    terminal = PtyTerminal(99, SimpleNamespace(poll=lambda: 0), "alpha:0")
+    terminal.applied_window_size = True
 
     asyncio.run(terminal.close())
 
@@ -73,7 +90,7 @@ def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
             await asyncio.sleep(1)
             return b""
         async def write(self, data): opened.append(("write", data))
-        async def resize(self, rows, cols): opened.append(("resize", rows, cols))
+        async def resize(self, rows, cols, *, apply_window=False): opened.append(("resize", rows, cols, apply_window))
         async def close(self): opened.append(("close",))
     async def open_terminal(_target): return Terminal()
     monkeypatch.setattr("tmuxbot.web.app.open_wall_terminal", open_terminal)
@@ -85,5 +102,5 @@ def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
             if len(opened) >= 2: break
             asyncio.run(asyncio.sleep(.001))
     assert ("write", b"hello") in opened
-    assert ("resize", 40, 120) in opened
+    assert ("resize", 40, 120, False) in opened
     assert ("close",) in opened

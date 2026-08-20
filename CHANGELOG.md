@@ -8,7 +8,7 @@
 
 ### Changed
 
-- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 attach PTY 传输原始终端字节；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。卡片 resize 同步更新 attach PTY 并显式 `resize-window`，不再被其他 attach/SSH client 的 tmux 尺寸仲裁吞掉；关闭卡片后恢复原 tmux 自动尺寸策略。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
+- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 attach PTY 传输原始终端字节；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。卡片默认镜像，不抢 SSH/Tabby 的共享 tmux layout；用户显式“接管尺寸”后才同步更新 attach PTY 并 `resize-window`，此时作为该 window 唯一尺寸权威，关闭后恢复原 tmux 自动尺寸策略。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
 
 ### Documentation
 

@@ -40,7 +40,7 @@ class TmuxWindow:
 class TerminalConnection(Protocol):
     async def read(self, max_bytes: int = TERMINAL_MAX_FRAME_BYTES) -> bytes: ...
     async def write(self, data: bytes) -> None: ...
-    async def resize(self, rows: int, cols: int) -> None: ...
+    async def resize(self, rows: int, cols: int, *, apply_window: bool = False) -> None: ...
     async def close(self) -> None: ...
 
 
@@ -102,6 +102,7 @@ class PtyTerminal:
             target,
             False,
         )
+        self.applied_window_size = False
 
     @classmethod
     def open(cls, target: str) -> "PtyTerminal":
@@ -129,13 +130,13 @@ class PtyTerminal:
     async def write(self, data: bytes) -> None:
         await asyncio.to_thread(os.write, self.master_fd, data)
 
-    async def resize(self, rows: int, cols: int) -> None:
-        """Synchronize both the attach TTY and the real tmux window layout.
+    async def resize(self, rows: int, cols: int, *, apply_window: bool = False) -> None:
+        """Resize the browser attach; optionally make it the shared window size.
 
-        ``TIOCSWINSZ`` alone updates the browser attach PTY, but tmux may retain
-        another attached client's dimensions under its normal ``window-size``
-        arbitration. Explicitly resizing the verified target gives Terminal Wall
-        the same deterministic resize behaviour as a native terminal client.
+        A tmux window has exactly one pane layout. The default mirror mode only
+        resizes this attach PTY so it cannot change an SSH/Tabby client's layout.
+        Explicit takeover uses ``resize-window`` and therefore intentionally
+        becomes the single size authority for every client on that window.
         """
         await asyncio.to_thread(
             fcntl.ioctl,
@@ -143,7 +144,9 @@ class PtyTerminal:
             termios.TIOCSWINSZ,
             struct.pack("HHHH", rows, cols, 0, 0),
         )
-        await asyncio.to_thread(self._resize_window, rows, cols)
+        if apply_window:
+            await asyncio.to_thread(self._resize_window, rows, cols)
+            self.applied_window_size = True
 
     def _resize_window(self, rows: int, cols: int) -> None:
         try:
@@ -173,18 +176,8 @@ class PtyTerminal:
             os.close(self.master_fd)
         except OSError:
             pass
-        # ``resize-window`` makes the per-window policy manual. Restore the
-        # inherited automatic policy once Terminal Wall lets go of this window.
-        try:
-            await asyncio.to_thread(
-                subprocess.run,
-                ["tmux", "set-window-option", "-u", "-t", self.target, "window-size"],
-                capture_output=True,
-                check=False,
-                timeout=3,
-            )
-        except OSError:
-            pass
+        if self.applied_window_size:
+            await asyncio.to_thread(self._restore_auto_size)
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -192,6 +185,17 @@ class PtyTerminal:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 await asyncio.to_thread(self.process.wait, timeout=2)
+
+    def _restore_auto_size(self) -> None:
+        try:
+            subprocess.run(
+                ["tmux", "set-window-option", "-u", "-t", self.target, "window-size"],
+                capture_output=True,
+                check=False,
+                timeout=3,
+            )
+        except OSError:
+            pass
 
 
 TerminalFactory = Callable[[str], Awaitable[TerminalConnection]]
@@ -201,7 +205,7 @@ async def open_terminal(target: str) -> TerminalConnection:
     return await asyncio.to_thread(PtyTerminal.open, target)
 
 
-def parse_resize_message(raw: str) -> tuple[int, int] | None:
+def parse_resize_message(raw: str) -> tuple[int, int, bool] | None:
     import json
     try:
         value = json.loads(raw)
@@ -210,6 +214,7 @@ def parse_resize_message(raw: str) -> tuple[int, int] | None:
     if not isinstance(value, dict) or value.get("type") != "resize":
         return None
     rows, cols = value.get("rows"), value.get("cols")
-    if not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool) or not 1 <= rows <= TERMINAL_MAX_ROWS or not 1 <= cols <= TERMINAL_MAX_COLS:
+    apply_window = value.get("apply_window", False)
+    if not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool) or not isinstance(apply_window, bool) or not 1 <= rows <= TERMINAL_MAX_ROWS or not 1 <= cols <= TERMINAL_MAX_COLS:
         return None
-    return rows, cols
+    return rows, cols, apply_window

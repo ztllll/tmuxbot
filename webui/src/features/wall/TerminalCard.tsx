@@ -11,6 +11,7 @@ type Props = { card: TerminalLayout; unavailable: boolean; onFocus: () => void; 
 export default function TerminalCard({ card, unavailable, onFocus, onClose, onChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState(unavailable ? "目标已失效" : "正在连接");
+  const [ownsSize, setOwnsSize] = useState(false);
   const resizeTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (unavailable || !host.current) return;
@@ -24,7 +25,7 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
       fit.fit();
       if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current);
       resizeTimer.current = window.setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols }));
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols, apply_window: ownsSize }));
       }, 80);
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current);
@@ -33,7 +34,7 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
     ws.onclose = (event) => { if (!disposed) setState(event.code === 4404 ? "目标已失效" : "连接已断开"); };
     terminal.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data)); });
     return () => { disposed = true; observer.disconnect(); if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current); ws.close(); terminal.dispose(); };
-  }, [card.target, unavailable]);
+  }, [card.target, unavailable, ownsSize]);
 
   function pointer(event: React.PointerEvent, action: "move" | "resize") {
     event.preventDefault(); onFocus();
@@ -48,8 +49,13 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
     const end = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", end);
   }
+  function toggleSizeOwner() {
+    const next = !ownsSize;
+    setOwnsSize(next);
+    setState(next ? "尺寸接管 · 将影响 SSH/Tabby" : "镜像模式 · 不改变共享 tmux 尺寸");
+  }
   return <article className={`wall-card ${unavailable ? "is-unavailable" : ""}`} style={{ left: card.x, top: card.y, width: card.width, height: card.height, zIndex: card.z }} onPointerDown={onFocus}>
-    <header onPointerDown={(event) => pointer(event, "move")}><div><strong>{card.target}</strong><small>{state}</small></div><button aria-label={`关闭 ${card.target}`} onPointerDown={(event) => event.stopPropagation()} onClick={onClose}>×</button></header>
+    <header onPointerDown={(event) => pointer(event, "move")}><div><strong>{card.target}</strong><small>{state}</small></div><div className="wall-card-actions"><button className={ownsSize ? "is-owner" : ""} title="接管会改变同一 tmux window 的 SSH/Tabby 尺寸" onPointerDown={(event) => event.stopPropagation()} onClick={toggleSizeOwner}>{ownsSize ? "释放尺寸" : "接管尺寸"}</button><button aria-label={`关闭 ${card.target}`} onPointerDown={(event) => event.stopPropagation()} onClick={onClose}>×</button></div></header>
     <div className="wall-terminal" ref={host}>{unavailable && <p>该 tmux window 已不存在。</p>}</div>
     {["n", "e", "s", "w", "ne", "se", "sw", "nw"].map((direction) => <i key={direction} className={`resize-handle ${direction}`} data-direction={direction} onPointerDown={(event) => pointer(event, "resize")} />)}
   </article>;

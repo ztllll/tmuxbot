@@ -290,7 +290,7 @@ uv run tmuxbot web
 
 推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片 attach 一个真实 `session:window`，浏览器输入和 resize 直接写入 attach PTY；卡片内保留该 window 原生 pane 布局。
 
-Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。卡片 resize 会同时更新 attach PTY 并显式执行 `tmux resize-window`，避免其它 attach/SSH client 的 `window-size` 仲裁吞掉浏览器尺寸；卡片断开时撤销该 window 的手动尺寸策略，恢复 tmux 自身默认行为。
+Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。卡片默认是**镜像模式**：resize 只更新 attach PTY，不会改变 SSH/Tabby 正在使用的共享 tmux layout。每张卡片可显式“接管尺寸”，此时 resize 才执行 `tmux resize-window` 并成为该 window 唯一尺寸权威，会影响同一 window 的 SSH/Tabby；关闭接管卡片时撤销该 window 的手动尺寸策略，恢复 tmux 自身默认行为。
 
 ### 开发启动 (tmux session)
 
