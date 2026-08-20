@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -357,7 +358,10 @@ class FeishuFrontend(Frontend):
         self.bindings_file = bindings_file
         self.bot_token_env = bot_token_env
         self.project_base = project_base
-        self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
+        # app_id (cli_xxx) and bot open_id (ou_xxx) are different Feishu
+        # identities. Do not compare mentions against app_id: resolve the bot
+        # ID when the frontend starts if deployment did not configure it.
+        self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "")
         self.card_v2_enabled = _env_enabled(
             f"{bot_token_env}_CARD_V2",
             _env_enabled("TMUXBOT_FEISHU_CARD_V2", True),
@@ -384,6 +388,44 @@ class FeishuFrontend(Frontend):
         self._ws_client = None
         self._ws_module = None
         self.register_health()
+
+    def _resolve_bot_open_id_sync(self) -> str | None:
+        """Read this App's actual ``ou_`` identity from Feishu's Bot Info API."""
+        auth_request = urllib.request.Request(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            data=json.dumps(
+                {"app_id": self.app_id, "app_secret": self.app_secret}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(auth_request, timeout=20) as response:
+            auth = json.load(response)
+        token = str(auth.get("tenant_access_token") or "")
+        if auth.get("code") not in {None, 0} or not token:
+            return None
+        info_request = urllib.request.Request(
+            "https://open.feishu.cn/open-apis/bot/v3/info",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(info_request, timeout=20) as response:
+            payload = json.load(response)
+        bot = payload.get("bot") or payload.get("data") or {}
+        open_id = bot.get("open_id") if isinstance(bot, dict) else None
+        return str(open_id) if isinstance(open_id, str) and open_id.startswith("ou_") else None
+
+    async def _ensure_bot_open_id(self) -> None:
+        if self.bot_open_id:
+            return
+        try:
+            resolved = await asyncio.to_thread(self._resolve_bot_open_id_sync)
+        except Exception:
+            log.warning("feishu: unable to resolve bot open_id", exc_info=True)
+            return
+        if resolved:
+            self.bot_open_id = resolved
+            log.info("feishu bot open_id resolved · credential=%s", self.bot_token_env)
+        else:
+            log.warning("feishu: Bot Info API returned no bot open_id · credential=%s", self.bot_token_env)
 
     # ────────── binding 查找 ──────────
 
@@ -2216,6 +2258,7 @@ class FeishuFrontend(Frontend):
 
     async def start_polling(self) -> None:
         """建 WebSocket 长连接, 断开后退避重连, 直到 stop() 被调用"""
+        await self._ensure_bot_open_id()
         lark = self._lark
         self._main_loop = asyncio.get_running_loop()
 

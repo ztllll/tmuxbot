@@ -30,6 +30,29 @@ def _frontend() -> FeishuFrontend:
     return frontend
 
 
+def test_feishu_bot_open_id_is_resolved_from_bot_info_api(monkeypatch):
+    frontend = _frontend()
+    frontend.app_id = "cli_app"
+    frontend.app_secret = "secret"
+    frontend.bot_token_env = "FEISHU_CODEX"
+    frontend.bot_open_id = ""
+    responses = iter((
+        {"code": 0, "tenant_access_token": "token"},
+        {"code": 0, "bot": {"open_id": "ou_real_bot"}},
+    ))
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+
+    monkeypatch.setattr("tmuxbot.frontends.feishu.urllib.request.urlopen", lambda *_args, **_kwargs: Response())
+    monkeypatch.setattr("tmuxbot.frontends.feishu.json.load", lambda _response: next(responses))
+
+    asyncio.run(frontend._ensure_bot_open_id())
+
+    assert frontend.bot_open_id == "ou_real_bot"
+
+
 def test_topic_admin_request_requires_exact_thread_mention_and_creation_intent():
     frontend = _frontend()
     valid = SimpleNamespace(
