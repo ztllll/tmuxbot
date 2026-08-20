@@ -11,6 +11,7 @@ type Props = { card: TerminalLayout; unavailable: boolean; onFocus: () => void; 
 export default function TerminalCard({ card, unavailable, onFocus, onClose, onChange }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState(unavailable ? "目标已失效" : "正在连接");
+  const resizeTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (unavailable || !host.current) return;
     const terminal = new Terminal({ cursorBlink: true, convertEol: true, fontFamily: "IBM Plex Mono, SFMono-Regular, Consolas, monospace", fontSize: 14, theme: terminalTheme });
@@ -19,13 +20,19 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${scheme}//${location.host}/api/wall/ws?target=${encodeURIComponent(card.target)}`);
     ws.binaryType = "arraybuffer";
-    const resize = () => { fit.fit(); if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols })); };
+    const resize = () => {
+      fit.fit();
+      if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current);
+      resizeTimer.current = window.setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols }));
+      }, 80);
+    };
     const observer = new ResizeObserver(resize); observer.observe(host.current);
     ws.onopen = () => { if (!disposed) { setState("已连接"); resize(); terminal.focus(); } };
     ws.onmessage = (event) => { if (event.data instanceof ArrayBuffer) terminal.write(new Uint8Array(event.data)); };
     ws.onclose = (event) => { if (!disposed) setState(event.code === 4404 ? "目标已失效" : "连接已断开"); };
     terminal.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data)); });
-    return () => { disposed = true; observer.disconnect(); ws.close(); terminal.dispose(); };
+    return () => { disposed = true; observer.disconnect(); if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current); ws.close(); terminal.dispose(); };
   }, [card.target, unavailable]);
 
   function pointer(event: React.PointerEvent, action: "move" | "resize") {
