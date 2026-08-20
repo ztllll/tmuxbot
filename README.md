@@ -157,7 +157,7 @@ provider 进程树。它不会按空闲时间退出 Claude/Codex/Pi，不会重�
 tmuxbot serve --open
 ```
 
-默认监听 `127.0.0.1:8765`。`tmuxbot web` 仍可只启动 Web；`tmuxbot bridge` 仍保留严格配置检查。配置、数据和状态默认使用 XDG 目录：`~/.config/tmuxbot`、`~/.local/share/tmuxbot`、`~/.local/state/tmuxbot`。
+默认监听 `127.0.0.1:13142`。`tmuxbot web` 仍可只启动 Web；`tmuxbot bridge` 仍保留严格配置检查。配置、数据和状态默认使用 XDG 目录：`~/.config/tmuxbot`、`~/.local/share/tmuxbot`、`~/.local/state/tmuxbot`。
 
 需要常驻时：
 
@@ -166,7 +166,7 @@ tmuxbot install-service --now
 journalctl --user -u tmuxbot -f
 ```
 
-Terminal Wall 默认监听 `127.0.0.1:8765`。它不提供登录或访问控制；如需远程访问，使用老板已有的访问控制/反向代理体系。直接暴露端口等于直接暴露当前 Unix 用户的 tmux，别让终端墙变成许愿池。
+Terminal Wall 默认监听 `127.0.0.1:13142`。它不提供登录或访问控制；如需远程访问，使用老板已有的访问控制/反向代理体系。直接暴露端口等于直接暴露当前 Unix 用户的 tmux，别让终端墙变成许愿池。
 
 ---
 

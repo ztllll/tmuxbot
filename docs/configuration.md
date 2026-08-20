@@ -10,7 +10,7 @@ tmuxbot doctor
 tmuxbot serve --open
 ```
 
-`serve` 同时运行本地 WebUI 和受监督的 bridge child。默认监听 `127.0.0.1:8765`，不要直接暴露到公网。
+`serve` 同时运行本地 WebUI 和受监督的 bridge child。默认监听 `127.0.0.1:13142`，不要直接暴露到公网。
 
 默认运行目录遵循 XDG：
 
@@ -222,12 +222,12 @@ TMUXBOT_ATTACHMENT_DIR=/tmp/tmuxbot-attachments
 TMUXBOT_ATTACHMENT_ALLOWED_ROOTS=/srv/reports:/home/you/shared
 
 TMUXBOT_WEB_HOST=127.0.0.1
-TMUXBOT_WEB_PORT=8765
+TMUXBOT_WEB_PORT=13142
 ```
 
 AI 回复里的本地文件仅允许从 route cwd、attachment 目录、系统临时目录和显式 trusted roots 上传。目录、设备、socket、不存在文件和白名单外路径都会拒绝。
 
-Terminal Wall 默认只能监听 localhost，且不内置认证。远程访问由部署者自己的 TLS、反向代理和访问控制负责；不要直接开放 `8765`，它可完整操作当前 Unix 用户的 tmux。
+Terminal Wall 默认只能监听 localhost，且不内置认证。远程访问由部署者自己的 TLS、反向代理和访问控制负责；不要直接开放 `13142`，它可完整操作当前 Unix 用户的 tmux。
 
 ## 10. 常用检查
 

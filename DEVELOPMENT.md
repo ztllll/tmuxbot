@@ -286,7 +286,7 @@ uv run tmuxbot web
 # 等价: uv run python -m tmuxbot.web
 ```
 
-启动流程为 `WebSettings.from_env()` → 控制面 SQLite migration → FastAPI/uvicorn；它不会读取 route、credential、Telegram polling 或飞书 WebSocket。SQLite 仅为旧 API 兼容而打开，Terminal Wall 页面不读取项目、Provider、通道或 TeamRun 数据；它通过 tmux Control Mode 提供宿主机 window inventory、pane snapshot、实时输出和原始键盘输入，默认监听 `127.0.0.1:8765`。
+启动流程为 `WebSettings.from_env()` → 控制面 SQLite migration → FastAPI/uvicorn；它不会读取 route、credential、Telegram polling 或飞书 WebSocket。SQLite 仅为旧 API 兼容而打开，Terminal Wall 页面不读取项目、Provider、通道或 TeamRun 数据；它通过 tmux Control Mode 提供宿主机 window inventory、pane snapshot、实时输出和原始键盘输入，默认监听 `127.0.0.1:13142`。
 
 推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片打开一条 `tmux -CC` 控制连接，先发送 `capture-pane` 快照，再流式转发目标 pane 输出与浏览器原始键盘输入。
 

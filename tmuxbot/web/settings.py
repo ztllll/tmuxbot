@@ -23,7 +23,7 @@ class WebSettings:
             from tmuxbot.paths import RuntimePaths
 
             database_path = RuntimePaths.discover(os.environ).database_file
-        port_value = os.getenv("TMUXBOT_WEB_PORT", "8765").strip()
+        port_value = os.getenv("TMUXBOT_WEB_PORT", "13142").strip()
         try:
             port = int(port_value)
         except ValueError as exc:
