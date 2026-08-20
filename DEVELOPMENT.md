@@ -290,7 +290,7 @@ uv run tmuxbot web
 
 推荐统一运行 `tmuxbot serve --open`：Terminal Wall 常驻并监督独立 IM bridge child。`tmuxbot web` 适合开发或拆分部署。每张 Web 卡片打开一条 `tmux -CC` 控制连接，先发送 `capture-pane` 快照，再流式转发目标 pane 输出与浏览器原始键盘输入。
 
-Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。浏览器卡片使用 Control Mode 镜像已有 tmux layout：缩放只调整 xterm 字形，不向 tmux 提交尺寸，因此不会改变 SSH/Tabby 正在使用的共享 pane layout。
+Terminal Wall 没有内置认证、ACL、IM route 或命令层。默认 loopback 监听只适用于本机访问；远程访问由外部反向代理/访问控制承担。浏览器的自由画布仅存 `localStorage`，不写控制面数据库。Terminal Wall 以单端使用为前提：浏览器卡片通过 Control Mode 将自身 cols/rows 提交给 tmux，真实 pane layout 与 xterm 同步重排，体验与 SSH/Tabby 一致。关闭 WebUI 后，下一次 SSH/Tabby attach 自然接管 tmux 尺寸；不要把同一 pane 同时作为不同尺寸的 Web 与 SSH 终端使用。
 
 ### 开发启动 (tmux session)
 

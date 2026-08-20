@@ -1,9 +1,9 @@
 """A small tmux Control Mode bridge for one Terminal Wall card.
 
-The browser never attaches as a normal tmux client.  ``tmux -CC`` exposes
-pane output and accepts tmux commands over one PTY; ``refresh-client -C`` then
-sets only this control client's per-window geometry, leaving SSH/Tabby clients
-untouched.
+The browser never attaches as a normal tmux client. ``tmux -CC`` exposes pane
+output and accepts tmux commands over one PTY. In Terminal Wall's exclusive-use
+mode, ``refresh-client -C`` gives the active browser its normal terminal size;
+tmux reflows the shared pane layout exactly as it does for SSH/Tabby.
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _unescape_output(payload: bytes) -> bytes:
 
 
 class ControlModeTerminal:
-    """One browser card's isolated tmux Control Mode client."""
+    """One browser card's active tmux Control Mode client."""
 
     def __init__(self, master_fd: int, process: subprocess.Popen[bytes], target: str, metadata: ControlTarget) -> None:
         self.master_fd = master_fd

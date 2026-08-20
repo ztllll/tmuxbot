@@ -8,7 +8,7 @@
 
 ### Changed
 
-- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 tmux Control Mode 获取 pane 快照与实时输出、向目标 pane 转发原始键盘输入；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。浏览器卡片只缩放本地字形，不再提交共享 tmux window 的 resize，因此 SSH/Tabby 的 pane layout 不受影响。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
+- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 tmux Control Mode 获取 pane 快照与实时输出、向目标 pane 转发原始键盘输入；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。以单端使用为前提，浏览器卡片 resize 通过 Control Mode 重排真实 tmux pane，与 xterm 保持正常终端字号和完整横向显示；关闭 WebUI 后 SSH/Tabby attach 自动接管尺寸。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
 
 ### Documentation
 

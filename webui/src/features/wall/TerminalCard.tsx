@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { TerminalLayout } from "./layout";
 
@@ -10,31 +11,30 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
   const host = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const resizeTimer = useRef<number | undefined>(undefined);
   const [state, setState] = useState(unavailable ? "目标已失效" : "正在连接");
 
   function resize() {
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-    // Full horizontal lines win: a card may scroll vertically but never crops
-    // a tmux row. The font follows its current column count and usable width.
-    const surface = host.current;
-    if (!surface) return;
-    const cellWidth = surface.clientWidth / Math.max(terminal.cols, 1);
-    terminal.options.fontSize = Math.max(8, Math.min(18, Math.floor((cellWidth / 0.61) * 10) / 10));
-    terminal.refresh(0, terminal.rows - 1);
+    const terminal = terminalRef.current, fit = fitRef.current, socket = socketRef.current;
+    if (!terminal || !fit || !socket || socket.readyState !== WebSocket.OPEN) return;
+    terminal.options.fontSize = 15;
+    fit.fit();
+    if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current);
+    resizeTimer.current = window.setTimeout(() => socket.send(JSON.stringify({ type: "resize", rows: terminal.rows, cols: terminal.cols })), 80);
   }
 
   useEffect(() => {
     if (unavailable || !host.current) return;
-    const terminal = new Terminal({ cursorBlink: true, convertEol: true, scrollback: 5000, fontFamily: "IBM Plex Mono, SFMono-Regular, Consolas, monospace", fontSize: 14, theme: terminalTheme });
-    terminal.open(host.current);
-    terminalRef.current = terminal;
+    const terminal = new Terminal({ cursorBlink: true, convertEol: true, scrollback: 5000, fontFamily: "IBM Plex Mono, SFMono-Regular, Consolas, monospace", fontSize: 15, theme: terminalTheme });
+    const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
+    terminalRef.current = terminal; fitRef.current = fit;
     let disposed = false;
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const ws = new WebSocket(`${scheme}//${location.host}/api/wall/ws?target=${encodeURIComponent(card.target)}`);
     ws.binaryType = "arraybuffer"; socketRef.current = ws;
     const observer = new ResizeObserver(resize); observer.observe(host.current);
-    ws.onopen = () => { if (!disposed) { setState("已连接 · Control Mode"); resize(); terminal.focus(); } };
+    ws.onopen = () => { if (!disposed) { setState("已连接 · 当前终端"); resize(); terminal.focus(); } };
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) { terminal.write(new Uint8Array(event.data)); return; }
       if (typeof event.data !== "string") return;
@@ -48,7 +48,7 @@ export default function TerminalCard({ card, unavailable, onFocus, onClose, onCh
     };
     ws.onclose = (event) => { if (!disposed) setState(event.code === 4404 ? "目标已失效" : "连接已断开"); };
     terminal.onData((data) => { if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(data)); });
-    return () => { disposed = true; observer.disconnect(); ws.close(); socketRef.current = null; terminalRef.current = null; terminal.dispose(); };
+    return () => { disposed = true; observer.disconnect(); if (resizeTimer.current !== undefined) window.clearTimeout(resizeTimer.current); ws.close(); socketRef.current = null; terminalRef.current = null; fitRef.current = null; terminal.dispose(); };
   }, [card.target, unavailable]);
 
   function pointer(event: React.PointerEvent, action: "move" | "resize") {

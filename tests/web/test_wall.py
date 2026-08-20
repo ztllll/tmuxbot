@@ -47,7 +47,7 @@ def test_wall_api_returns_windows(monkeypatch, tmp_path):
     assert response.json() == [{"target": "alpha:0", "session_name": "alpha", "window_index": 0, "pane_count": 1, "commands": ["bash"], "cwd_summary": "/repo"}]
 
 
-def test_control_wall_forwards_raw_input_and_ignores_browser_resize(monkeypatch, tmp_path):
+def test_control_wall_forwards_raw_input_and_resizes_active_terminal(monkeypatch, tmp_path):
     monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", tmux_run())
     events = []
     class Terminal:
@@ -73,5 +73,5 @@ def test_control_wall_forwards_raw_input_and_ignores_browser_resize(monkeypatch,
             if events: break
             asyncio.run(asyncio.sleep(.001))
     assert ("write", b"hello") in events
-    assert not any(event[0] == "resize" for event in events)
+    assert ("resize", 40, 120) in events
     assert ("close",) in events

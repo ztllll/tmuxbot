@@ -1099,11 +1099,9 @@ def create_app(
             if control.get("type") != "resize" or not isinstance(rows, int) or isinstance(rows, bool) or not isinstance(cols, int) or isinstance(cols, bool):
                 await websocket.send_json({"type": "message_rejected", "reason": "invalid_frame"})
                 continue
-            # tmux windows own one shared pane layout.  A Control Mode client
-            # may report a per-client geometry, but accepting arbitrary browser
-            # resizes still causes tmux to recalculate that shared layout. Keep
-            # this card a non-invasive mirror; the browser scales its own grid.
-            del rows, cols
+            # Terminal Wall is intentionally exclusive with SSH/Tabby: the
+            # active browser is the current terminal and owns the pane geometry.
+            await terminal.resize(rows, cols)
 
     @app.websocket("/api/wall/ws")
     async def wall_terminal(websocket: WebSocket, target: str = Query(...)) -> None:
