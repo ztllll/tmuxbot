@@ -180,24 +180,27 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 `tmuxbot-admin-context.json` 保存 schema version、Admin cwd、bindings/service 参数和受管文件 hash；部署变更或手工修改后，`verify-context` 会 fail closed 并要求重新运行 `install-contract`。修改活动 Pi 的 context files 后运行 `/reload`，Claude/Codex 则按各自 CLI 的重载或安全重启方式生效。
 
-## 3. 从飞书目标话题直接创建项目
+## 3. 在 Admin DM 中引用飞书目标话题
 
-飞书项目群内可直接在目标话题中 `@机器人` 并明确写“创建项目”或使用
-`/create-project`。Boss 身份、@机器人、真实 `thread_id` 三者同时成立时，bridge
-会把当前消息携带的精确 `chat_id`、`thread_id` 和根消息锚点注入 Admin pane；Admin
-随后只需从请求中确定项目名、cwd 和 adapter，使用 `provision-project plan → --apply`
-完成事务。无需手工输入 `omt_...` 或 `om_...`，也不会从旧 route 猜测父群。
+项目创建只在 **Admin DM** 发起，群话题不执行管理事务。先在目标飞书话题内
+`@Tmux bot Agent /project-context`，机器人会在同一话题回复一个签名引用；复制该引用
+到 Admin DM，再提供项目名、cwd 和 adapter。签名引用由 bridge 用当前飞书 App 密钥签发，
+其中包含精确 `chat_id`、`thread_id` 与根消息锚点，Admin 无法也不需要猜群或话题。
 
 示例：
 
 ```text
-@tmuxbotadmin 创建项目：微信小程序
+创建项目：微信小程序
 cwd: /data/project/weixin-xiaochengxu-project
 adapter: pi
+tmux: pi-微信小程序
+
+话题引用：
+tmuxbot-feishu-topic:v1:...
 ```
 
-普通未绑定群消息、未 @机器人、没有精确话题上下文或非 Boss 消息仍保持静默；此入口
-只用于项目开通，不将群话题变成通用 Admin shell。
+只有 Boss 在目标话题 @机器人并发送 `/project-context` 才会得到引用；其他未绑定群/topic
+消息保持静默。Admin DM 收到无效或缺失引用时必须要求重新取得引用，不得借用旧 route 推断父群。
 
 ## 4. 在 DM 中需要提供什么
 

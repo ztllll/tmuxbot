@@ -730,10 +730,11 @@ Canonical objects:
 - route = one exact endpoint mapped to one exact target and adapter
 
 Hard rules:
-1. Never guess a topic/thread ID. For a Feishu topic-originated Admin request,
-   the bridge supplies the verified chat_id/thread_id/root_message_id in the
-   injected request; use those exact values. Otherwise ask for the ID or a
-   message link. Never create a new topic unless the user explicitly asks.
+1. Never guess a topic/thread ID. Feishu project provisioning is initiated only
+   from Admin DM: ask the operator to obtain a signed topic reference with
+   `/project-context` in the destination topic, then use the verified values
+   injected from that reference. Otherwise ask for the ID or a message link.
+   Never create a new topic unless the user explicitly asks.
 2. A group root and every topic/thread are different endpoints. Unbound endpoints
    stay silent and must not touch tmux.
 3. Project creation and existing-topic binding both use `provision-project`.
@@ -772,12 +773,13 @@ Deployment:
 - bindings: {bindings_file}
 - supervised bridge: {service}
 
-Feishu topic-originated workflow:
+Feishu topic reference workflow:
 ```text
-Boss @mentions the Admin bot inside the destination topic with a request that
-contains “创建项目” or /create-project. The bridge injects that topic's verified
-chat_id, thread_id and thread_root_message_id below. Use those values in
-provision-project; never rediscover or guess a parent group.
+Boss @mentions the bot inside the destination topic with /project-context.
+The bot replies there with a signed reference. Boss copies that reference to
+Admin DM together with the project name, cwd and adapter. The Admin pane uses
+only the verified values injected from the reference; never rediscover or guess
+an endpoint.
 ```
 
 Required normal workflow:
@@ -789,7 +791,7 @@ tmuxbot admin --file {bindings_file} --service {service} provision-project \
   --cwd /absolute/project --backend pi
 # New Telegram or Feishu topic: replace --topic-link with exact --chat-id and
 # --topic-title. tmux target defaults to NAME:0.0. Review the plan, then repeat
-# the same command with --apply. A Feishu topic-originated Admin request already
+# the same command with --apply. A Feishu reference sent in Admin DM already
 # carries verified --chat-id/--thread-id/--thread-root-message-id; do not guess.
 ```
 
