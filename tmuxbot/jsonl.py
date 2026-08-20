@@ -420,6 +420,19 @@ async def _aggregator_idle_watcher(
             return
 
 
+def _delivery_binding(b: "Binding", state: "State") -> "Binding":
+    """Project one topic-originated Admin turn back to its exact Feishu topic."""
+    context = getattr(state, "admin_delivery_contexts", {}).get(b.name)
+    if context is None:
+        return b
+    return replace(
+        b,
+        chat_id=context["chat_id"],
+        thread_id=context["thread_id"],
+        thread_root_message_id=context["thread_root_message_id"],
+    )
+
+
 async def on_tmux_event(
     b: "Binding", kind: str, body: str,
     frontend: "Frontend", state: "State", backend: "Backend",
@@ -434,6 +447,7 @@ async def on_tmux_event(
     """
     if state.setup_mode:
         return
+    b = _delivery_binding(b, state)
     if kind == "user":
         return
 
@@ -481,6 +495,7 @@ async def on_tmux_event(
         await _send_attention(
             frontend, b, state, "🔴 <b>任务未能继续</b>", body
         )
+        getattr(state, "admin_delivery_contexts", {}).pop(b.name, None)
         return
 
     if kind == "assistant_plan":
@@ -516,6 +531,7 @@ async def on_tmux_event(
             _audit(state, b, "results_published")
             _audit(state, b, "result_body_chars", len(out))
         _clear_result_draft(state, b)
+        getattr(state, "admin_delivery_contexts", {}).pop(b.name, None)
         return
 
     if kind != "assistant_tools":

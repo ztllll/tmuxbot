@@ -461,6 +461,76 @@ class FeishuFrontend(Frontend):
                 self._v2_message_ids = set()
             self._v2_message_ids.add(message_id)
 
+    def _topic_admin_binding(self) -> "Binding | None":
+        return next(
+            (
+                binding
+                for binding in self.bindings
+                if binding.admin and binding.channel == "feishu"
+            ),
+            None,
+        )
+
+    def _is_topic_admin_request(self, incoming: Any, chat_type: str) -> bool:
+        """Allow only Boss @bot provisioning requests from an exact topic.
+
+        Normal unbound group endpoints stay silent. This narrow exception gives
+        the Admin pane the message's real chat/thread/root IDs, avoiding any
+        model-side guessing when a project is opened from its destination topic.
+        """
+        text = incoming.text.strip().lower()
+        return (
+            chat_type == "group"
+            and incoming.thread_id is not None
+            and incoming.mentioned
+            and self._topic_admin_binding() is not None
+            and (text.startswith("/create-project") or "创建项目" in incoming.text)
+        )
+
+    @staticmethod
+    def _topic_admin_prompt(
+        text: str, *, chat_id: str, thread_id: str, root_message_id: str
+    ) -> str:
+        return (
+            "你收到来自目标飞书话题的项目开通请求。该 endpoint 已由 bridge 精确验证，"
+            "不得猜测或替换：\n"
+            f"- channel: feishu\n- chat_id: {chat_id}\n- thread_id: {thread_id}\n"
+            f"- thread_root_message_id: {root_message_id}\n\n"
+            "请从用户请求中提取项目名、cwd 和 adapter，先运行 provision-project plan，"
+            "核对后再用 --apply。项目创建过程和最终答复会自动回到这个原话题。\n\n"
+            f"用户请求：\n{text}"
+        )
+
+    async def _dispatch_topic_admin_request(self, incoming: Any, msg: Any) -> None:
+        admin = self._topic_admin_binding()
+        if admin is None:
+            return
+        root_message_id = str(getattr(msg, "root_id", None) or getattr(msg, "message_id", "") or "")
+        if not root_message_id:
+            return
+        chat_id, thread_id = str(incoming.source_id), str(incoming.thread_id)
+        self._remember_thread_anchor(chat_id, incoming.thread_id, root_message_id)
+        self.state.admin_delivery_contexts[admin.name] = {
+            "chat_id": chat_id,
+            "thread_id": thread_id,
+            "thread_root_message_id": root_message_id,
+        }
+        from tmuxbot.dispatch import dispatch_incoming_text
+        await dispatch_incoming_text(
+            self,
+            self.backend_for(admin),
+            admin,
+            self.state,
+            incoming.source_id,
+            incoming.thread_id,
+            self._topic_admin_prompt(
+                incoming.text,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                root_message_id=root_message_id,
+            ),
+        )
+
     def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
         incoming = self.normalize_incoming(msg, chat_type=chat_type)
         b = (
@@ -1858,6 +1928,9 @@ class FeishuFrontend(Frontend):
             # ── ACL 双重门禁 ──
             # 非 Boss 白名单 → 静默
             if not open_id or open_id not in self.boss_open_ids:
+                return
+            if self._is_topic_admin_request(incoming, chat_type):
+                await self._dispatch_topic_admin_request(incoming, msg)
                 return
             if not self._message_allowed_by_addressing(chat_type, msg):
                 return

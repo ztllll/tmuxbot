@@ -96,6 +96,9 @@ class State:
         self.compaction_status: dict[str, dict] = {}
         # 通道连接健康：Telegram/飞书共用同一份运行时审计口径。
         self.channel_health = ChannelHealthRegistry()
+        # One active topic-originated Admin provisioning request per admin pane.
+        # The JSONL projector uses this exact endpoint for the Admin CLI reply.
+        self.admin_delivery_contexts: dict[str, dict[str, str]] = {}
 
     def fire(self, coro):
         """create_task + 强引用保存 + 完成时自动清理 + 异常自动 log"""
