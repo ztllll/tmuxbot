@@ -73,6 +73,22 @@ class TmuxWall:
     def has_window(self, target: str) -> bool:
         return _TARGET.fullmatch(target) is not None and any(item.target == target for item in self.list_windows())
 
+    def window_size(self, target: str) -> tuple[int, int]:
+        if _TARGET.fullmatch(target) is None:
+            raise TmuxWallError("invalid tmux window target")
+        output = self._run(
+            ["tmux", "display-message", "-p", "-t", target, "#{window_width}x#{window_height}"]
+        )
+        if output is None:
+            raise TmuxWallError("tmux window is unavailable")
+        match = re.fullmatch(rb"(\d+)x(\d+)\n", output)
+        if match is None:
+            raise TmuxWallError("tmux window size was malformed")
+        cols, rows = (int(value) for value in match.groups())
+        if not 1 <= cols <= TERMINAL_MAX_COLS or not 1 <= rows <= TERMINAL_MAX_ROWS:
+            raise TmuxWallError("tmux window size is outside supported bounds")
+        return cols, rows
+
     def _run(self, argv: list[str], *, allow_no_server: bool = False) -> bytes | None:
         try:
             result = subprocess.run(argv, capture_output=True, check=False, timeout=self.timeout_seconds)
@@ -112,7 +128,7 @@ class PtyTerminal:
             env["TERM"] = "xterm-256color"
             env.pop("TMUX", None)
             env.pop("TMUX_PANE", None)
-            process = subprocess.Popen(["tmux", "attach-session", "-t", target], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True, shell=False, env=env)
+            process = subprocess.Popen(["tmux", "attach-session", "-f", "ignore-size", "-t", target], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True, shell=False, env=env)
         except BaseException:
             os.close(master_fd); os.close(slave_fd)
             raise

@@ -23,6 +23,31 @@ def test_wall_inventory_groups_panes_by_window(monkeypatch):
     assert [(window.target, window.pane_count, window.commands) for window in TmuxWall().list_windows()] == [("alpha:0", 2, ("bash", "python")), ("alpha:1", 1, ("claude",))]
 
 
+def test_wall_attach_ignores_browser_size(monkeypatch):
+    from tmuxbot.web.wall import PtyTerminal
+
+    master_fd, slave_fd = 10, 11
+    class Process:
+        def poll(self): return 0
+    calls = []
+    monkeypatch.setattr("tmuxbot.web.wall.pty.openpty", lambda: (master_fd, slave_fd))
+    monkeypatch.setattr("tmuxbot.web.wall.os.close", lambda _fd: None)
+    monkeypatch.setattr("tmuxbot.web.wall.subprocess.Popen", lambda argv, **kwargs: calls.append(argv) or Process())
+
+    PtyTerminal.open("alpha:0")
+
+    assert calls == [["tmux", "attach-session", "-f", "ignore-size", "-t", "alpha:0"]]
+
+
+def test_wall_reads_validated_window_size(monkeypatch):
+    monkeypatch.setattr(
+        "tmuxbot.web.wall.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=b"120x40\n", stderr=b""),
+    )
+
+    assert TmuxWall().window_size("alpha:0") == (120, 40)
+
+
 def test_pty_resize_updates_attach_tty_and_real_tmux_window(monkeypatch):
     from tmuxbot.web.wall import PtyTerminal
 
@@ -80,7 +105,10 @@ def test_wall_api_returns_windows(monkeypatch, tmp_path):
 
 def test_wall_websocket_forwards_raw_input_and_resize(monkeypatch, tmp_path):
     output = b"alpha\t0\tbash\t/repo\n"
-    monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=output, stderr=b""))
+    def tmux_run(argv, **kwargs):
+        stdout = b"80x24\n" if "display-message" in argv else output
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr=b"")
+    monkeypatch.setattr("tmuxbot.web.wall.subprocess.run", tmux_run)
     opened = []
     class Terminal:
         async def read(self, _max=65536):

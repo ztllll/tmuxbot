@@ -1066,9 +1066,26 @@ def create_app(
             for window in windows
         ]
 
-    async def wall_output_loop(websocket: WebSocket, terminal: WallTerminalConnection) -> None:
+    async def wall_output_loop(
+        websocket: WebSocket, terminal: WallTerminalConnection, _target: str
+    ) -> None:
         while data := await terminal.read(WALL_MAX_FRAME_BYTES):
             await websocket.send_bytes(data)
+
+    async def wall_size_loop(websocket: WebSocket, target: str) -> None:
+        wall = TmuxWall()
+        last_size: tuple[int, int] | None = None
+        while True:
+            try:
+                size = await asyncio.to_thread(wall.window_size, target)
+            except TmuxWallError:
+                return
+            if size != last_size:
+                await websocket.send_json(
+                    {"type": "window_size", "cols": size[0], "rows": size[1]}
+                )
+                last_size = size
+            await asyncio.sleep(0.5)
 
     async def wall_input_loop(websocket: WebSocket, terminal: WallTerminalConnection) -> None:
         while True:
@@ -1112,10 +1129,11 @@ def create_app(
             await websocket.close(code=1011)
             return
         await websocket.accept()
-        output = asyncio.create_task(wall_output_loop(websocket, terminal))
+        output = asyncio.create_task(wall_output_loop(websocket, terminal, target))
         input_ = asyncio.create_task(wall_input_loop(websocket, terminal))
+        size = asyncio.create_task(wall_size_loop(websocket, target))
         try:
-            done, pending = await asyncio.wait({output, input_}, return_when=asyncio.FIRST_COMPLETED)
+            done, pending = await asyncio.wait({output, input_, size}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
             for task in done | pending:
