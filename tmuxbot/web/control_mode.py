@@ -145,11 +145,14 @@ class ControlModeTerminal:
             self._output.put_nowait(_unescape_output(match.group(2)))
 
     async def write(self, data: bytes) -> None:
-        # ``send-keys -H`` keeps the browser protocol raw: UTF-8, paste data,
-        # escape sequences and terminal mouse reports are passed byte-for-byte.
-        for offset in range(0, len(data), 128):
-            hex_keys = " ".join(f"{byte:02x}" for byte in data[offset:offset + 128])
-            await self._command(f"send-keys -t {self.metadata.pane_id} -H {hex_keys}")
+        # tmux ``send-keys -H`` accepts exactly one byte.  Keep the browser
+        # protocol raw by issuing one allowlisted hex key command per byte;
+        # this preserves UTF-8, escape sequences, paste and mouse reports.
+        for byte in data:
+            if byte in {10, 13}:
+                await self._command(f"send-keys -t {self.metadata.pane_id} Enter")
+            else:
+                await self._command(f"send-keys -t {self.metadata.pane_id} -H {byte:02x}")
 
     async def resize(self, rows: int, cols: int, **_unused: object) -> None:
         if not 1 <= rows <= TERMINAL_MAX_ROWS or not 1 <= cols <= TERMINAL_MAX_COLS:
