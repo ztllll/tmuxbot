@@ -15,9 +15,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from tmuxbot.backends.claude_code import ClaudeCodeBackend
-from tmuxbot.backends.codex import CodexBackend
-from tmuxbot.backends.omp import OmpBackend
+from tmuxbot.backends import build_backend_pool
+
 from tmuxbot.channel_health import channel_health_audit_loop
 from tmuxbot import __version__
 from tmuxbot.config import load_config
@@ -92,12 +91,8 @@ async def main(paths: RuntimePaths | None = None) -> None:
         install_claude_hooks()
         log.info("managed Claude hooks installed")
 
-    # 装配 backend 实例池
-    backends_pool = {
-        "claude_code": ClaudeCodeBackend(),
-        "codex": CodexBackend(),
-        "omp": OmpBackend(),
-    }
+    # 装配 backend 实例池; Pi/OMP 都是并发一等 route adapter, 由 Binding.backend 选择。
+    backends_pool = build_backend_pool()
 
     # ── 按 channel 分拣: telegram bindings vs feishu bindings ──
     tg_bindings = [b for b in S.bindings if b.channel != "feishu"]
