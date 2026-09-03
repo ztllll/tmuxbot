@@ -25,6 +25,9 @@
 ### Added
 
 - OMP 成功执行结构化 `edit` 后，将 provider 返回的受限 per-file diff 追加到同一条 IM 工作卡；普通本地 `write` 成功后显示受限文件片段。`toolCallId` 将开始态与结果态绑定，Telegram 使用 `editMessageText`、飞书使用 Card PATCH 原位替换对应条目，多文件并行调用不会串位。只有成功结果才展示代码，失败结果只显示失败状态；HTML 会转义并限制文件数、行数和字符数，内部 URI、环境文件、credential/token/password 命名文件和私钥格式内容 fail closed。
+### Changed
+
+- WebUI 重构为本机 **tmux Terminal Wall**：按真实 `session:window` 聚合宿主机窗口，xterm.js 通过 tmux Control Mode 获取 pane 快照与实时输出、向目标 pane 转发原始键盘输入；不再作为项目、Provider、通道或 TeamRun 控制面。支持自由拖拽、八向缩放、置顶、横/纵/网格排列、全屏和 localStorage 布局恢复。以单端使用为前提，浏览器卡片 resize 通过 Control Mode 重排真实 tmux pane，与 xterm 保持正常终端字号和完整横向显示；关闭 WebUI 后 SSH/Tabby attach 自动接管尺寸。Telegram/飞书 IM bridge、精确 route、回推与 TeamRun 后台能力保持独立且未改动。
 
 ### Documentation
 
@@ -38,6 +41,8 @@
 
 - 修复 OMP 更新状态栏布局后 IM footer 失配：状态 adapter 改为跨版本语义解析，不再复制单一 TUI 框线和图标；同时支持旧 `╭── π` 与新版 compact `+-- … --+` footer。IM 改为面向会话决策的固定格式，按顺序显示当前上下文已用/上限/余量、会话累计 token、最近一轮缓存命中率、自动压缩、模型和思考强度；会话文件大小退出默认状态栏。OMP `tok` 按上游 `input + output + cacheWrite + orchestrationInput + orchestrationOutput` 口径解析或从 exact current-branch JSONL 补齐，不含 cacheRead。
 
+- Admin DM 配置现在拒绝直接使用 Unix 用户根目录作为 `TMUXBOT_ADMIN_CWD`，强制使用独立私有 workspace，避免受管 `AGENTS.md` / `CLAUDE.md` 被普通项目沿目录树继承；配置测试显式使用临时 Admin cwd，不再覆盖真实 workspace 的 manifest。
+- 修复 Telegram/飞书回复底部 provider 状态栏不稳定显示 route 项目路径：当 Pi/Claude/Codex 的实时 TUI footer 因窄终端、自定义状态栏或新 transcript pending 而省略 cwd 时，`TerminalStatus` 使用权威 `binding.cwd` 兜底；完整路径继续按原设计显示在底部状态栏的 `📁` 字段中，不另加卡片顶部路径行。
 - Wheel/uv tool 安装包现在包含受管 `tmuxbot-session-handoff.ts`，避免源码外部署启动时因缺少 Pi handoff extension 只能降级运行。
 
 ### Changed
@@ -55,6 +60,7 @@
 
 ### Added
 
+- 完整落地结果优先 IM 消息生命周期：新增通道无关 `TurnProjection`，将一个 provider Turn 内的工具调用、计划更新和普通生命周期事件压缩为单一可刷新过程卡；`compact` 默认延迟 4 秒创建并以 2 秒节流、内容 hash 去重和最近三项确定性摘要原地更新，短任务只发结果。`TEXT_DELTA` / live text 仅进入内存 ResultDraft，`FINAL_TEXT` 统一经过 `ReplyEnvelope`、附件、分页和 footer 独立发布一次；重复 final 被抑制。interaction、waiting 与终态 provider error 使用独立注意消息，过程卡 edit/PATCH 失败安全重建且不阻断结果。新增 `result_only` / `compact` / `verbose` 配置和不含正文的 `im-delivery-audit.json` 计数；Telegram 与飞书复用同一语义，Pi 自动压缩专用状态卡保持原流程兼容。
 - Admin DM 默认 cwd 改为独立的 XDG workspace（`~/.local/share/tmuxbot/admin`），启动时以 `0700` 创建，避免用户根目录中的管理指令被所有项目会话继承。`install-contract` 现统一生成跨 Pi/Claude/Codex 的身份与运行职责契约、部署相关 `ADMIN-RUNBOOK.md` 和带 schema/version/hash 的 `tmuxbot-admin-context.json`；新增 `verify-context` 检测缺失、修改或部署参数漂移，核心正确性不再依赖 provider-specific system prompt 或会话记忆。
 - 新增 `tmuxbot admin rename-project`：先输出 plan，再事务式迁移既有 route 名、单 pane tmux session 与 cwd；保留精确 IM endpoint 和 adapter，重置旧 provider transcript identity，并在失败时回滚 bindings、session、目录和 supervised service。
 - 接入 `@narumitw/pi-plan-mode` 0.49.3：Pi backend 从当前精确 JSONL branch 恢复 `plan active / ready / saved / implementing`，在 IM 页面底部显示对应中文 Plan widget，并在回复状态栏补齐 `📝` 状态（兼容 `pi-statusline` 的 `plan ✓` 压缩渲染且不重复）。`plan_mode_complete` 和 `/plan show` 的完整计划作为可编辑 plan card 回推；bridge 重启后从持久 state 恢复状态栏和页面底部，但不会重复发送历史计划卡。`/plan` 与 `/plan tools` 打开原生 TUI 菜单，`/plan start|show|finalize|implement|save|export|exit|off|<prompt>` 直接穿透并返回屏幕回执；Telegram/飞书 Pi 控制面板增加“计划模式”入口，Telegram BotCommand 注册 `/plan`；picker detector 兼容 pi-tui-kit 的 `↑/↓ navigate • enter select • esc close` 底栏，使计划菜单和结构化问题能在远程 IM 被发现；Pi 非空闲时 `/plan` 立即拒绝，不会把工具/模式切换命令塞入 steering queue 后延迟生效。交互按键控制后来在同一 Unreleased 维护线收敛为 SSH-only，见上方 Changed。

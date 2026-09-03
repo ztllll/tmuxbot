@@ -205,7 +205,29 @@ OMP `/restart` 使用干净的 pane respawn，然后按固定 registry argv 和�
 
 `tmuxbot-admin-context.json` 保存 schema version、Admin cwd、bindings/service 参数和受管文件 hash；部署变更或手工修改后，`verify-context` 会 fail closed 并要求重新运行 `install-contract`。需要让活动 OMP 重新读取更新后的上下文时，使用上述受管 `/restart` 或 Web restart，不依赖旧 provider 的私有配置目录或 reload 约定。
 
-## 3. 在 DM 中需要提供什么
+## 3. 在 Admin DM 中引用飞书目标话题
+
+项目创建只在 **Admin DM** 发起，群话题不执行管理事务。先在目标飞书话题内
+`@Tmux bot Agent /project-context`，机器人会在同一话题回复一个签名引用；复制该引用
+到 Admin DM，再提供项目名、cwd 和 adapter。签名引用由 bridge 用当前飞书 App 密钥签发，
+其中包含精确 `chat_id`、`thread_id` 与根消息锚点，Admin 无法也不需要猜群或话题。
+
+示例：
+
+```text
+创建项目：微信小程序
+cwd: /data/project/weixin-xiaochengxu-project
+adapter: pi
+tmux: pi-微信小程序
+
+话题引用：
+tmuxbot-feishu-topic:v1:...
+```
+
+只有 Boss 在目标话题 @机器人并发送 `/project-context` 才会得到引用；其他未绑定群/topic
+消息保持静默。Admin DM 收到无效或缺失引用时必须要求重新取得引用，不得借用旧 route 推断父群。
+
+## 4. 在 DM 中需要提供什么
 
 自然语言请求最好包含以下信息：
 
@@ -217,9 +239,9 @@ OMP `/restart` 使用干净的 pane respawn，然后按固定 registry argv 和�
 6. 群内是否需要 `@bot`。项目话题通常明确写“无需 @机器人”，对应 `mention_required: false`；
 7. 是否允许创建新 Telegram/飞书话题。若要求绑定已有话题，应明确写“不要新建话题”；若明确要求创建话题，只需提供精确 `chat_id`，不需要先由用户手动创建再回传 thread ID。
 
-## 4. 常用自然语言模板
+## 5. 常用自然语言模板
 
-### 4.1 绑定已有话题到已有 pane
+### 5.1 绑定已有话题到已有 pane
 
 ```text
 请把 Telegram 群「项目群」的已有话题 8024
@@ -237,7 +259,7 @@ OMP `/restart` 使用干净的 pane respawn，然后按固定 registry argv 和�
 并汇报 endpoint、tmux target、pane command、cwd 和 tailer 状态。
 ```
 
-### 4.2 没有 tmux，创建后绑定已有话题
+### 5.2 没有 tmux，创建后绑定已有话题
 
 ```text
 请为 /home/you/projects/demo 创建 OMP tmux，
@@ -254,7 +276,7 @@ OMP `/restart` 使用干净的 pane respawn，然后按固定 registry argv 和�
 完成后校验 route，重启 bridge，检查 OMP、精确 session sidecar、JSONL tailer 和 polling。
 ```
 
-### 4.3 在已有 session 中增加 window/pane
+### 5.3 在已有 session 中增加 window/pane
 
 ```text
 请在 tmux session project-team 中创建一个新的 window，
@@ -265,7 +287,7 @@ cwd=/home/you/projects/new-project，启动 OMP，
 设置 mention_required=false，不要新建 Telegram 话题。
 ```
 
-### 4.4 确实需要同时创建 Telegram 话题
+### 5.4 确实需要同时创建 Telegram 话题
 
 ```text
 请在 Telegram 群「项目群」新建话题「Demo 项目」，
@@ -278,7 +300,7 @@ cwd=/home/you/projects/new-project，启动 OMP，
 
 只有在请求明确允许时才应创建 Telegram/飞书新话题，并统一使用 `tmuxbot admin create-topic` 的 plan/apply 事务；绑定已有话题时不得因为缺少 thread ID 而擅自新建。
 
-### 4.5 只提供 Telegram 消息链接
+### 5.5 只提供 Telegram 消息链接
 
 私有 supergroup/forum 的话题链接有两种可接受形式：
 
@@ -313,7 +335,7 @@ tmuxbot admin --file /path/to/bindings.yaml --service tmuxbot.service \
 
 它会把 `internal-chat-id` 转换为 Bot API `chat_id=-100...`，并返回整数 `thread_id`；如果 URL 还包含具体消息 ID，也会附带返回。三段式话题 URL 与四段式消息 URL 都有效；public username 链接、群根链接或缺少 thread 的链接会失败关闭。如果链接或名称不足以可靠识别 endpoint，管理 AI 应要求提供 `chat_id/thread_id`，而不是猜测或创建新话题。
 
-## 5. 确定性底层流程
+## 6. 确定性底层流程
 
 管理 AI 的正常顺序只有：
 
@@ -338,7 +360,7 @@ tmuxbot route unbind NAME
 
 尚未实现进程内 hot reload，因此 YAML 变化后需要重启受监督的 bridge。不要执行 `tmux kill-server`；它会影响所有用户 tmux 会话。
 
-## 6. 重要安全和路由约束
+## 7. 重要安全和路由约束
 
 - Admin 权限只对 Boss 身份和 Telegram private chat 同时成立；群中 `@bot`、`/panel` 或伪造 route 名不能取得 Admin 权限。
 - 未配置的群根、topic 和 thread 完全静默，不打反应、不 typing、不回复，也不触碰 tmux。
@@ -357,7 +379,7 @@ tmuxbot route unbind NAME
 
   `tmuxbot doctor` 只诊断，不自动重启 tmux server。
 
-## 7. 验收清单
+## 8. 验收清单
 
 每次开通或改绑后至少确认：
 
@@ -376,7 +398,7 @@ tmuxbot route unbind NAME
 [ ] 群根和未绑定 topic 保持静默
 ```
 
-## 8. 示例：推荐的管理/项目布局
+## 9. 示例：推荐的管理/项目布局
 
 ```text
 Boss DM

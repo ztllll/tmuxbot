@@ -52,6 +52,16 @@ class FinalizingFrontend(FakeFrontend):
         self.sent.append(("finalize", chat_id, message_id, html_text, display_state))
 
 
+class FailingEditFrontend(FinalizingFrontend):
+    async def edit_html(self, chat_id, message_id, html_text):
+        raise RuntimeError("message can no longer be edited")
+
+    async def finalize_status_html(
+        self, chat_id, message_id, html_text, *, display_state="completed"
+    ):
+        raise RuntimeError("message can no longer be finalized")
+
+
 class EnhancedFakeFrontend(FakeFrontend):
     async def send_assistant_reply(self, binding, envelope):
         self.sent.append(
@@ -273,6 +283,42 @@ def test_status_capture_uses_transcript_model_when_tui_omits_it(tmp_path, monkey
     assert status.permission_mode == "YOLO"
 
 
+def test_status_capture_falls_back_to_binding_cwd_when_tui_omits_path(
+    tmp_path, monkeypatch
+):
+    class BackendWithoutCwd:
+        def parse_terminal_status(self, pane):
+            return TerminalStatus(state=TerminalState.IDLE, model="gpt-5.6-sol")
+
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata(model="gpt-5.6-sol")
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "footer without cwd")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), BackendWithoutCwd()))
+
+    assert status is not None
+    assert status.cwd == str(tmp_path)
+
+
+def test_status_capture_creates_path_only_footer_when_tui_and_transcript_are_pending(
+    tmp_path, monkeypatch
+):
+    class PendingBackend:
+        def parse_terminal_status(self, pane):
+            return None
+
+        def current_runtime_metadata(self, binding):
+            return ProviderRuntimeMetadata()
+
+    monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "starting")
+
+    status = asyncio.run(_capture_terminal_status(binding(tmp_path), PendingBackend()))
+
+    assert status is not None
+    assert status.cwd == str(tmp_path)
+
+
 def test_status_capture_preserves_tui_usage_and_fills_missing_metadata(tmp_path, monkeypatch):
     class BackendWithUsage:
         def parse_terminal_status(self, pane):
@@ -359,11 +405,9 @@ def test_omp_todo_snapshot_is_fixed_to_working_status_messages(tmp_path):
                 "html",
                 123,
                 None,
-                "💭 <b>工作中…</b>\n📋 任务 update\n\n"
-                "● <b>Todos (1/2)</b>\n"
-                "▾ <b>Execution</b> (1/2)\n"
-                "├─ ✓ <s>Audit</s>\n"
-                "└─ ◐ <b>Implement</b>",
+                "💭 <b>工作进度</b>\n"
+                "· 当前：📋 任务 update\n"
+                "· 统计：工具 1",
             )
         ]
 
@@ -389,7 +433,10 @@ def test_assistant_tools_sends_local_paths_as_real_attachments(tmp_path):
         )
 
         assert frontend.sent == [
-            ("html", 123, None, "💭 <b>工作中…</b>\n工具输出"),
+            (
+                "html", 123, None,
+                "💭 <b>工作进度</b>\n· 当前：工具输出\n· 统计：工具 1",
+            ),
             ("image", 123, None, image, None),
         ]
 
@@ -473,6 +520,148 @@ def test_omp_edit_result_replaces_the_matching_im_working_card_slot(tmp_path, mo
     asyncio.run(run())
 
 
+
+def test_quick_result_finishes_before_delay_without_creating_progress_card(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TMUXBOT_IM_PROGRESS_DELAY", "4")
+
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取配置", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "配置正常", frontend, state, backend)
+
+        assert frontend.sent == [("html", 123, None, "配置正常")]
+
+    asyncio.run(run())
+
+
+def test_result_only_mode_suppresses_progress_but_not_attention_or_result(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TMUXBOT_IM_PRESENTATION", "result_only")
+
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取配置", frontend, state, backend)
+        await on_tmux_event(
+            b, "interaction_request", "请选择部署环境", frontend, state, backend
+        )
+        await on_tmux_event(b, "assistant_text", "已按选择处理", frontend, state, backend)
+
+        assert frontend.sent == [
+            ("html", 123, None, "🟠 <b>需要老板处理</b>\n请选择部署环境"),
+            ("html", 123, None, "已按选择处理"),
+        ]
+
+    asyncio.run(run())
+
+
+def test_interaction_request_finalizes_progress_and_sends_attention(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取配置", frontend, state, backend)
+        await on_tmux_event(
+            b, "interaction_request", "请选择部署环境", frontend, state, backend
+        )
+
+        assert [item[0] for item in frontend.sent] == ["html", "finalize", "html"]
+        assert frontend.sent[1][4] == "waiting"
+        assert frontend.sent[2] == (
+            "html", 123, None,
+            "🟠 <b>需要老板处理</b>\n请选择部署环境",
+        )
+
+    asyncio.run(run())
+
+
+def test_progress_edit_failure_recreates_one_card_and_final_result_still_delivers(tmp_path):
+    async def run():
+        frontend = FailingEditFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取配置", frontend, state, backend)
+        projection = state.turn_projections[b.name]
+        projection.update_interval_seconds = 0
+        await on_tmux_event(b, "assistant_tools", "修改配置", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "处理完成", frontend, state, backend)
+
+        assert [item[0] for item in frontend.sent] == ["html", "html", "html", "html"]
+        assert frontend.sent[-1] == ("html", 123, None, "处理完成")
+        assert state.progress_messages == {}
+
+    asyncio.run(run())
+
+
+def test_terminal_provider_error_sends_one_attention_message(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "调用部署工具", frontend, state, backend)
+        await on_tmux_event(b, "provider_error", "授权失败", frontend, state, backend)
+
+        assert [item[0] for item in frontend.sent] == ["html", "finalize", "html"]
+        assert frontend.sent[1][4] == "error"
+        assert frontend.sent[2] == (
+            "html", 123, None,
+            "🔴 <b>任务未能继续</b>\n授权失败",
+        )
+
+    asyncio.run(run())
+
+
+def test_tool_and_plan_progress_share_one_card_before_final_result(tmp_path):
+    async def run():
+        frontend = FinalizingFrontend()
+        state = SimpleNamespace(
+            setup_mode=False,
+            progress_messages={},
+            turn_projections={},
+            progress_flushes={},
+            fire=close_coro,
+        )
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(b, "assistant_tools", "读取 app.py", frontend, state, backend)
+        await on_tmux_event(
+            b,
+            "assistant_plan",
+            "计划更新\n1. 修改 pending\n2. 测试 in_progress",
+            frontend,
+            state,
+            backend,
+        )
+        await on_tmux_event(b, "assistant_tools", "修改 app.py", frontend, state, backend)
+        await on_tmux_event(b, "assistant_text", "修改完成。", frontend, state, backend)
+
+        assert [item[0] for item in frontend.sent] == ["html", "finalize", "html"]
+        assert frontend.sent[0][:3] == ("html", 123, None)
+        assert frontend.sent[1][1:3] == (123, 101)
+        assert "过程摘要" in frontend.sent[1][3]
+        assert "工具 2 · 计划 1" in frontend.sent[1][3]
+        assert "读取 app.py；计划更新 0/2 完成，1 项进行中；修改 app.py" in frontend.sent[1][3]
+        assert frontend.sent[2] == ("html", 123, None, "修改完成。")
+
+    asyncio.run(run())
+
 def test_final_assistant_text_immediately_completes_the_tool_status_card(tmp_path):
     async def run():
         frontend = FinalizingFrontend()
@@ -527,19 +716,18 @@ def test_assistant_plan_edits_latest_plan_message(tmp_path):
         )
 
         assert frontend.sent == [
-            ("html", 123, None, "📋 当前计划\n→ 第一步 <code>in_progress</code>"),
             (
-                "edit",
-                123,
-                101,
-                "📋 当前计划\n✓ 第一步 <code>completed</code>\n→ 第二步 <code>in_progress</code>",
+                "html", 123, None,
+                "💭 <b>工作进度</b>\n"
+                "· 当前：计划更新 0/1 完成，1 项进行中\n"
+                "· 统计：计划 1",
             ),
         ]
 
     asyncio.run(run())
 
 
-def test_omp_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
+def test_pi_live_text_waits_for_final_and_uses_one_todo_panel(tmp_path):
     async def run():
         tasks = [{"phase": "Execution", "content": "Done", "status": "completed"}]
         frontend = FakeFrontend()
@@ -548,6 +736,7 @@ def test_omp_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
         backend = OmpTodoBackend(tasks)
 
         await on_tmux_event(b, "assistant_live_text", "进度", frontend, state, backend)
+        assert frontend.sent == []
         await on_tmux_event(b, "assistant_text", "进度", frontend, state, backend)
 
         assert frontend.sent == [
@@ -562,52 +751,51 @@ def test_omp_live_text_and_final_duplicate_share_the_same_todo_panel(tmp_path):
     asyncio.run(run())
 
 
-def test_live_text_sends_early_and_final_duplicate_is_skipped(tmp_path):
+def test_text_delta_is_buffered_until_one_final_result_is_published(tmp_path):
     async def run():
-        frontend = FakeFrontend()
-        state = SimpleNamespace(setup_mode=False)
-        b = binding(tmp_path)
-        backend = FakeBackend()
-
-        await on_tmux_event(
-            b,
-            "assistant_live_text",
-            "我先检查配置，再给结论。",
-            frontend,
-            state,
-            backend,
-        )
-        await on_tmux_event(
-            b,
-            "assistant_text",
-            "我先检查配置，再给结论。",
-            frontend,
-            state,
-            backend,
-        )
-
-        assert frontend.sent == [
-            ("html", 123, None, "我先检查配置，再给结论。"),
-        ]
-
-    asyncio.run(run())
-
-
-def test_text_delta_stream_edits_one_reply_and_finalizes(tmp_path):
-    async def run():
-        frontend = FakeFrontend()
+        frontend = EnhancedFakeFrontend()
         state = SimpleNamespace(setup_mode=False)
         b = binding(tmp_path)
         backend = FakeBackend()
 
         await on_tmux_event(b, "assistant_text_delta", "正在", frontend, state, backend)
         await on_tmux_event(b, "assistant_text_delta", "检查", frontend, state, backend)
+        assert frontend.sent == []
+
+        await on_tmux_event(b, "assistant_text", "正在检查配置。", frontend, state, backend)
         await on_tmux_event(b, "assistant_text", "正在检查配置。", frontend, state, backend)
 
         assert frontend.sent == [
-            ("html", 123, None, "正在"),
-            ("edit", 123, 101, "正在检查"),
-            ("edit", 123, 101, "正在检查配置。"),
+            ("assistant_reply", 123, None, "正在检查配置。", ()),
+        ]
+        assert state.result_drafts == {}
+        assert state.im_delivery_metrics["alpha"]["results_published"] == 1
+        assert state.im_delivery_metrics["alpha"]["duplicate_results_suppressed"] == 1
+        assert state.im_delivery_metrics["alpha"]["result_body_chars"] == len(
+            "正在检查配置。"
+        )
+
+    asyncio.run(run())
+
+
+def test_live_text_is_buffered_until_final_result(tmp_path):
+    async def run():
+        frontend = EnhancedFakeFrontend()
+        state = SimpleNamespace(setup_mode=False)
+        b = binding(tmp_path)
+        backend = FakeBackend()
+
+        await on_tmux_event(
+            b, "assistant_live_text", "我先检查配置。", frontend, state, backend
+        )
+        assert frontend.sent == []
+
+        await on_tmux_event(
+            b, "assistant_text", "检查完成。", frontend, state, backend
+        )
+
+        assert frontend.sent == [
+            ("assistant_reply", 123, None, "检查完成。", ()),
         ]
 
     asyncio.run(run())
@@ -625,7 +813,7 @@ def test_text_delta_stream_finalizes_with_provider_footer(tmp_path, monkeypatch)
     monkeypatch.setattr(jsonl, "tmux_capture", lambda target, lines: "working")
 
     async def run():
-        frontend = StreamingFooterFrontend()
+        frontend = EnhancedFakeFrontend()
         state = SimpleNamespace(setup_mode=False)
         b = binding(tmp_path)
 
@@ -636,13 +824,8 @@ def test_text_delta_stream_finalizes_with_provider_footer(tmp_path, monkeypatch)
             b, "assistant_text", "检查完成。", frontend, state, BackendWithMetadata()
         )
 
-        final = frontend.sent[-1]
-        assert final[:5] == ("stream_edit", 123, 101, "检查完成。", True)
-        assert final[5] == TerminalStatus(
-            state=TerminalState.IDLE,
-            model="gpt-5.6-terra",
-            effort="medium",
-            permission_mode="YOLO",
-        )
+        assert frontend.sent == [
+            ("assistant_reply", 123, None, "检查完成。", ()),
+        ]
 
     asyncio.run(run())

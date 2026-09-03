@@ -18,7 +18,7 @@ def test_web_settings_are_local_and_secure_by_default(monkeypatch, tmp_path: Pat
     settings = WebSettings.from_env()
 
     assert settings.host == "127.0.0.1"
-    assert settings.port == 8765
+    assert settings.port == 13142
     assert settings.database_path == tmp_path / "control-plane.sqlite3"
     assert settings.secure_cookie is False
     assert settings.setup_token is None

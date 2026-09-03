@@ -13,7 +13,7 @@ from typing import Iterable
 from tmuxbot.state import Binding
 
 SUPPORTED_CHANNELS = frozenset({"telegram", "feishu"})
-SUPPORTED_BACKENDS = frozenset({"claude_code", "codex", "omp"})
+SUPPORTED_BACKENDS = frozenset({"claude_code", "codex", "pi", "omp"})
 
 
 class ConfigValidationError(ValueError):

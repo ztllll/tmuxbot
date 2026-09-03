@@ -24,6 +24,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 import uuid
 from dataclasses import replace
 from pathlib import Path
@@ -41,6 +42,8 @@ from tmuxbot.channels.feishu import (
     FeishuChannelAdapter,
     feishu_mentions_bot,
     feishu_replies_to_bot,
+    feishu_topic_reference,
+    parse_feishu_topic_reference,
 )
 from tmuxbot.command_adapter import binding_by_token, binding_token, handle_tui_action
 from tmuxbot.config import save_binding_identity
@@ -359,7 +362,10 @@ class FeishuFrontend(Frontend):
         self.bindings_file = bindings_file
         self.bot_token_env = bot_token_env
         self.project_base = project_base
-        self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "") or app_id
+        # app_id (cli_xxx) and bot open_id (ou_xxx) are different Feishu
+        # identities. Do not compare mentions against app_id: resolve the bot
+        # ID when the frontend starts if deployment did not configure it.
+        self.bot_open_id = os.getenv(f"{bot_token_env}_BOT_OPEN_ID", "")
         self.card_v2_enabled = _env_enabled(
             f"{bot_token_env}_CARD_V2",
             _env_enabled("TMUXBOT_FEISHU_CARD_V2", True),
@@ -386,6 +392,44 @@ class FeishuFrontend(Frontend):
         self._ws_client = None
         self._ws_module = None
         self.register_health()
+
+    def _resolve_bot_open_id_sync(self) -> str | None:
+        """Read this App's actual ``ou_`` identity from Feishu's Bot Info API."""
+        auth_request = urllib.request.Request(
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+            data=json.dumps(
+                {"app_id": self.app_id, "app_secret": self.app_secret}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(auth_request, timeout=20) as response:
+            auth = json.load(response)
+        token = str(auth.get("tenant_access_token") or "")
+        if auth.get("code") not in {None, 0} or not token:
+            return None
+        info_request = urllib.request.Request(
+            "https://open.feishu.cn/open-apis/bot/v3/info",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(info_request, timeout=20) as response:
+            payload = json.load(response)
+        bot = payload.get("bot") or payload.get("data") or {}
+        open_id = bot.get("open_id") if isinstance(bot, dict) else None
+        return str(open_id) if isinstance(open_id, str) and open_id.startswith("ou_") else None
+
+    async def _ensure_bot_open_id(self) -> None:
+        if self.bot_open_id:
+            return
+        try:
+            resolved = await asyncio.to_thread(self._resolve_bot_open_id_sync)
+        except Exception:
+            log.warning("feishu: unable to resolve bot open_id", exc_info=True)
+            return
+        if resolved:
+            self.bot_open_id = resolved
+            log.info("feishu bot open_id resolved · credential=%s", self.bot_token_env)
+        else:
+            log.warning("feishu: Bot Info API returned no bot open_id · credential=%s", self.bot_token_env)
 
     # ────────── binding 查找 ──────────
 
@@ -464,6 +508,45 @@ class FeishuFrontend(Frontend):
             if not hasattr(self, "_v2_message_ids"):
                 self._v2_message_ids = set()
             self._v2_message_ids.add(message_id)
+
+    @staticmethod
+    def _is_topic_reference_request(incoming: Any, chat_type: str) -> bool:
+        return (
+            chat_type == "group"
+            and incoming.thread_id is not None
+            and incoming.mentioned
+            and incoming.text.strip().lower() == "/project-context"
+        )
+
+    async def _send_topic_reference(self, msg: Any, incoming: Any) -> None:
+        root_message_id = str(
+            getattr(msg, "root_id", None) or getattr(msg, "message_id", "") or ""
+        )
+        self._remember_thread_anchor(
+            str(incoming.source_id), incoming.thread_id, root_message_id
+        )
+        reference = feishu_topic_reference(msg, self.app_secret)
+        if reference is None:
+            return
+        await self.send_html(
+            incoming.source_id,
+            incoming.thread_id,
+            "请将以下引用复制到 <b>Tmux bot Agent</b> 私聊，再在私聊中发送"
+            "项目名、cwd 与 adapter：\n<code>" + html_mod.escape(reference) + "</code>",
+        )
+
+    @staticmethod
+    def _admin_topic_prompt(text: str, reference: tuple[str, str, str]) -> str:
+        chat_id, thread_id, root_message_id = reference
+        return (
+            "你收到来自 Admin DM 的飞书项目开通请求。以下 endpoint 引用由 bridge "
+            "在目标话题中签发并验证，必须原样使用，绝不猜测或替换：\n"
+            f"- channel: feishu\n- chat_id: {chat_id}\n- thread_id: {thread_id}\n"
+            f"- thread_root_message_id: {root_message_id}\n\n"
+            "请从用户请求中提取项目名、cwd 和 adapter，先运行 provision-project plan，"
+            "核对后再用 --apply。事务结果回复到当前 Admin DM。\n\n"
+            f"用户请求：\n{text}"
+        )
 
     def _message_allowed_by_addressing(self, chat_type: str, msg: Any) -> bool:
         incoming = self.normalize_incoming(msg, chat_type=chat_type)
@@ -1862,6 +1945,9 @@ class FeishuFrontend(Frontend):
             # 非 Boss 白名单 → 静默
             if not open_id or open_id not in self.boss_open_ids:
                 return
+            if self._is_topic_reference_request(incoming, chat_type):
+                await self._send_topic_reference(msg, incoming)
+                return
             if not self._message_allowed_by_addressing(chat_type, msg):
                 return
             # Exact source lookup is the second ACL gate. An unconfigured
@@ -2065,6 +2151,10 @@ class FeishuFrontend(Frontend):
                 return
 
             text = incoming.text
+            if b.admin and chat_type == "p2p":
+                reference = parse_feishu_topic_reference(text, self.app_secret)
+                if reference is not None:
+                    text = self._admin_topic_prompt(text, reference)
 
             if not text:
                 if msg_type == "interactive":
@@ -2152,6 +2242,7 @@ class FeishuFrontend(Frontend):
 
     async def start_polling(self) -> None:
         """建 WebSocket 长连接, 断开后退避重连, 直到 stop() 被调用"""
+        await self._ensure_bot_open_id()
         lark = self._lark
         self._main_loop = asyncio.get_running_loop()
 

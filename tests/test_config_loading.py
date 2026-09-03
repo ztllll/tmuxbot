@@ -88,7 +88,7 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
             "chat_id": "oc_group",
             "thread_id": "omt_topic",
             "thread_root_message_id": "om_root_old",
-            "tmux_session": "feishu-topic",
+            "tmux_session": "pi-feishu-topic",
             "cwd": "/tmp/feishu-topic",
             "backend": "omp",
             "bot_token_env": "FEISHU",
@@ -111,7 +111,7 @@ def test_feishu_thread_root_anchor_loads_and_persists_atomically(tmp_path):
     saved = yaml.safe_load(bindings_file.read_text(encoding="utf-8"))["bindings"][0]
     assert saved["thread_root_message_id"] == "om_root_new"
     assert saved["thread_id"] == "omt_topic"
-    assert saved["tmux_session"] == "feishu-topic"
+    assert saved["tmux_session"] == "pi-feishu-topic"
     assert bindings_file.stat().st_mode & 0o777 == 0o600
 
 
@@ -158,6 +158,50 @@ def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_om
     assert (admin.cwd / "ADMIN-RUNBOOK.md").is_file()
     assert (admin.cwd / "tmuxbot-admin-context.json").is_file()
     assert admin.backend == "omp"
+    assert admin.bot_token_env == "TG_BOT_TOKEN"
+
+def test_admin_dm_route_defaults_to_dedicated_data_workspace_and_configurable_pi(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_TMUX", "pi-tmuxbot-admin")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    env_file = tmp_path / "runtime.env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "BOSS_USER_ID=123",
+                "TMUXBOT_ADMIN_ENABLED=1",
+                "TMUXBOT_ADMIN_TMUX=pi-tmuxbot-admin",
+                "TMUXBOT_ADMIN_CLI=pi",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("tmuxbot.paths.Path.home", lambda: home)
+
+    load_config(env_file, bindings_file, tmp_path / "offsets.json")
+
+    admin = next(binding for binding in S.bindings if binding.admin)
+    assert admin.chat_id == 123
+    assert admin.thread_id is None
+    assert admin.tmux_target == "pi-tmuxbot-admin:0.0"
+    assert admin.cwd == home / ".local/share/tmuxbot/admin"
+    assert admin.cwd.is_dir()
+    assert admin.cwd.stat().st_mode & 0o777 == 0o700
+    assert (admin.cwd / "AGENTS.md").is_file()
+    assert (admin.cwd / "ADMIN-RUNBOOK.md").is_file()
+    assert (admin.cwd / "tmuxbot-admin-context.json").is_file()
+    assert admin.backend == "pi"
     assert admin.bot_token_env == "TG_BOT_TOKEN"
 
 
@@ -279,6 +323,8 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     reloaded = next(binding for binding in S.bindings if binding.admin)
     assert reloaded.provider_session_id == "omp-session"
     assert reloaded.transcript_path == tmp_path / "session.jsonl"
+    assert reloaded.cwd == admin_cwd
+    assert (admin_cwd / "tmuxbot-admin-context.json").is_file()
 
 
 def test_persisted_admin_identity_does_not_enable_admin_without_env(tmp_path):
@@ -347,6 +393,24 @@ def test_admin_dm_route_can_override_channel_credential_endpoint_and_cwd(monkeyp
     )
     assert admin.cwd == admin_cwd
     assert admin.backend == "codex"
+
+
+def test_admin_dm_route_rejects_user_home_as_admin_cwd(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("tmuxbot.config.Path.home", lambda: home)
+    monkeypatch.setenv("BOSS_USER_ID", "123")
+    monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "pi")
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(home))
+    bindings_file = tmp_path / "bindings.yaml"
+    bindings_file.write_text(
+        yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigValidationError, match="must not be the user home directory"):
+        load_config(tmp_path / "missing.env", bindings_file, tmp_path / "offsets.json")
 
 
 def test_admin_dm_route_creates_configured_private_cwd(monkeypatch, tmp_path):

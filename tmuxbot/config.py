@@ -26,8 +26,8 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         return None
     channel = os.getenv("TMUXBOT_ADMIN_CHANNEL", "telegram").strip().lower()
     backend = os.getenv("TMUXBOT_ADMIN_CLI", "").strip()
-    if backend not in {"claude_code", "codex", "omp"}:
-        raise ConfigValidationError(["TMUXBOT_ADMIN_CLI must be one of: claude_code, codex, omp"])
+    if backend not in {"claude_code", "codex", "pi", "omp"}:
+        raise ConfigValidationError(["TMUXBOT_ADMIN_CLI must be one of: claude_code, codex, pi, omp"])
     raw_chat_id = os.getenv("TMUXBOT_ADMIN_CHAT_ID", "").strip()
     if channel == "telegram":
         if not raw_chat_id:
@@ -47,19 +47,36 @@ def _admin_binding(boss_user_id: int, bindings_file: Path) -> Binding | None:
         credential = os.getenv("TMUXBOT_ADMIN_CREDENTIAL", "FEISHU").strip()
     else:
         raise ConfigValidationError(["TMUXBOT_ADMIN_CHANNEL must be telegram or feishu"])
-    tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "tmuxbot-admin-omp").strip()
-    if not tmux_session:
-        raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
+    configured_tmux_session = os.getenv("TMUXBOT_ADMIN_TMUX", "").strip()
     if backend == "omp":
+        tmux_session = configured_tmux_session or "tmuxbot-admin-omp"
+        if not tmux_session:
+            raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
         error = omp_project_naming_error(tmux_session, tmux_session)
         if error is not None:
             raise ConfigValidationError([f"TMUXBOT_ADMIN_TMUX: {error}"])
+    elif backend == "pi":
+        if configured_tmux_session and not configured_tmux_session.startswith("pi-"):
+            raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must start with 'pi-' for Pi admin routes"])
+        tmux_session = configured_tmux_session or "pi-tmuxbot-admin"
+    else:
+        tmux_session = configured_tmux_session or "tmuxbot-admin-omp"
+        if not tmux_session:
+            raise ConfigValidationError(["TMUXBOT_ADMIN_TMUX must not be empty"])
     configured_cwd = os.getenv("TMUXBOT_ADMIN_CWD", "").strip()
     cwd = (
         Path(configured_cwd).expanduser().resolve()
         if configured_cwd
         else default_admin_cwd(os.environ)
     )
+    if cwd == Path.home().expanduser().resolve():
+        raise ConfigValidationError(
+            [
+                "TMUXBOT_ADMIN_CWD must not be the user home directory; "
+                "use a dedicated private workspace such as "
+                f"{default_admin_cwd(os.environ)}"
+            ]
+        )
     try:
         cwd.mkdir(parents=True, exist_ok=True, mode=0o700)
         if cwd.is_symlink() or not cwd.is_dir():

@@ -100,6 +100,14 @@ def test_accepts_multiple_backends_on_one_telegram_credential():
                 cwd=Path("/tmp/tmuxbot-gamma"),
                 backend="omp",
             ),
+            binding(
+                name="delta",
+                chat_id=123,
+                thread_id=44,
+                tmux_session="pi-delta",
+                cwd=Path("/tmp/tmuxbot-delta"),
+                backend="pi",
+            ),
         ]
     )
 
@@ -133,7 +141,7 @@ def test_accepts_feishu_string_threads_and_mixed_backends_per_credential():
                 channel="feishu",
                 chat_id="oc_a",
                 thread_id="omt_thread_b",
-                tmux_session="fs-b",
+                tmux_session="pi-fs-b",
                 cwd=Path("/tmp/fs-b"),
                 backend="omp",
                 bot_token_env="FEISHU",

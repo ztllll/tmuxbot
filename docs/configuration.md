@@ -10,7 +10,7 @@ tmuxbot doctor
 tmuxbot serve --open
 ```
 
-`serve` 同时运行本地 WebUI 和受监督的 bridge child。默认监听 `127.0.0.1:8765`，不要直接暴露到公网。
+`serve` 同时运行本地 WebUI 和受监督的 bridge child。默认监听 `127.0.0.1:13142`，不要直接暴露到公网。
 
 默认运行目录遵循 XDG：
 
@@ -214,25 +214,40 @@ TMUXBOT_OMP_TERMINAL_HEALTH_FILE=/home/you/.local/state/tmuxbot/omp-terminal-hea
 
 该审计只通知 provider-authored terminal error 或多信号疑似失活，不自动 `/restart`、`/new`、停止或杀进程。完整设计见 [`omp-terminal-error-audit.md`](omp-terminal-error-audit.md)。
 
-## 8. 附件与 Web 安全
+## 8. IM 结果优先展示
+
+默认 `compact` 模式把一个 provider Turn 压缩为至多一张可编辑过程卡和一条独立最终结果；短于延迟阈值的任务只发最终结果。
+
+```dotenv
+TMUXBOT_IM_PRESENTATION=compact
+TMUXBOT_IM_PROGRESS_DELAY=4
+TMUXBOT_IM_PROGRESS_UPDATE_INTERVAL=2
+TMUXBOT_IM_PROGRESS_MAX_STEPS=3
+```
+
+- `result_only`：隐藏普通工具、计划和生命周期过程；用户交互、阻塞/失败和最终结果仍独立通知。
+- `compact`：超过延迟阈值后创建一张过程卡，按内容变化和节流窗口原地更新，最终压缩为摘要。
+- `verbose`：立即创建过程卡，但仍复用同一 message ID，不回吐终端日志。
+
+`TEXT_DELTA` 和 provider live text 只写入内存 ResultDraft；`FINAL_TEXT` 统一经过 ReplyEnvelope、通道分页、附件和 footer 后发布一次。过程卡 edit/PATCH 失败会创建替代摘要，不阻断或重复最终结果。
+
+内容无关的计数默认写入 `$XDG_STATE_HOME/tmuxbot/im-delivery-audit.json`，仅包含 create/edit/finalize/result/attention 次数与结果字符数，不记录正文。可通过 `TMUXBOT_IM_DELIVERY_AUDIT_FILE` 覆盖路径。
+
+## 9. 附件与 Web 安全
 
 ```dotenv
 TMUXBOT_ATTACHMENT_DIR=/tmp/tmuxbot-attachments
 TMUXBOT_ATTACHMENT_ALLOWED_ROOTS=/srv/reports:/home/you/shared
 
 TMUXBOT_WEB_HOST=127.0.0.1
-TMUXBOT_WEB_PORT=8765
-TMUXBOT_WEB_SECURE_COOKIE=false
-# 反向代理 HTTPS 后：
-# TMUXBOT_WEB_PUBLIC_ORIGIN=https://tmuxbot.example.com
-# TMUXBOT_WEB_SECURE_COOKIE=true
+TMUXBOT_WEB_PORT=13142
 ```
 
 AI 回复里的本地文件仅允许从 route cwd、attachment 目录、系统临时目录和显式 trusted roots 上传。目录、设备、socket、不存在文件和白名单外路径都会拒绝。
 
-WebUI 默认只能监听 localhost。远程访问必须使用带 TLS 和身份认证的反向代理，不要直接开放 `8765`。
+Terminal Wall 默认只能监听 localhost，且不内置认证。远程访问由部署者自己的 TLS、反向代理和访问控制负责；不要直接开放 `13142`，它可完整操作当前 Unix 用户的 tmux。
 
-## 9. 常用检查
+## 10. 常用检查
 
 ```bash
 tmuxbot doctor

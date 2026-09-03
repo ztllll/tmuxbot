@@ -43,7 +43,7 @@ class AsciiDirRequired(Exception):
 
 
 def _safe_name(display_name: str, *, channel: str, chat_id) -> str:
-    """display_name → tmux session 名 / binding name / 目录名。
+    """display_name → binding name / 目录名。
     tmux target 用 ':' 和 '.' 分隔, 含这俩会破坏 target → 替换成 '-'。
     emoji / variation selector / zero-width joiner 对 tmux session 名不友好 → 直接剥掉。
     中文 OK (encode_cwd 已能处理)。空名 → channel + chat_id 后 8 位降级。"""
@@ -55,6 +55,13 @@ def _safe_name(display_name: str, *, channel: str, chat_id) -> str:
     if not safe_name:
         safe_name = f"{channel}-{str(chat_id)[-8:]}"
     return safe_name
+
+
+def _tmux_session_name(safe_name: str, backend_name: str) -> str:
+    if backend_name == "pi":
+        return f"pi-{safe_name}"
+    suffix = {"claude_code": "claude"}.get(backend_name, backend_name)
+    return f"{safe_name}-{suffix}"
 
 
 def _preseed_trust_sync(proj_dir: str) -> None:
@@ -129,8 +136,9 @@ async def provision_chat(
       - None        → project_base/safe_name (现状: 目录 = base/群名)
       - 绝对路径    → 直接用作 proj_dir (任意位置)
       - 相对名      → project_base/target_dir (base 下指定子目录)
-    无论 target_dir 取值, tmux session 名 / binding name 始终用 safe_name (群名派生),
-    只有项目目录受 target_dir 控制。proj_dir 已存在不报错 (ensure_running 处理 resume)。
+    无论 target_dir 取值，binding name 始终用 safe_name；Pi tmux session 统一为
+    pi-<safe_name>，其他后端保持 <safe_name>-<backend>。只有项目目录受 target_dir
+    控制。proj_dir 已存在不报错 (ensure_running 处理 resume)。
     """
     # 防重复: 已绑定的 chat 直接 None (并发 /init 也兜住)
     if frontend.find_binding(chat_id, thread_id) is not None:
@@ -146,8 +154,7 @@ async def provision_chat(
             raise ValueError("backend_name is required for a multi-backend frontend")
         backend_name = legacy.name
     bname = backend_name
-    suffix = {"claude_code": "claude"}.get(bname, bname)
-    sess_name = f"{safe_name}-{suffix}"
+    sess_name = _tmux_session_name(safe_name, bname)
     # 目录解析: 只有 proj_dir 受 target_dir 影响 (proj_dir 用 safe_name/target_dir, 非 sess_name)。
     # 项目目录名必须 ASCII (英文): 绝对路径直接用; 相对名/safe_name 含非 ASCII → 拒绝。
     # raise 在建目录/注册 binding 之前, 不留半成品。

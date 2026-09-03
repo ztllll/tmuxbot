@@ -1,11 +1,10 @@
-"""jsonl tailer + 工具调用聚合器 + assistant 事件路由。
+"""JSONL tailing and result-first provider-event delivery.
 
 ★ 工具调用聚合 (Boss 需求):
 - assistant_tools 事件 (thinking + tool_use) → 累计到一条可编辑消息
 - assistant_text 事件 (真说话) → 封闭聚合器, 单独发新消息
 - aggregator 累计字符 > 3500 或 30s 静默 → 自动封闭
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -17,9 +16,12 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from tmuxbot.attachments import split_outbound_attachments
 from tmuxbot.config import save_binding_identity
+from tmuxbot.core.im_delivery_audit import increment as audit_increment
+from tmuxbot.core.im_presentation import IMPresentationPolicy
 from tmuxbot.core.replies import ReplyEnvelope
 from tmuxbot.core.events import ProviderRuntimeMetadata, TerminalState, TerminalStatus
 from tmuxbot.core.runtime_v2 import RuntimeV2Router
+from tmuxbot.core.turn_projection import ProgressIntent, TurnProjection
 from tmuxbot.picker import detect_idle_picker
 from tmuxbot.tmux import tmux_capture
 from tmuxbot.utils import render_task_footer, save_offsets, strip_handwritten_footer
@@ -227,6 +229,169 @@ async def _dispatch_provider_events(
     return True
 
 
+def _audit(state: "State", b: "Binding", counter: str, amount: int = 1) -> None:
+    registry = getattr(state, "im_delivery_metrics", None)
+    if registry is None:
+        registry = {}
+        setattr(state, "im_delivery_metrics", registry)
+    audit_increment(registry, b.name, counter, amount)
+
+
+def _presentation_policy(state: "State") -> IMPresentationPolicy:
+    policy = getattr(state, "im_presentation", None)
+    if policy is None:
+        policy = IMPresentationPolicy.from_environment()
+        setattr(state, "im_presentation", policy)
+    return policy
+
+
+def _turn_projection(state: "State", b: "Binding") -> TurnProjection:
+    projections = getattr(state, "turn_projections", None)
+    if projections is None:
+        projections = {}
+        setattr(state, "turn_projections", projections)
+    projection = projections.get(b.name)
+    if projection is None:
+        policy = _presentation_policy(state)
+        projection = TurnProjection(
+            progress_delay_seconds=policy.progress_delay_seconds,
+            update_interval_seconds=policy.progress_update_interval_seconds,
+            max_steps=policy.progress_max_steps,
+        )
+        projections[b.name] = projection
+    return projection
+
+
+async def _deliver_progress_intent(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    intent: ProgressIntent,
+) -> None:
+    messages = getattr(state, "progress_messages", None)
+    if messages is None:
+        messages = {}
+        setattr(state, "progress_messages", messages)
+    current = messages.get(b.name)
+    if current is None:
+        if intent.action == "finalize":
+            return
+        status = await _capture_terminal_status(b, backend)
+        send_status = getattr(frontend, "send_status_html", None)
+        if callable(send_status):
+            msg = await send_status(
+                b.chat_id,
+                b.thread_id,
+                intent.body_html,
+                display_state=intent.display_state,
+                footer=status,
+            )
+        else:
+            msg = await frontend.send_html(b.chat_id, b.thread_id, intent.body_html)
+        if msg is not None and hasattr(msg, "message_id"):
+            messages[b.name] = {"msg_id": msg.message_id, "chat_id": b.chat_id}
+            _audit(state, b, "progress_created")
+        return
+    if intent.action == "finalize":
+        try:
+            finalize = getattr(frontend, "finalize_status_html", None)
+            if callable(finalize):
+                await finalize(
+                    current["chat_id"],
+                    current["msg_id"],
+                    intent.body_html,
+                    display_state=intent.display_state,
+                )
+            else:
+                await frontend.edit_html(
+                    current["chat_id"], current["msg_id"], intent.body_html
+                )
+        except Exception:
+            log.warning(
+                "[%s] progress finalize failed; publishing replacement summary",
+                b.name,
+                exc_info=True,
+            )
+            await frontend.send_html(b.chat_id, b.thread_id, intent.body_html)
+            _audit(state, b, "progress_recreated")
+        finally:
+            messages.pop(b.name, None)
+            _audit(state, b, "progress_finalized")
+        return
+    try:
+        await frontend.edit_html(current["chat_id"], current["msg_id"], intent.body_html)
+        _audit(state, b, "progress_edited")
+    except Exception:
+        log.warning(
+            "[%s] progress edit failed; recreating progress card", b.name, exc_info=True
+        )
+        messages.pop(b.name, None)
+        msg = await frontend.send_html(b.chat_id, b.thread_id, intent.body_html)
+        if msg is not None and hasattr(msg, "message_id"):
+            messages[b.name] = {"msg_id": msg.message_id, "chat_id": b.chat_id}
+            _audit(state, b, "progress_recreated")
+
+
+async def _project_progress(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    kind: str, body: str, *, now: float,
+) -> None:
+    if not _presentation_policy(state).progress_enabled:
+        return
+    projection = _turn_projection(state, b)
+    intents = projection.consume(kind, body, now=now)
+    for intent in intents:
+        await _deliver_progress_intent(frontend, b, state, backend, intent)
+    delay = projection.next_update_in(now=now)
+    if delay is not None and delay > 0:
+        flushes = getattr(state, "progress_flushes", None)
+        if flushes is None:
+            flushes = {}
+            setattr(state, "progress_flushes", flushes)
+        task = flushes.get(b.name)
+        if task is None or task.done():
+            fire = getattr(state, "fire", None)
+            coro = _flush_progress_after(frontend, b, state, backend, delay)
+            if callable(fire):
+                flushes[b.name] = fire(coro)
+            else:
+                coro.close()
+
+
+async def _flush_progress_after(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    delay: float,
+) -> None:
+    try:
+        await asyncio.sleep(delay)
+        projection = getattr(state, "turn_projections", {}).get(b.name)
+        if projection is None:
+            return
+        for intent in projection.flush(now=time.time()):
+            await _deliver_progress_intent(frontend, b, state, backend, intent)
+    finally:
+        getattr(state, "progress_flushes", {}).pop(b.name, None)
+
+
+async def _finalize_progress(
+    frontend: "Frontend", b: "Binding", state: "State", backend: "Backend",
+    *, display_state: str = "completed", heading: str | None = None,
+) -> None:
+    projection = getattr(state, "turn_projections", {}).pop(b.name, None)
+    flush_task = getattr(state, "progress_flushes", {}).pop(b.name, None)
+    if flush_task is not None and hasattr(flush_task, "cancel"):
+        flush_task.cancel()
+    if projection is None:
+        return
+    intents = (
+        projection.finalize(now=time.time())
+        if heading is None
+        else projection.close_without_result(
+            now=time.time(), display_state=display_state, heading=heading
+        )
+    )
+    for intent in intents:
+        await _deliver_progress_intent(frontend, b, state, backend, intent)
+
+
 async def _close_aggregator(
     b: "Binding",
     state: "State",
@@ -280,17 +445,13 @@ async def on_tmux_event(
     backend: "Backend",
     event_metadata: Mapping[str, Any] | None = None,
 ) -> None:
-    """JSONL tailer → TG 路由 (★ Boss 最终定型规则)。
+    """Project normalized provider events into a result-first IM lifecycle.
 
-    - user: 不回声 (Boss 自己注入的)
-    - assistant_tools (thinking + tool_use): 进 aggregator 一条消息**流式 edit**
-        不触发 TG push 通知 (Boss 静态看一条不断刷新的"工作中"卡片)
-    - assistant_text (真说话): **单独发新消息**, 触发 TG push 通知 → Boss 收到提醒
-        不关闭 aggregator (让工具调用继续累计到同一条)
-    - aggregator 关闭时机:
-        ① watcher 静默 AGGREGATOR_IDLE_SECONDS 秒后自动 close 加 ✓
-        ② 累计 > AGGREGATOR_MAX_CHARS 字符主动 close 开新
-    - attachment: 立刻单独发, 不动 aggregator (上下文外事件)
+    - user: never echoed;
+    - tool/plan/lifecycle progress: one bounded editable card per route Turn;
+    - final assistant text: finalize that progress card, then publish one result;
+    - attachments: native channel delivery without expanding process chatter;
+    - legacy aggregator state: finalized only for safe in-place upgrades.
     """
     if state.setup_mode:
         return
@@ -303,43 +464,79 @@ async def on_tmux_event(
     now = time.time()
 
     if kind == "provider_lifecycle":
-        await _handle_provider_lifecycle(frontend, b, state, backend, body)
+        if b.name in getattr(state, "compaction_status", {}):
+            await _handle_provider_lifecycle(frontend, b, state, backend, body)
+        else:
+            await _project_progress(
+                frontend, b, state, backend, "lifecycle", body, now=now
+            )
         return
 
     if kind == "attachment":
         await _send_html_with_outbound_attachments(frontend, b, body)
         return
 
+    if kind == "interaction_request":
+        await _finalize_progress(
+            frontend,
+            b,
+            state,
+            backend,
+            display_state="waiting",
+            heading="🟠 <b>等待用户输入</b>",
+        )
+        await _send_attention(
+            frontend, b, state, "🟠 <b>需要老板处理</b>", body
+        )
+        return
+
+    if kind == "provider_error":
+        await _finalize_progress(
+            frontend,
+            b,
+            state,
+            backend,
+            display_state="error",
+            heading="🔴 <b>过程失败</b>",
+        )
+        await _send_attention(
+            frontend, b, state, "🔴 <b>任务未能继续</b>", body
+        )
+        return
+
     if kind == "assistant_plan":
-        await _send_or_edit_plan(frontend, b, state, body)
+        await _project_progress(frontend, b, state, backend, "plan", body, now=now)
         return
 
     if kind == "assistant_live_text":
-        log.info(f"[{b.name}] assistant live text len={len(body)}")
-        await _send_live_text(frontend, b, state, body, backend)
+        log.info(f"[{b.name}] assistant live text buffered len={len(body)}")
+        _buffer_result_draft(state, b, body, replace=True)
         return
 
     if kind == "assistant_text_delta":
-        log.info(f"[{b.name}] assistant text delta len={len(body)}")
-        await _append_reply_stream(frontend, b, state, body)
+        log.info(f"[{b.name}] assistant text delta buffered len={len(body)}")
+        _buffer_result_draft(state, b, body)
         return
 
     if kind == "assistant_text":
         log.info(f"[{b.name}] assistant final text len={len(body)}")
-        # A final provider response is the terminal event that closes a tool
-        # cycle.  Finish the yellow status card immediately instead of leaving
-        # a stale “working” card until the idle watcher wakes up.
+        # Final text closes both a pre-upgrade legacy aggregator and the single
+        # progress projection before publishing a separate result notification.
         await _close_aggregator(b, state, frontend, backend)
+        await _finalize_progress(frontend, b, state, backend)
         # ★ 真说话 → 单独发新消息触发 TG 通知, 不动 aggregator
         # 剥掉 claude 手写 footer + 从 harness 任务文件渲染任务 footer 追加 (§6)
         text = strip_handwritten_footer(body)
         out = _append_footer(text, _task_footer(b, backend))
         if out.strip():
-            if await _finalize_reply_stream(frontend, b, state, out, backend):
-                return
-            if _consume_recent_live_text(state, b, out):
+            if _result_already_published(state, b, out):
+                _audit(state, b, "duplicate_results_suppressed")
                 return
             await _send_assistant_reply(frontend, b, out, backend)
+            _remember_published_result(state, b, out)
+            _audit(state, b, "results_published")
+            _audit(state, b, "result_body_chars", len(out))
+        _clear_result_draft(state, b)
         return
 
     if kind != "assistant_tools":
@@ -347,69 +544,12 @@ async def on_tmux_event(
         await _send_html_with_outbound_attachments(frontend, b, body)
         return
 
-    # 走到这: kind == "assistant_tools", 进 aggregator
-    body, attachments = split_outbound_attachments(body, cwd=b.cwd)
-    tool_call_id = None
-    tool_phase = None
-    if event_metadata is not None:
-        candidate_id = event_metadata.get("tool_call_id")
-        candidate_phase = event_metadata.get("tool_phase")
-        if isinstance(candidate_id, str) and candidate_id:
-            tool_call_id = candidate_id
-        if isinstance(candidate_phase, str):
-            tool_phase = candidate_phase
-    if not body.strip():
-        await _send_outbound_attachments(frontend, b, attachments)
-        return
-
-    agg = state.tool_aggregator.get(b.name)
-    if agg and sum(len(s) for s in agg["content"]) > AGGREGATOR_MAX_CHARS:
-        # 累计超长 → 主动 close 开新
-        await _close_aggregator(b, state, frontend, backend)
-        agg = None
-
-    if agg is None:
-        # 新建 aggregator: 发首条 + 缓存 msg_id + 启动 idle watcher
-        header = "💭 <b>工作中…</b>"
-        task_footer = _task_footer(b, backend)
-        initial_html = _append_footer(header + "\n" + body, task_footer)
-        send_status = getattr(frontend, "send_status_html", None)
-        status = await _capture_terminal_status(b, backend)
-        if send_status is None:
-            msg = await frontend.send_html(b.chat_id, b.thread_id, initial_html)
-        else:
-            msg = await send_status(
-                b.chat_id,
-                b.thread_id,
-                initial_html,
-                display_state="working",
-                footer=status,
-            )
-        if msg is not None and hasattr(msg, "message_id"):
-            state.tool_aggregator[b.name] = {
-                "msg_id": msg.message_id,
-                "chat_id": b.chat_id,
-                "content": [header, body],
-                "last_ts": now,
-                "task_footer": task_footer,
-                "tool_slots": {tool_call_id: 1} if tool_call_id is not None else {},
-            }
-            state.fire(_aggregator_idle_watcher(b, state, frontend, backend))
-    else:
-        slots = agg.setdefault("tool_slots", {})
-        slot = slots.get(tool_call_id) if tool_call_id is not None else None
-        if tool_phase == "result" and isinstance(slot, int) and slot < len(agg["content"]):
-            agg["content"][slot] = body
-        elif tool_phase == "start" and isinstance(slot, int) and slot < len(agg["content"]):
-            agg["content"][slot] = body
-        else:
-            agg["content"].append(body)
-            if tool_call_id is not None:
-                slots[tool_call_id] = len(agg["content"]) - 1
-        agg["last_ts"] = now
-        agg["task_footer"] = _task_footer(b, backend)
-        new_html = _append_footer("\n".join(agg["content"]), agg["task_footer"])
-        await frontend.edit_html(agg["chat_id"], agg["msg_id"], new_html)
+    clean_body, attachments = split_outbound_attachments(body, cwd=b.cwd)
+    if clean_body.strip():
+        progress_kind = "error" if "失败" in clean_body or "⚠️" in clean_body else "tool"
+        await _project_progress(
+            frontend, b, state, backend, progress_kind, clean_body, now=now
+        )
     await _send_outbound_attachments(frontend, b, attachments)
 
 
@@ -446,6 +586,15 @@ def _task_footer(b: "Binding", backend: "Backend") -> str:
 
 def _append_footer(body: str, footer: str) -> str:
     return f"{body.rstrip()}\n\n{footer}" if footer else body.rstrip()
+
+
+async def _send_attention(
+    frontend: "Frontend", b: "Binding", state: "State", heading: str, html_text: str,
+) -> None:
+    await frontend.send_html(
+        b.chat_id, b.thread_id, f"{heading}\n{html_text.strip()}"
+    )
+    _audit(state, b, "attention_published")
 
 
 async def _send_html_with_outbound_attachments(
@@ -529,6 +678,7 @@ async def _capture_terminal_status(
                 model=metadata.model,
                 effort=metadata.effort,
                 permission_mode=metadata.permission_mode,
+                cwd=str(b.cwd),
                 session_name=metadata.session_name,
                 session_total_tokens=metadata.session_total_tokens,
                 input_tokens=metadata.input_tokens,
@@ -558,6 +708,7 @@ async def _capture_terminal_status(
             and status.effort != metadata.effort
             and not (prefer_native_identity and status.effort),
             status.permission_mode is None and metadata.permission_mode,
+            status.cwd is None,
             status.session_name is None and metadata.session_name,
             status.session_total_tokens is None and metadata.session_total_tokens is not None,
             status.input_tokens is None and metadata.input_tokens is not None,
@@ -589,6 +740,7 @@ async def _capture_terminal_status(
                 else metadata.effort or status.effort
             ),
             permission_mode=status.permission_mode or metadata.permission_mode,
+            cwd=status.cwd or str(b.cwd),
             session_name=status.session_name or metadata.session_name,
             session_total_tokens=(
                 status.session_total_tokens
@@ -632,138 +784,38 @@ async def _capture_terminal_status(
     return status
 
 
-async def _send_live_text(
-    frontend: "Frontend",
-    b: "Binding",
-    state: "State",
-    html_text: str,
-    backend: "Backend",
+def _buffer_result_draft(
+    state: "State", b: "Binding", html_text: str, *, replace: bool = False,
 ) -> None:
-    out = _append_footer(strip_handwritten_footer(html_text), _task_footer(b, backend))
-    await _send_assistant_reply(frontend, b, out, backend)
-    _remember_live_text(state, b, out)
+    drafts = getattr(state, "result_drafts", None)
+    if drafts is None:
+        drafts = {}
+        setattr(state, "result_drafts", drafts)
+    current = drafts.get(b.name, "")
+    drafts[b.name] = html_text if replace else current + html_text
 
 
-async def _append_reply_stream(
-    frontend: "Frontend",
-    b: "Binding",
-    state: "State",
-    delta_html: str,
-) -> None:
-    streams = getattr(state, "reply_streams", None)
-    if streams is None:
-        streams = {}
-        setattr(state, "reply_streams", streams)
-
-    current = streams.get(b.name)
-    if current is None:
-        start_stream = getattr(frontend, "send_reply_stream_start", None)
-        if start_stream is None:
-            msg = await frontend.send_html(b.chat_id, b.thread_id, delta_html)
-        else:
-            msg = await start_stream(b, delta_html)
-        if msg is not None and hasattr(msg, "message_id"):
-            streams[b.name] = {
-                "msg_id": msg.message_id,
-                "chat_id": b.chat_id,
-                "content": delta_html,
-            }
-        return
-
-    current["content"] = current.get("content", "") + delta_html
-    edit_stream = getattr(frontend, "edit_reply_stream", None)
-    if edit_stream is None:
-        await frontend.edit_html(current["chat_id"], current["msg_id"], current["content"])
-    else:
-        await edit_stream(b, current["msg_id"], current["content"])
+def _clear_result_draft(state: "State", b: "Binding") -> None:
+    getattr(state, "result_drafts", {}).pop(b.name, None)
 
 
-async def _finalize_reply_stream(
-    frontend: "Frontend",
-    b: "Binding",
-    state: "State",
-    html_text: str,
-    backend: "Backend",
-) -> bool:
-    streams = getattr(state, "reply_streams", None)
-    if not streams:
-        return False
-    current = streams.pop(b.name, None)
-    if not current:
-        return False
-    try:
-        edit_stream = getattr(frontend, "edit_reply_stream", None)
-        if edit_stream is None:
-            if current.get("content") != html_text:
-                await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
-        else:
-            footer = await _capture_terminal_status(b, backend)
-            await edit_stream(b, current["msg_id"], html_text, final=True, footer=footer)
-        _remember_live_text(state, b, html_text)
-        return True
-    except Exception:
-        log.exception(f"[{b.name}] finalize reply stream err; sending final text")
-        return False
+def _result_already_published(state: "State", b: "Binding", html_text: str) -> bool:
+    return getattr(state, "published_results", {}).get(b.name) == _normalize_live_text(
+        html_text
+    )
 
 
-def _remember_live_text(state: "State", b: "Binding", html_text: str) -> None:
-    recent = getattr(state, "live_text_recent", None)
-    if recent is None:
-        recent = {}
-        setattr(state, "live_text_recent", recent)
-    items = recent.setdefault(b.name, [])
-    normalized = _normalize_live_text(html_text)
-    if normalized and normalized not in items:
-        items.append(normalized)
-        del items[:-20]
-
-
-def _consume_recent_live_text(state: "State", b: "Binding", html_text: str) -> bool:
-    recent = getattr(state, "live_text_recent", None)
-    if not recent:
-        return False
-    items = recent.get(b.name) or []
-    normalized = _normalize_live_text(html_text)
-    if normalized not in items:
-        return False
-    items.remove(normalized)
-    return True
+def _remember_published_result(state: "State", b: "Binding", html_text: str) -> None:
+    published = getattr(state, "published_results", None)
+    if published is None:
+        published = {}
+        setattr(state, "published_results", published)
+    published[b.name] = _normalize_live_text(html_text)
 
 
 def _normalize_live_text(html_text: str) -> str:
     return "\n".join(line.rstrip() for line in html_text.strip().splitlines())
 
-
-async def _send_or_edit_plan(
-    frontend: "Frontend",
-    b: "Binding",
-    state: "State",
-    html_text: str,
-) -> None:
-    plan_messages = getattr(state, "plan_messages", None)
-    if plan_messages is None:
-        plan_messages = {}
-        setattr(state, "plan_messages", plan_messages)
-
-    current = plan_messages.get(b.name)
-    if current and current.get("content") == html_text:
-        return
-
-    if current and current.get("msg_id") is not None:
-        try:
-            await frontend.edit_html(current["chat_id"], current["msg_id"], html_text)
-            current["content"] = html_text
-            return
-        except Exception:
-            log.exception(f"[{b.name}] edit plan err; sending a new plan card")
-
-    msg = await frontend.send_html(b.chat_id, b.thread_id, html_text)
-    if msg is not None and hasattr(msg, "message_id"):
-        plan_messages[b.name] = {
-            "msg_id": msg.message_id,
-            "chat_id": b.chat_id,
-            "content": html_text,
-        }
 
 
 async def _send_outbound_attachments(

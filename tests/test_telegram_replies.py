@@ -226,6 +226,28 @@ def test_telegram_status_cards_use_the_same_project_and_session_header(tmp_path)
     assert "gpt-5.6-terra" in calls[1][1]
 
 
+def test_telegram_status_footer_keeps_full_route_path_at_bottom(tmp_path):
+    b = binding(tmp_path)
+    b.backend = "pi"
+    frontend = TelegramFrontend.__new__(TelegramFrontend)
+    frontend.backend = CodexBackend()
+    frontend.backends = {"codex": frontend.backend, "pi": PiBackend()}
+    status = TerminalStatus(
+        state=TerminalState.IDLE,
+        model="gpt-5.6-sol",
+        effort="medium",
+        cwd=str(tmp_path),
+        context_used=181_000,
+        context_limit=360_000,
+    )
+
+    footer = frontend._status_footer_text(status, b)
+
+    assert footer is not None
+    assert f"📁 {tmp_path}" in footer
+    assert footer.index("📁") > footer.index("🪟")
+
+
 def test_telegram_status_footer_uses_the_binding_backend_in_mixed_credentials(tmp_path):
     b = binding(tmp_path)
     b.backend = "omp"
