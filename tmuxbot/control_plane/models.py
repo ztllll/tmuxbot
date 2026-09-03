@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 
 PERSISTED_PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "pi", "omp"})
-DISCOVERABLE_PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "omp"})
+DISCOVERABLE_PROVIDER_BINARIES = frozenset({"tmux", "claude", "codex", "pi", "omp"})
 
 
 class RunState(str, Enum):

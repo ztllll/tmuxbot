@@ -300,6 +300,8 @@ def test_admin_identity_is_appended_and_reused_without_duplicating_route(monkeyp
     monkeypatch.setenv("BOSS_USER_ID", "123")
     monkeypatch.setenv("TMUXBOT_ADMIN_ENABLED", "1")
     monkeypatch.setenv("TMUXBOT_ADMIN_CLI", "omp")
+    admin_cwd = tmp_path / "admin"
+    monkeypatch.setenv("TMUXBOT_ADMIN_CWD", str(admin_cwd))
     bindings_file = tmp_path / "bindings.yaml"
     bindings_file.write_text(
         yaml.safe_dump({"bindings": [_binding()]}, sort_keys=False),

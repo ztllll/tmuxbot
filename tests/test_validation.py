@@ -120,8 +120,8 @@ def test_rejects_bad_channel_and_backend():
     )
 
 
-def test_rejects_historical_pi_backend_identity():
-    assert_invalid([binding(backend="pi")], "unsupported backend", "'pi'")
+def test_accepts_pi_backend_identity():
+    validate_bindings([binding(backend="pi")])
 
 
 def test_accepts_feishu_string_threads_and_mixed_backends_per_credential():

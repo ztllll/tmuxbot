@@ -69,6 +69,15 @@ _ADAPTERS = {
         teamrun_instruction="使用 OMP 的 bash 工具执行 worker 回报命令。",
         launch_arguments_resolver=omp_launch_arguments,
     ),
+    "pi": ProviderAdapter(
+        binary_name="pi",
+        display_name="Pi",
+        route_backend="pi",
+        telegram_credential_env="TG_PI_BOT_TOKEN",
+        launch_arguments=("--approve",),
+        model_command="/model",
+        teamrun_instruction="使用 Pi 的 shell 工具执行 worker 回报命令。",
+    ),
 }
 
 
