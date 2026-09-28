@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from abc import ABC, abstractmethod
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, TYPE_CHECKING
@@ -61,6 +62,15 @@ class CmdOpts:
     failure_summary: str | None = None  # 期待硬信号但未出现时的 provider 专属提示
 
 
+class BackendUnavailable(RuntimeError):
+    """Provider binary is not installed on this host, so the route cannot start.
+
+    Distinct from a crashed or unhealthy pane: retrying cannot help until an
+    operator installs the binary or removes the binding, so callers must report
+    it once instead of treating it as a recoverable lifecycle failure.
+    """
+
+
 class Backend(ABC):
     """所有 AI cli 后端 (claude_code / codex / ...) 的统一接口。
 
@@ -72,6 +82,29 @@ class Backend(ABC):
     start_cmd: str = ""  # 启动命令字符串 (会注入到 tmux)
     bot_commands: list[tuple[str, str]] = []  # (cmd, desc) for BotFather menu
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
+
+    @property
+    def provider_binary_name(self) -> str | None:
+        """CLI executable this backend launches, or None when it has none.
+
+        Used only to pre-flight availability before creating a tmux session; an
+        installed binary is not proof the provider works, just that retrying
+        could ever help. Backends with non-CLI launchers override this with None.
+        """
+        return self.pane_command_name or None
+
+    def ensure_provider_binary_available(self) -> None:
+        """Raise BackendUnavailable when this host cannot run the provider CLI."""
+        binary = self.provider_binary_name
+        if not binary:
+            return
+        from tmuxbot.providers.discovery import ProviderDiscovery
+
+        resolved = ProviderDiscovery.resolve_executable(binary)
+        if not resolved or not os.path.isfile(resolved):
+            raise BackendUnavailable(
+                f"{self.name} provider binary {binary!r} is not installed on this host"
+            )
 
     @property
     def capabilities(self) -> ProviderCapabilities:

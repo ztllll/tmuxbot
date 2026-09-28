@@ -44,6 +44,22 @@ def lifecycle_interval() -> float:
 
 
 async def _ensure_backend_running(backend: "Backend", b: "Binding", *, reason: str) -> None:
+    from tmuxbot.backends.base import BackendUnavailable
+    from tmuxbot.tmux import tmux_has_session
+
+    # 只在新建路由时预检二进制; 已存在的 pane 交给 ensure_running 自己判定,
+    # 避免 PATH 差异把正常会话误判为不可用。backend 未提供预检能力时静默跳过。
+    precheck = getattr(backend, "ensure_provider_binary_available", None)
+    if callable(precheck) and not tmux_has_session(b.tmux_session):
+        try:
+            precheck()
+        except BackendUnavailable:
+            log.warning(
+                "[%s] provider unavailable, route not started (%s): binary missing",
+                b.name,
+                reason,
+            )
+            raise
     try:
         await backend.ensure_running(b)
     except Exception as first_error:

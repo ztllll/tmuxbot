@@ -143,6 +143,9 @@ def tmux_has_session(s: str) -> bool:
 
 
 def tmux_new_session(s: str, cwd) -> None:
+    # 绑定目录可能是本机新分配的工作区 (刚 mkdir / 尚未 clone 完成)。
+    # 先确保 cwd 存在, 否则 tmux 直接拒绝建会话, 整条路由永久不可用。
+    os.makedirs(str(cwd), exist_ok=True)
     _tmux("new-session", "-d", "-s", s, "-c", str(cwd))
 
 

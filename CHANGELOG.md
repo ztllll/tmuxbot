@@ -4,6 +4,20 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- 路由启动健壮性兜底：`tmux_new_session` 会先创建缺失的绑定 `cwd`，避免新主机上目录不存在导致整条路由永久无法启动。
+- Pi 后端恢复会话前校验 transcript 是否存在于本机 sessions root；缺失时降级为全新会话启动（避免 `pi --session <id>` 立即退出引起 TUI 永远起不来），新会话 id 由现有 session-sync 路径回写绑定。
+- 生命周期预检：新建路由时若 provider 二进制在本机不可用，抛出可区分的 `BackendUnavailable` 并记录一次性警告，不创建 tmux 会话，也不进入 unhealthy-pane 恢复循环；已存在的 pane 不做预检，避免 PATH 差异误判。
+
+### Fixed
+
+- `_ensure_backend_running` 改用能力探测调用 provider 预检，鸭子类型的第三方 backend 缺少该能力时自动跳过，不再抛 `AttributeError`。
+
+---
+
 ## [0.3.1] - 2026-08-14
 
 ### Changed

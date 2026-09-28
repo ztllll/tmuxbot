@@ -946,6 +946,16 @@ class PiBackend(Backend):
             return status.label
         return None
 
+    @staticmethod
+    def _session_file_exists(cwd: Path, session_id: str) -> bool:
+        directory = PI_SESSIONS_DIR / encode_pi_cwd(cwd)
+        if (directory / f"{session_id}.jsonl").is_file():
+            return True
+        # 兼容旧版会话目录结构: 递归查找 session id 同名文件。
+        return bool(directory.is_dir()) and any(
+            path.name == f"{session_id}.jsonl" for path in directory.rglob("*.jsonl")
+        )
+
     async def ensure_running(self, b: "Binding") -> None:
         if not tmux_has_session(b.tmux_session):
             tmux_new_session(b.tmux_session, b.cwd)
@@ -968,9 +978,21 @@ class PiBackend(Backend):
                 f"refusing to start Pi in pane {b.tmux_target} "
                 f"with foreground command {command!r}"
             )
+        session_id = b.provider_session_id or b.last_session_id
+        if session_id and not self._session_file_exists(b.cwd, session_id):
+            # 会话记录不在这台机器上 (新主机/未迁移/已删除): `pi --session <id>`
+            # 会直接退出, TUI 永远起不来。降级为全新会话, 启动后由现有
+            # session-sync 路径把新 id 回写绑定。
+            log.warning(
+                "[%s] pi session %s is absent under %s; starting a fresh session",
+                b.name,
+                session_id,
+                b.cwd,
+            )
+            session_id = None
         launched = await tmux_safe_launch(
             b.tmux_target,
-            _start_cmd(b.provider_session_id or b.last_session_id),
+            _start_cmd(session_id),
             allowed_shells=self.shell_command_names,
         )
         if not launched:

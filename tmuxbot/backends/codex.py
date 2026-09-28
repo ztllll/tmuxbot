@@ -273,6 +273,11 @@ class CodexBackend(Backend):
     # npm wrapper 的 pane_current_command 是 node, standalone 包则是 codex。
     pane_command_name = "node"
     pane_command_names = frozenset({"node", "codex"})
+
+    @property
+    def provider_binary_name(self) -> str | None:
+        # pane_command_name 是 npm wrapper 的 "node", 不能用来判断 codex 是否安装。
+        return "codex"
     shell_command_names = frozenset({"bash", "zsh", "sh", "fish"})
 
     def __init__(self) -> None:
