@@ -177,6 +177,7 @@ async def jsonl_poll_loop(
                 text = new_bytes.decode("utf-8", errors="replace")
                 lines = text.split("\n")
                 safe_off = off
+                delivered_events = False
                 for i, line in enumerate(lines):
                     is_last = i == len(lines) - 1
                     if is_last:
@@ -192,8 +193,11 @@ async def jsonl_poll_loop(
                     if not delivered:
                         safe_off -= len(line.encode("utf-8")) + 1
                         break
+                    delivered_events = delivered_events or bool(events)
                 state.offsets[key] = safe_off
-                save_offsets(offsets_file, state.offsets)
+                # A delivered IM event must survive an immediate restart. The regular
+                # debounce is safe for provider-only bookkeeping, not delivery offsets.
+                save_offsets(offsets_file, state.offsets, force=delivered_events)
         except Exception:
             log.exception(f"[{b.name}] poll err")
         await asyncio.sleep(JSONL_POLL)

@@ -20,3 +20,9 @@ CLAUDE.md
 # 历史内部档案 — git 历史可查, 不挂仓库
 CODE_REVIEW.md
 RESEARCH.md
+
+# 本机回滚备份/凭证副本，不入库
+.env.*
+!.env.example
+bindings*.yaml.bak*
+backups/

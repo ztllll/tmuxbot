@@ -16,7 +16,8 @@ configured Telegram Bot and Feishu App credential.
 
 The lifecycle health audit never runs `tmux kill-server`, never exits an idle provider,
 and never recreates a missing tmux target. Existing panes survive service deploys because
-the unit uses `KillMode=process`.
+they run outside the tmuxbot service cgroup; `KillMode=control-group` reliably stops only
+the Web supervisor and bridge child.
 
 ## Install
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -103,6 +104,55 @@ def test_restart_after_new_delivers_first_persisted_reply(tmp_path, monkeypatch)
     assert delivered == [("assistant_text", "assistant reply")]
     assert current.provider_session_id == "replacement-session"
     assert current.transcript_path == replacement
+
+def test_delivered_final_offset_is_persisted_before_restart(tmp_path, monkeypatch):
+    transcript = tmp_path / "active.jsonl"
+    transcript.write_text("final row\nbookkeeping row\n", encoding="utf-8")
+    current = binding(tmp_path)
+    current.provider_session_id = "session-1"
+    current.transcript_path = transcript
+    offsets_file = tmp_path / "offsets.json"
+
+    backend = SimpleNamespace(
+        name="omp",
+        poll_provider_events=lambda _binding: [],
+        session_identity=lambda _binding, path: SimpleNamespace(
+            session_id="session-1",
+            transcript_path=str(path),
+        ),
+        find_active_jsonl=lambda _binding: transcript,
+        parse_event=lambda line, **_kwargs: (
+            [
+                ProviderEvent(
+                    event_id="omp:session-1:final:1",
+                    kind=ProviderEventKind.FINAL_TEXT,
+                    text="final answer",
+                    provider_session_id="session-1",
+                )
+            ]
+            if line == "final row"
+            else []
+        ),
+    )
+    frontend = SimpleNamespace(bindings=[current], bindings_file=None)
+    state = SimpleNamespace(bg_tasks=set(), offsets={str(transcript): 0})
+
+    async def delivered(*_args, **_kwargs):
+        return None
+
+    async def stop_after_persist(_delay):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr("tmuxbot.jsonl.on_tmux_event", delivered)
+    monkeypatch.setattr("tmuxbot.jsonl.asyncio.sleep", stop_after_persist)
+    monkeypatch.setattr("tmuxbot.utils._last_offsets_save", float("inf"))
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(jsonl_poll_loop(current, backend, frontend, state, offsets_file))
+
+    persisted = json.loads(offsets_file.read_text())
+    assert persisted[str(transcript)] == transcript.stat().st_size
+
 
 def test_running_session_switch_reads_new_transcript_from_zero(tmp_path):
     transcript = tmp_path / "new.jsonl"

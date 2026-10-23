@@ -44,9 +44,9 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-# Existing tmux panes outlive deploys. The hourly lifecycle audit checks only
-# existing panes; manually closed sessions remain dormant until route input.
-KillMode=process
+# Provider tmux panes are outside this service cgroup and outlive deploys.
+# Stop the Web supervisor and bridge child together so no orphan keeps the port/lock.
+KillMode=control-group
 EnvironmentFile=-{env_file}
 Environment=TMUXBOT_BRIDGE_OMPD_FILE=%t/tmuxbot/bridge.pid
 {lifecycle_environment}ExecStop=/bin/sh -c 'if [ -r "$TMUXBOT_BRIDGE_OMPD_FILE" ]; then kill -TERM "$(cat "$TMUXBOT_BRIDGE_OMPD_FILE")" 2>/dev/null || true; fi'

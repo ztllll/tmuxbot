@@ -81,9 +81,9 @@ async def serve(
             server.should_exit = True
         await web_task
     finally:
-        # systemd KillMode=process intentionally preserves tmux panes. Always
-        # stop the bridge child before the supervisor exits so a replacement
-        # service can acquire its single-instance lock without touching tmux.
+        # Stop the bridge before the supervisor exits. systemd also uses
+        # KillMode=control-group as a final guarantee; provider tmux panes live
+        # outside this service cgroup and are not affected.
         stop.set()
         await supervisor.stop()
         await bridge_task
